@@ -45,8 +45,8 @@ function PanelDialog({ title, close, children }: { title: string; close: () => v
   );
 }
 
-function Chrome({ pathname, markets, categories, signedIn, children }: {
-  pathname: string; markets: Market[]; categories: Category[]; signedIn: boolean; children: ReactNode;
+function Chrome({ pathname, markets, categories, signedIn, announcement, children }: {
+  pathname: string; markets: Market[]; categories: Category[]; signedIn: boolean; announcement?: string; children: ReactNode;
 }) {
   const [segment, ...rest] = pathname.split('/').filter(Boolean);
   const explicitMarket = marketForSegment(markets, segment);
@@ -104,7 +104,7 @@ function Chrome({ pathname, markets, categories, signedIn, children }: {
     <CartActions.Provider value={{ openBag: (trigger) => open('bag', trigger), chooseMarket: (trigger) => open('market', trigger) }}>
       <a href="#main-content" className="skip-link">Skip to content</a>
       <div className="announcement">
-        <Link href={marketHref(market, '/collections/new-arrivals')}>Discover what’s new <ArrowRight size={14} aria-hidden /></Link>
+        <Link href={marketHref(market, '/collections/new-arrivals')}>{announcement || 'Discover what’s new'} <ArrowRight size={14} aria-hidden /></Link>
       </div>
       <header className="header" onKeyDown={(event) => {
         if (event.key === 'Escape' && mega) {
@@ -220,7 +220,7 @@ function Chrome({ pathname, markets, categories, signedIn, children }: {
   );
 }
 
-export function StorefrontShell({ children, markets, categories, signedIn }: { children: ReactNode; markets: Market[]; categories: Category[]; signedIn: boolean }) {
+export function StorefrontShell({ children, markets, categories, signedIn, announcement }: { children: ReactNode; markets: Market[]; categories: Category[]; signedIn: boolean; announcement?: string }) {
   const pathname = usePathname();
-  return <Chrome key={pathname} pathname={pathname} markets={markets} categories={categories} signedIn={signedIn}>{children}</Chrome>;
+  return <Chrome key={pathname} pathname={pathname} markets={markets} categories={categories} signedIn={signedIn} announcement={announcement}>{children}</Chrome>;
 }

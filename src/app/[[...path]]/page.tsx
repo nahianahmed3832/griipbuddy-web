@@ -11,6 +11,7 @@ import { ProductPage } from '@/features/catalog/product-page';
 import { WishlistPage } from '@/features/catalog/saved-products';
 import type { CatalogParams } from '@/features/catalog/browse';
 import { Homepage } from '@/features/home/homepage';
+import { contentMedia, contentRows, siteContent, text } from '@/features/home/content';
 import { resolveMarket } from '@/features/markets/resolve';
 import { CartView } from '@/features/cart/cart-view';
 import { checkoutPaused, methodsFor } from '@/features/checkout/config';
@@ -46,7 +47,23 @@ async function resolvePath(path: string[]) {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const { market, categories, section, rest } = await resolvePath((await params).path ?? []);
+  const resolved = await resolvePath((await params).path ?? []);
+  const defaults = await defaultMetadata(resolved);
+  const { market, section, rest } = resolved;
+  if (section && !['product','category','collections','products', ...Object.keys(information)].includes(section)) return defaults;
+  const path = '/' + (section ? [section, ...rest].join('/') : '');
+  const canonicalPath = marketHref(market, path);
+  const entries = contentRows((await siteContent()).seo);
+  const saved = entries.find(row => row.path === canonicalPath) ?? entries.find(row => row.path === path);
+  if (!saved) return defaults;
+  const title = text(saved.title) || undefined;
+  const description = text(saved.description) || undefined;
+  const image = contentMedia(saved.image);
+  const share = image?.startsWith('/') ? canonicalFor(image).alternates?.canonical : image;
+  return { ...defaults, title, description, openGraph: { title, description, ...(typeof share === 'string' ? { images: [share] } : {}) } };
+}
+
+async function defaultMetadata({ market, categories, section, rest }: Awaited<ReturnType<typeof resolvePath>>): Promise<Metadata> {
   if (section === 'product' && rest.length === 1) {
     const product = await catalogProduct(market, rest[0]);
     if (product) return { title: product.name, description: product.description.slice(0, 160) || undefined, ...canonicalFor(productHref(market, product.slug)) };
