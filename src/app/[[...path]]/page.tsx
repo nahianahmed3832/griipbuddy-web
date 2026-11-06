@@ -15,6 +15,8 @@ import { contentMedia, contentRows, siteContent, text } from '@/features/home/co
 import { resolveMarket } from '@/features/markets/resolve';
 import { CartView } from '@/features/cart/cart-view';
 import { checkoutPaused, methodsFor } from '@/features/checkout/config';
+import { integratedCheckout, integratedMethods } from '@/features/checkout/integrated';
+import { currentAccount } from '@/features/account/session';
 import { OrderPage } from '@/features/checkout/order-page';
 import { CustomerPage } from '@/features/account/account-page';
 
@@ -138,9 +140,12 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
   if (section === 'wishlist') return <PageFrame market={market} title="Wishlist"><WishlistPage market={market} /></PageFrame>;
   if (section === 'cart' || section === 'checkout') {
     const checkout = section === 'checkout';
-    const methods = checkout ? methodsFor(market.code) : undefined;
+    const integrated = checkout && integratedCheckout();
+    const signIn = integrated && !await currentAccount();
+    const methods = checkout && !signIn ? integrated ? await integratedMethods(market.code) : methodsFor(market.code) : undefined;
     return <PageFrame market={market} title={checkout ? 'Review checkout' : 'Shopping bag'}
       subtitle={checkout ? (methods?.length ? 'Confirm delivery and payment for your test order.' : 'Review the current prices, availability and delivery estimate before running a simulation.') : undefined}>
+      {signIn && <Link className="button button-primary" href={marketHref(market, '/login')}>Sign in to check out</Link>}
       <CartView key={market.code + ':' + section} market={market} view={checkout ? 'checkout' : 'page'} methods={methods} paused={checkout && checkoutPaused()} />
     </PageFrame>;
   }

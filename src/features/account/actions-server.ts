@@ -6,7 +6,7 @@ import { apiConfigured } from '@/features/catalog/api';
 import { validSlug } from '@/features/catalog/catalog';
 import { AccountError, emailAddress, passwordValue, phoneKey, phoneNumber, text, type Address } from './contracts';
 import { addFixtureAccount, findFixturePhone, findVerifiedFixtureEmail } from './fixture';
-import { recoveredLogin } from './recovered';
+import { recoveredLogin, recoveredRegister, recoveredVerify } from './recovered';
 import { challengeCookie, clearSession, requireCustomer, setChallenge, setSession } from './session';
 import { accountState, checkChallenge, endCustomerSessions, hashPassword, limitAttempt, makeChallenge, validPassword, type FixtureAccount } from './state';
 import { changeAccountCart, transferGuestCart } from './customer-cart';
@@ -112,7 +112,25 @@ export async function accountAction(request: Request, action: string, body: Reco
   }
 
   if (action === 'register' || action === 'verify' || action === 'recover' || action === 'reset') {
-    if (apiConfigured()) throw unavailable();
+    if (apiConfigured()) {
+      if (process.env.GRIIPBUDDY_CHECKOUT !== 'integrated' || !['register','verify'].includes(action)) throw unavailable();
+      const phone = phoneNumber(body.phone);
+      if (!phone || !/^\d{10,15}$/.test(phoneKey(phone))) throw new AccountError(400, 'Enter a valid phone number.');
+      const local = phoneKey(phone);
+      limitAttempt(action + ':' + local, action === 'register' ? 4 : 8);
+      limitAttempt(action + ':all', 80);
+      if (action === 'register') {
+        const name = text(body.name, 120);
+        if (!name) throw new AccountError(400, 'Enter your name.');
+        await recoveredRegister(local, name, validateNewPassword(body));
+        return { next:'verify' };
+      }
+      const code = text(body.code, 6);
+      if (!/^\d{6}$/.test(code)) throw new AccountError(400, 'Enter the six-digit verification code.');
+      const account = await recoveredVerify(local, Number(code));
+      await setSession(request, { mode:'recovered', id:account.profile.id, token:account.token }, account.expires);
+      return { signedIn:true, transferred:false };
+    }
     if (action === 'register') {
       const phone = phoneNumber(body.phone);
       const name = text(body.name, 120);

@@ -36,7 +36,7 @@ export const paymentLabels: Record<PaymentStatus, string> = {
 export function quoteReview(quote: CartQuote) {
   return {
     currency: quote.currency, total: quote.estimatedTotal, shipping: quote.shipping.status === 'estimated' ? quote.shipping.amount : null,
-    coupon: quote.couponDiscount, lines: quote.lines.map((line) => [line.productId, line.variantId, line.quantity, line.unit]),
+    coupon: quote.couponDiscount, ...(quote.checkoutRevision && { revision:quote.checkoutRevision }), lines: quote.lines.map((line) => [line.productId, line.variantId, line.quantity, line.unit]),
   };
 }
 

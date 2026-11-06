@@ -33,6 +33,7 @@ export type CartQuote = {
   shipping: { status: 'estimated'; amount: number } | { status: 'destination-required' | 'unconfigured' };
   estimatedTotal: number | null;
   reviewReady: boolean;
+  checkoutRevision?: string;
   paymentPreview?: 'approved' | 'declined';
 };
 

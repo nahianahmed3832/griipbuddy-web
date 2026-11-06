@@ -33,7 +33,7 @@ export async function catalogGet(path: string, params?: URLSearchParams, { missi
     method: 'GET',
     redirect: 'error',
     signal: AbortSignal.timeout(5000),
-    ...(reference ? { next: { revalidate: 60 } } : { cache: 'no-store' }),
+    ...(reference && process.env.GRIIPBUDDY_CHECKOUT !== 'integrated' ? { next: { revalidate: 60 } } : { cache: 'no-store' }),
   }).catch(() => { throw new CatalogError('The isolated catalog API did not respond.'); });
   if (response.status === 404 && missing) return null;
   if (!response.ok) throw new CatalogError('The catalog API returned an error.');

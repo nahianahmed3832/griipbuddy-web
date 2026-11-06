@@ -2,31 +2,33 @@ import { sameOriginRequest } from '@/app/api/request-origin';
 import { checkoutEnabled, checkoutPaused } from '@/features/checkout/config';
 import { CheckoutError } from '@/features/checkout/contracts';
 import { bodyBytes, checkoutOwners, failure, orderId, parseJson, privateHeaders, reply, requireOperator } from '@/features/checkout/http';
-import { buyerAction, object, operatorAction, ownedOrder, placeOrder, privateReceipt, publicOrder, receiptLimit } from '@/features/checkout/orders';
+import { buyerAction, object, operatorAction, ownedOrder, placeOrder, privateReceipt, publicOrder, receiptLimit, safeReceipt } from '@/features/checkout/orders';
 import { simulateHostedPayment } from '@/features/checkout/providers';
 import { reconcile } from '@/features/checkout/reconcile';
+import { commerceRequest, integratedCheckout, integratedOrder, integratedOrderId, integratedToken } from '@/features/checkout/integrated';
+import type { CheckoutOrder } from '@/features/checkout/contracts';
 
 type Params = { params: Promise<{ action: string }> };
 const payloadLimit = 30_000;
 
 export async function POST(request: Request, { params }: Params) {
   try {
-    if (!checkoutEnabled()) throw new CheckoutError(404, 'Checkout is not available for this catalog.');
+    if (!checkoutEnabled() && !integratedCheckout()) throw new CheckoutError(404, 'Checkout is not available for this catalog.');
     if (!sameOriginRequest(request)) throw new CheckoutError(403, 'Use the storefront to continue.');
     const { action } = await params;
-    if (action === 'place' && checkoutPaused()) throw new CheckoutError(503, 'Test checkout is temporarily paused.');
+    const integrated = integratedCheckout();
+    if (action === 'place' && (checkoutPaused() || (integrated && process.env.GRIIPBUDDY_CHECKOUT_PAUSED === '1'))) throw new CheckoutError(503, 'Test checkout is temporarily paused.');
     if (action === 'session') {
-      await checkoutOwners(request);
+      if (integrated) await integratedToken();
+      else await checkoutOwners(request);
       return reply({ ready: true });
     }
-    if (action === 'operator') {
+    if (!integrated && action === 'operator') {
       requireOperator(request);
       const data = object(parseJson((await bodyBytes(request, payloadLimit)).toString()));
       return reply({ order: operatorAction(orderId(data.orderId), data.action, data) });
     }
 
-    const { buyer, owners } = await checkoutOwners();
-    if (!buyer) throw new CheckoutError(401, 'Refresh checkout to establish your session.');
     let data: Record<string, unknown>;
     let receipt: File | undefined;
     if (action === 'place' && request.headers.get('content-type')?.startsWith('multipart/form-data;')) {
@@ -41,6 +43,21 @@ export async function POST(request: Request, { params }: Params) {
       data = object(parseJson(payload));
       receipt = upload;
     } else data = object(parseJson((await bodyBytes(request, payloadLimit)).toString()));
+    if (integrated) {
+      const token = await integratedToken();
+      if (action === 'place') {
+        const image = receipt && data.method === 'manual' ? (await safeReceipt(receipt)).image.toString('base64') : undefined;
+        const result = await commerceRequest<CheckoutOrder>('/orders', { token, data:{...data, receipt:image} });
+        return reply({ order:result.data }, result.status);
+      }
+      if (action === 'cancel' || action === 'return' || action === 'simulate') {
+        const result = await commerceRequest<CheckoutOrder>('/orders/' + integratedOrderId(data.orderId) + '/' + action, { token, data });
+        return reply({ order:result.data });
+      }
+      throw new CheckoutError(404, 'Checkout action not found.');
+    }
+    const { buyer, owners } = await checkoutOwners();
+    if (!buyer) throw new CheckoutError(401, 'Refresh checkout to establish your session.');
     if (action === 'place') {
       const result = await placeOrder(buyer, data, receipt);
       return reply({ order: result.order }, result.replay ? 200 : 201);
@@ -54,8 +71,9 @@ export async function POST(request: Request, { params }: Params) {
 
 export async function GET(request: Request, { params }: Params) {
   try {
-    if (!checkoutEnabled()) throw new CheckoutError(404, 'Checkout is not available for this catalog.');
     const { action } = await params;
+    if (integratedCheckout() && action === 'order') return reply({ order:await integratedOrder(new URL(request.url).searchParams.get('id')) });
+    if (!checkoutEnabled()) throw new CheckoutError(404, 'Checkout is not available for this catalog.');
     if (action === 'reconcile') {
       requireOperator(request);
       return reply(reconcile());

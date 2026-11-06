@@ -69,8 +69,8 @@ function PreviewCode({ code, channel = 'SMS' }: { code: string; channel?: string
   return <div className="account-preview-code">Preview {channel} code <output aria-label={'Preview ' + channel + ' code'}>{code}</output></div>;
 }
 
-export function AuthForm({ initial, market, fixture }: {
-  initial: 'login' | 'register' | 'recover'; market: Market; fixture: boolean;
+export function AuthForm({ initial, market, fixture, integrated }: {
+  initial: 'login' | 'register' | 'recover'; market: Market; fixture: boolean; integrated?: boolean;
 }) {
   const [step, setStep] = useState<AuthStep>(initial);
   const [method, setMethod] = useState<'phone' | 'email'>('phone');
@@ -119,7 +119,7 @@ export function AuthForm({ initial, market, fixture }: {
   return <section className="account-auth-card" aria-labelledby="account-auth-title">
     <h1 id="account-auth-title">{titles[step]}</h1>
     <p>{descriptions[step]}</p>
-    {!fixture && step !== 'login' ? <div className="account-feedback">
+    {!fixture && step !== 'login' && !(integrated && ['register','verify'].includes(step)) ? <div className="account-feedback">
       This service is unavailable for recovered accounts. <Link className="text-link" href={marketHref(market, '/contact-and-support')}>Contact support</Link>
     </div> : <form key={step} method="post" className="account-form" onSubmit={(event) => void submit(event)}>
       {step === 'login' && <div className="account-methods" aria-label="Sign-in method">
@@ -128,9 +128,9 @@ export function AuthForm({ initial, market, fixture }: {
       </div>}
       {step === 'register' && <>
         <Field label="Full name"><input name="name" autoComplete="name" maxLength={120} required /></Field>
-        <Field label="Email address (optional)"><input name="email" type="email" autoComplete="email" maxLength={254} /></Field>
+        {fixture && <Field label="Email address (optional)"><input name="email" type="email" autoComplete="email" maxLength={254} /></Field>}
       </>}
-      {((step === 'login' && method === 'phone') || step === 'register' || step === 'recover') &&
+      {((step === 'login' && method === 'phone') || step === 'register' || step === 'recover' || (integrated && step === 'verify')) &&
         <Field key="phone" label="Phone number"><input name="phone" type="tel" autoComplete="tel" maxLength={30} required /></Field>}
       {step === 'login' && method === 'email' &&
         <Field key="email" label="Email address"><input name="email" type="email" autoComplete="email" maxLength={254} required /></Field>}

@@ -114,7 +114,7 @@ export async function CustomerPage({ market, path, login = false, requestedOrder
         <p>Keep track of orders, save your favourites and pick up where you left off.</p>
         <div><ShoppingBag size={19} aria-hidden /> Shopping bag <Heart size={19} aria-hidden /> Wishlist <Package size={19} aria-hidden /> Orders</div>
       </div>
-      <AuthForm key={initial} initial={initial} market={market} fixture={!apiConfigured()} />
+      <AuthForm key={initial} initial={initial} market={market} fixture={!apiConfigured()} integrated={apiConfigured() && process.env.GRIIPBUDDY_CHECKOUT === 'integrated'} />
     </div>;
   }
   if (!navigation.some((item) => item.id === tab) || path.length > 2 || (path.length === 2 && tab !== 'orders')) notFound();

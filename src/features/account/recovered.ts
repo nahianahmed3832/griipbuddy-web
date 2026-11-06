@@ -7,7 +7,7 @@ function ref(value: unknown) {
   return typeof value === 'string' ? value : text(fields(value)._id, 90);
 }
 
-const paths = { login: '/user/login', profile: '/user', orders: '/order/customer/my-order' };
+const paths = { register:'/user/register', verify:'/user/verify-otp', login: '/user/login', profile: '/user', orders: '/order/customer/my-order' };
 
 async function recovered(action: keyof typeof paths, { token, page, body }: { token?: string; page?: number; body?: unknown }) {
   const base = process.env.GRIIPBUDDY_CATALOG_API ?? '';
@@ -15,7 +15,7 @@ async function recovered(action: keyof typeof paths, { token, page, body }: { to
     throw new AccountError(503, 'The isolated customer API is unavailable.');
   }
   const response = await fetch(base + paths[action] + (page ? '?limit=50&page=' + page : ''), {
-    method: body ? 'POST' : 'GET',
+    method: action === 'verify' ? 'PATCH' : body ? 'POST' : 'GET',
     headers: {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
@@ -24,6 +24,7 @@ async function recovered(action: keyof typeof paths, { token, page, body }: { to
     signal: AbortSignal.timeout(5000), cache: 'no-store', redirect: 'error',
   }).catch(() => { throw new AccountError(503, 'The isolated customer API is unavailable.'); });
   if ([400, 401, 403, 404].includes(response.status)) {
+    if (action === 'register' || action === 'verify') throw new AccountError(400, action === 'register' ? 'Registration could not be started for this phone number.' : 'Enter a valid, unexpired verification code.');
     throw new AccountError(401, action === 'login' ? 'Check your phone number and password.' : 'Sign in again to continue.');
   }
   const envelope = fields(await response.json().catch(() => null));
@@ -58,7 +59,15 @@ export async function recoveredCustomer(token: string): Promise<Customer> {
 }
 
 export async function recoveredLogin(phone: string, password: string) {
-  const result = await recovered('login', { body: { phone_number: phone, password } });
+  return customerSession(await recovered('login', { body: { phone_number: phone, password } }));
+}
+export async function recoveredRegister(phone: string, name: string, password: string) {
+  await recovered('register', { body:{ phone_number:phone, full_name:name, password } });
+}
+export async function recoveredVerify(phone: string, otp: number) {
+  return customerSession(await recovered('verify', { body:{ phone_number:phone, otp } }));
+}
+async function customerSession(result: Record<string, unknown>) {
   const token = text(result.access_token, 8000);
   if (!token) throw new AccountError(401, 'Sign in again to continue.');
   const profile = await recoveredCustomer(token);
@@ -77,7 +86,7 @@ function normalizeOrder(value: unknown, owner: string): CustomerOrder | undefine
   const currency = text(row.currency, 3);
   const number = text(row.invoice_number, 90) || (Number.isSafeInteger(row.order_serial_id) ? String(row.order_serial_id) : '');
   return {
-    id, number: number || id,
+    id, number: number || id, syntheticCheckout: row.integrated_checkout === true,
     status: text(row.status, 50),
     currency: /^[A-Z]{3}$/.test(currency) ? currency : undefined,
     total: typeof row.total_amount === 'number' && Number.isFinite(row.total_amount) && row.total_amount >= 0 ? row.total_amount : undefined,

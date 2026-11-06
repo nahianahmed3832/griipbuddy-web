@@ -4,6 +4,7 @@ import { currentPrice, type Market } from '@/features/catalog/catalog';
 import { catalogProduct, mapLimited, variantStock } from '@/features/catalog/data';
 import { currencyScale, type CartLine, type CartQuote, type QuotedLine } from './cart';
 import { shippingEstimate } from './shipping';
+import { integratedCheckout, integratedPolicy } from '@/features/checkout/integrated';
 
 async function quoteLine(market: Market, line: CartLine): Promise<QuotedLine> {
   const { productId, variantId, slug, quantity } = line;
@@ -49,14 +50,17 @@ export async function quoteCart(market: Market, lines: CartLine[], code?: string
   const net = ready.reduce((sum, line) => sum + (line.lineTotal ?? 0), 0);
   const allReady = ready.length > 0 && ready.length === lines.length;
   const { discount, coupon } = quoteCoupon(code, market, allReady, net);
-  const shipping = shippingEstimate(market);
+  const policy = integratedCheckout() ? await integratedPolicy(market.code) : null;
+  const shipping: CartQuote['shipping'] = policy?.methods.length && policy.currency === market.currency && policy.shippingMinor !== undefined
+    ? { status:'estimated', amount:policy.shippingMinor }
+    : shippingEstimate(market);
   const merchandise = net - discount;
   const reviewReady = allReady && shipping.status === 'estimated';
   return {
     market: market.code, currency: market.currency, lines: quoted,
     subtotal, saleDiscount: subtotal - net, couponDiscount: discount, coupon, merchandise, shipping,
     estimatedTotal: reviewReady ? merchandise + shipping.amount : null,
-    reviewReady,
+    reviewReady, checkoutRevision:policy?.revision,
     paymentPreview: reviewReady && preview ? (preview === 'approve' ? 'approved' : 'declined') : undefined,
   };
 }

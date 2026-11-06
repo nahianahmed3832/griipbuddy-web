@@ -9,13 +9,14 @@ import { checkoutEnabled } from './config';
 import { checkoutOwners, orderId } from './http';
 import { ownedOrder } from './orders';
 import { OrderActions } from './order-actions';
+import { integratedCheckout, integratedOrder } from './integrated';
 
 export async function OrderPage({ id, market }: { id: string; market: Market }) {
-  if (!checkoutEnabled()) notFound();
+  if (!checkoutEnabled() && !integratedCheckout()) notFound();
   let order;
-  try { order = ownedOrder(orderId(id), (await checkoutOwners()).owners); }
+  try { order = integratedCheckout() ? await integratedOrder(id) : ownedOrder(orderId(id), (await checkoutOwners()).owners); }
   catch (error) {
-    if (error instanceof CheckoutError && error.status === 404) notFound();
+    if (error instanceof CheckoutError && [401,404].includes(error.status)) notFound();
     throw error;
   }
   const orderMarket = marketForSegment((await catalogNavigation()).markets, order.market) ?? market;

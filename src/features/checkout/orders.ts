@@ -43,7 +43,7 @@ function deliveryDetails(value: unknown, market: string): Delivery {
   };
 }
 
-async function safeReceipt(file?: File) {
+export async function safeReceipt(file?: File) {
   if (!file || !['image/jpeg', 'image/png'].includes(file.type) || !file.size || file.size > receiptLimit) {
     throw new CheckoutError(400, 'Upload a JPEG or PNG receipt under 4 MB.');
   }
