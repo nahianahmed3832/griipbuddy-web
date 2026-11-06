@@ -77,7 +77,7 @@ export function SearchBox({
         data-first-focus={style === 'drawer' ? '' : undefined} autoComplete="off"
         aria-controls={open ? id : undefined} aria-expanded={open} role="combobox" aria-autocomplete="list"
         aria-activedescendant={open && suggestions[active] ? id + '-' + active : undefined}
-        placeholder={style === 'header' ? 'Search cases, bags, sunglasses' : 'Search the catalog'}
+        placeholder={style === 'header' ? 'Search products' : 'Search the catalog'}
         onChange={(event) => { setQuery(event.target.value); setFocused(true); setActive(-1); }}
         onKeyDown={(event) => {
           if (event.key === 'Escape' && open) {

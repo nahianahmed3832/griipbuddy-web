@@ -102,7 +102,7 @@ body:has(.zoom-dialog[open]) { overflow: hidden; }
 .gallery-controls { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 4px; color: var(--muted); font-size: .77rem; font-variant-numeric: tabular-nums; }
 .gallery-controls + .gallery-thumbs { margin-top: 0; }
 .detail-grid { gap: clamp(20px, 4.3vw, 72px); }
-.detail-copy { min-width: 0; }
+.detail-copy > :is(.family-selector, .variant-groups, .add-to-bag, .product-addons, .product-information) { width: 100%; }
 .variant-section { position: relative; min-width: 0; }
 .variant-group > div { gap: 8px; }
 .variant-group legend { margin-bottom: 9px; }

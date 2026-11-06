@@ -94,7 +94,6 @@ function valuesFor(variant?: CatalogVariant) {
 function chooseVariant(variants: CatalogVariant[], selected: CatalogVariant | undefined, dimension: string, value: string) {
   const current = valuesFor(selected);
   const candidates = variants.filter((variant) => {
-    if (!variant.price) return false;
     const values = valuesFor(variant);
     return values.get(dimension) === value && (dimension !== 'size' ||
       ['color', 'fit', 'style', 'model', 'device'].every(key => !current.has(key) || values.get(key) === current.get(key)));
@@ -104,7 +103,7 @@ function chooseVariant(variants: CatalogVariant[], selected: CatalogVariant | un
     return [...current].filter(([key, value]) => key !== dimension && values.get(key) === value).length;
   }
   return candidates.reduce<CatalogVariant | undefined>((best, variant) => (
-    !best || score(variant) > score(best) ? variant : best
+    !best || score(variant) > score(best) || (score(variant) === score(best) && variant.price && !best.price) ? variant : best
   ), undefined);
 }
 
