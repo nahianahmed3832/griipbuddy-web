@@ -203,22 +203,24 @@ export function CartView({ market, view, onNavigate, methods, paused }: {
     }
   }
 
-  return <div className={'bag-layout bag-' + view}>
-    <section className="bag-items" aria-label={checkout ? 'Items for review' : 'Bag items'}>
-      <p className="bag-context">{count} {count === 1 ? 'item' : 'items'} · {market.name} · {market.currency}</p>
-      <ul>{lines.map((line) => <BagItem key={lineKey(line)} line={line} quoted={byKey.get(lineKey(line))} market={market}
-        onNavigate={onNavigate} readonly={checkout} />)}</ul>
-      {checkout && <Link className="text-link" href={bagPath}>Edit shopping bag</Link>}
-      {checkoutEnabled && <CheckoutForm market={market} methods={methods!} lines={lines} quote={quote} coupon={code} />}
-    </section>
+  const items = <section className="bag-items" aria-label={checkout ? 'Items for review' : 'Bag items'}>
+    <p className="bag-context">{count} {count === 1 ? 'item' : 'items'} · {market.name} · {market.currency}</p>
+    <ul>{lines.map((line) => <BagItem key={lineKey(line)} line={line} quoted={byKey.get(lineKey(line))} market={market}
+      onNavigate={onNavigate} readonly={checkout} />)}</ul>
+    {checkout && <Link className="text-link" href={bagPath}>Edit shopping bag</Link>}
+  </section>;
+
+  return <div className={'bag-layout bag-' + view + (checkoutEnabled ? ' checkout-layout' : '')}>
+    {checkoutEnabled ? <CheckoutForm market={market} methods={methods!} lines={lines} quote={quote} coupon={code} /> : items}
     <section className={checkoutEnabled ? "bag-summary checkout-totals" : "bag-summary"} aria-label="Bag summary">
       <h2>{checkout ? 'Checkout estimate' : 'Order summary'}</h2>
+      {checkoutEnabled && items}
       {commands.error && <p role="status" className="bag-line-error">{commands.error}</p>}
       {!current ? <p role="status" className="bag-loading">Checking prices and availability…</p>
         : !quote ? <div className="bag-quote-error"><p role="status">Prices and stock could not be verified.</p>
           <button type="button" className="button button-outline" onClick={() => setAttempt(attempt + 1)}>Retry estimate</button></div>
           : <Totals quote={quote} market={market} />}
-      {view === 'page' && <Coupon market={market} code={code} coupon={quote?.coupon} />}
+      {(view === 'page' || checkoutEnabled) && <Coupon market={market} code={code} coupon={quote?.coupon} />}
       {checkout && quote?.coupon && quote.coupon.status !== 'applied' && <p className="bag-line-error">Coupon {quote.coupon.code} is excluded from the estimate.</p>}
       {quote && !ready && <p className="bag-estimate-note">
         {quote.lines.some((line) => line.status !== 'ready') ? 'Update unavailable items before checkout review.'

@@ -32,7 +32,16 @@ export type CatalogVariant = {
   sku: string;
   attributes: Record<string, string>;
   images: string[];
+  colorCode?: string;
   price?: Money;
+};
+
+export type SizeGuide = {
+  note: string;
+  columns: string[];
+  rows: { size: string; fit: string; cm: number[] }[];
+  models: { image: string; size: string; height: number }[];
+  instructions: string;
 };
 
 export type CatalogProduct = {

@@ -7,6 +7,7 @@ export function catalogMediaOrigins() {
 }
 
 export function approvedCatalogImage(value: string) {
+  if (process.env.GRIIPBUDDY_DEV_CATALOG === '1' && /^\/(catalog|editorial)\/[a-z0-9-]+\.webp$/.test(value)) return value;
   try {
     const url = new URL(value);
     return !url.username && !url.password && catalogMediaOrigins().includes(url.origin) ? value : undefined;

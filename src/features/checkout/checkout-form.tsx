@@ -2,11 +2,13 @@
 
 import { useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, LockKeyhole } from 'lucide-react';
+import { ArrowRight, Banknote, CreditCard, Globe, LockKeyhole, ReceiptText, Wallet } from 'lucide-react';
 import { marketHref, type Market } from '@/features/catalog/catalog';
 import { formatMinor, lineKey, type CartLine, type CartQuote } from '@/features/cart/cart';
 import { useBagCommands } from '@/features/cart/store';
 import { quoteReview, type Method, type MethodOption } from './contracts';
+
+const methodIcons = { cod: Banknote, manual: ReceiptText, paypal: Wallet, stripe: CreditCard };
 
 async function requestKey(payload: unknown, receipt?: File) {
   const digest = async (bytes: ArrayBuffer | Uint8Array<ArrayBuffer>) =>
@@ -25,8 +27,10 @@ export function CheckoutForm({ market, methods, lines, quote, coupon }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submitting = useRef(false);
+  const contact = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const commands = useBagCommands();
+  const online = methods.filter(option => option.id === 'paypal' || option.id === 'stripe');
   const selected = methods.find((entry) => entry.id === method);
   const total = quote?.estimatedTotal;
   const advance = selected?.advancePercent && total != null ? Math.ceil(total * selected.advancePercent / 100) : undefined;
@@ -77,12 +81,28 @@ export function CheckoutForm({ market, methods, lines, quote, coupon }: {
   }
 
   return <form className="checkout-form" onSubmit={submit}>
+    <div className="checkout-banner"><LockKeyhole size={18} aria-hidden /><div><strong>Test checkout</strong><span>Use sample details. Payments and delivery are simulated.</span></div></div>
+    {online.length > 0 && <fieldset className="checkout-quick" disabled={busy}>
+      <legend>Quick payment selection</legend>
+      <div>{online.map(option => {
+        const Icon = methodIcons[option.id];
+        return <button key={option.id} type="button" className="checkout-quick-method" data-method={option.id}
+          aria-pressed={option.id === method} onClick={() => {
+            setMethod(option.id); setError(''); contact.current?.focus();
+          }}><Icon size={18} aria-hidden />{option.label}<small>Test</small></button>;
+      })}</div>
+    </fieldset>}
+    <fieldset disabled={busy}>
+      <legend>Contact</legend>
+      <div className="checkout-fields">
+        <label className="checkout-wide">Delivery phone<input ref={contact} name="phone" type="tel" autoComplete="shipping tel" required maxLength={28} /></label>
+      </div>
+    </fieldset>
     <fieldset disabled={busy}>
       <legend>Delivery details</legend>
-      <p className="checkout-note">Delivering to {market.name}. Use synthetic information for this test order.</p>
       <div className="checkout-fields">
-        <label>Recipient name<input name="name" autoComplete="shipping name" required maxLength={100} /></label>
-        <label>Delivery phone<input name="phone" type="tel" autoComplete="shipping tel" required maxLength={28} /></label>
+        <div className="checkout-wide checkout-market"><Globe size={17} aria-hidden /><span>{market.name}</span><strong>{market.currency}</strong></div>
+        <label className="checkout-wide">Recipient name<input name="name" autoComplete="shipping name" required maxLength={100} /></label>
         <label className="checkout-wide">Street address<input name="street" autoComplete="shipping address-line1" required maxLength={180} /></label>
         <label>City<input name="city" autoComplete="shipping address-level2" required maxLength={80} /></label>
         <label>{market.code === 'US' ? 'State' : 'District'}<input name="region" autoComplete="shipping address-level1" required maxLength={80} /></label>
@@ -91,10 +111,14 @@ export function CheckoutForm({ market, methods, lines, quote, coupon }: {
     </fieldset>
     <fieldset className="checkout-payment" disabled={busy}>
       <legend>Payment method</legend>
-      {methods.map((option) => <label className="checkout-method" key={option.id}>
+      {methods.map((option) => {
+        const Icon = methodIcons[option.id];
+        return <label className="checkout-method" key={option.id}>
         <input type="radio" name="method" value={option.id} checked={method === option.id} onChange={() => { setMethod(option.id); setError(''); }} />
-        <span><strong>{option.label}</strong><small>{option.description}</small></span>
-      </label>)}
+          <span><strong>{option.label}</strong><small>{option.description}</small></span>
+          <Icon className="checkout-method-icon" size={22} aria-hidden />
+        </label>;
+      })}
       {method === 'manual' && <div className="checkout-fields checkout-evidence">
         {advance !== undefined && total != null && <p className="checkout-wide">
           <strong>{formatMinor(advance, market)}</strong> advance · {formatMinor(total - advance, market)} due on delivery after review.
@@ -104,7 +128,6 @@ export function CheckoutForm({ market, methods, lines, quote, coupon }: {
         <label className="checkout-wide">Payment receipt (JPEG or PNG, up to 4 MB)<input name="receipt" type="file" accept="image/png,image/jpeg" required /></label>
       </div>}
     </fieldset>
-    <p className="checkout-note checkout-lock"><LockKeyhole size={17} aria-hidden /> Simulated checkout. No money will be collected and no shipment will be created.</p>
     {error && <p className="checkout-error" role="alert">{error}</p>}
     <button type="submit" className="button button-primary" disabled={!quote?.reviewReady || busy}>
       {busy ? 'Placing order…' : 'Place test order' + (total != null ? ' · ' + formatMinor(total, market) : '')} <ArrowRight size={17} aria-hidden />

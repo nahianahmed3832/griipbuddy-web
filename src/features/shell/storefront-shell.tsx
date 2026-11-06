@@ -118,7 +118,10 @@ function Chrome({ pathname, markets, categories, signedIn, announcement, childre
           <Link className="brand" href={marketHref(market)} aria-label="GriipBuddy home" onClick={() => setMega(null)}>
             <Image src="/brand/griipbuddy-wordmark.webp" width={180} height={45} alt="GriipBuddy" priority />
           </Link>
-          <SearchBox market={market} categories={categories} style="header" onFocus={() => setMega(null)} />
+          <div className="header-find">
+            <button type="button" className="icon-button header-browse" aria-label="Browse categories" onClick={(event) => open('browse', event.currentTarget)}><Menu aria-hidden /></button>
+            <SearchBox market={market} categories={categories} style="header" onFocus={() => setMega(null)} />
+          </div>
           <div className="header-utilities">
             <button type="button" className="market-trigger" aria-label={'Choose country, current market ' + market.name}
               onClick={(event) => open('market', event.currentTarget)}><Globe size={16} aria-hidden /><span>{market.code}<span className="market-currency"> / {market.currency}</span></span><ChevronDown size={11} aria-hidden /></button>

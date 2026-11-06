@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { ImageIcon } from 'lucide-react';
+import { ArrowUpRight, ImageIcon } from 'lucide-react';
 import { lowestPricedVariant } from './browse';
 import { attribute, currentPrice, formatMoney, productBadges, productHref, type CatalogProduct, type Market } from './catalog';
 import { WishlistButton } from './wishlist';
@@ -32,10 +32,14 @@ export function ProductCard({ product, market, priority = false, linkVariant = f
         {product.brand && <p className="product-brand">{product.brand.name}</p>}
         <h3><Link href={href}>{product.name}</Link></h3>
         {colors.length > 0 && <p className="product-color">{colors.length === 1 ? colors[0] : colors.length + ' colors'}</p>}
+        <div className="product-card-bottom">
         {price && <p className="product-price">
           {hasRange && <span className="price-from">From </span>}{formatMoney(currentPrice(price), market)}
           {price.sale !== undefined && <del aria-label={'Regular price ' + formatMoney(price.regular, market)}>{formatMoney(price.regular, market)}</del>}
         </p>}
+        <Link href={href} className="product-card-action" aria-label={'Choose options for ' + product.name}><ArrowUpRight size={17} aria-hidden /></Link>
+        </div>
+        {Boolean(product.sold && product.sold > 0) && <small className="product-sold">{new Intl.NumberFormat(market.locale).format(product.sold!)} sold</small>}
       </div>
     </article>
   );

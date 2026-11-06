@@ -11,8 +11,8 @@ export const CartActions = createContext<{
   chooseMarket: (trigger: HTMLElement) => void;
 } | null>(null);
 
-export function AddToBag({ product, variant, stock }: {
-  product: CatalogProduct; variant?: CatalogVariant; stock: number | null | undefined;
+export function AddToBag({ product, variant, stock, compact = false }: {
+  product: CatalogProduct; variant?: CatalogVariant; stock: number | null | undefined; compact?: boolean;
 }) {
   const actions = useContext(CartActions);
   const { lines, hydrated } = useCart();
@@ -26,7 +26,8 @@ export function AddToBag({ product, variant, stock }: {
   const available = typeof stock === 'number' && stock > 0;
   const limit = available && quantity >= Math.min(stock, maxLineQuantity);
   return <div className="add-to-bag">
-    <button className="button button-primary" type="button" disabled={!hydrated || !available || limit || pending} onClick={async (event) => {
+    <button className={compact ? 'button button-outline' : 'button button-primary'}
+      aria-label={compact ? 'Add ' + product.name + ' to bag' : undefined} type="button" disabled={!hydrated || !available || limit || pending} onClick={async (event) => {
       const trigger = event.currentTarget;
       setPending(true);
       const added = await commands.add({ ...identity, quantity: 1, label: product.name });
@@ -38,7 +39,7 @@ export function AddToBag({ product, variant, stock }: {
       setMessage('Added to your bag.');
       actions?.openBag(trigger);
     }}>
-      <ShoppingBag size={17} aria-hidden />{limit ? 'Available quantity in bag' : 'Add to bag'}
+      {!compact && <ShoppingBag size={17} aria-hidden />}{limit ? (compact ? 'In bag' : 'Available quantity in bag') : compact ? '+ Add' : 'Add to bag'}
     </button>
     {message && <span role="status" className="add-to-bag-message">{message}</span>}
   </div>;

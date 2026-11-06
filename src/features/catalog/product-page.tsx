@@ -3,6 +3,8 @@ import { compareProducts, inCategory } from './browse';
 import { catalogProducts, variantStock, withAvailability } from './data';
 import { Breadcrumbs, CatalogGrid } from './listing';
 import { ProductExperience } from './product-experience';
+import { merchandising, storefrontExtrasEnabled } from './merchandising';
+import { publicReviews } from './reviews';
 import { RecentlyViewed } from './saved-products';
 
 export async function ProductPage({ product, market, categories, requestedVariant }: {
@@ -10,9 +12,11 @@ export async function ProductPage({ product, market, categories, requestedVarian
 }) {
   const initial = product.variants.find((variant) => variant.id === requestedVariant)
     ?? product.variants.find((variant) => variant.price) ?? product.variants[0];
-  const [stock, others] = await Promise.all([
+  const [stock, others, extras, reviews] = await Promise.all([
     initial ? variantStock(product, initial) : null,
     catalogProducts(market).catch(() => []),
+    merchandising(product, market),
+    storefrontExtrasEnabled() ? publicReviews(product.id).catch(() => null) : null,
   ]);
   const candidates = others.filter((other) => other.id !== product.id);
   const related = candidates.filter((other) => product.category.length && inCategory(other, product.category.slice(0, 1)))
@@ -27,7 +31,7 @@ export async function ProductPage({ product, market, categories, requestedVarian
     <div className="container catalog-page product-page">
       <Breadcrumbs market={market} categories={categories} path={category?.path ?? []} current={product.name} />
       <ProductExperience key={market.code + ':' + product.id + ':' + (initial?.id ?? '')}
-        product={product} market={market} initialId={initial?.id} initialStock={stock} />
+        product={product} market={market} initialId={initial?.id} initialStock={stock} extras={extras} reviews={reviews} reviewsEnabled={storefrontExtrasEnabled()} />
       {related.length > 0 && <section className="product-shelf" aria-label="Related products">
         <h2>Related products</h2><CatalogGrid products={shelves.slice(0, related.length)} market={market} />
       </section>}

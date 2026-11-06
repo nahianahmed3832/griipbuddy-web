@@ -99,6 +99,7 @@ function apiVariant(value: unknown, productId: string, market: Market): CatalogV
     sku: string(row.sku),
     attributes: Object.fromEntries(Object.entries(record(row.attribute_values)).filter(([key, value]) => key.trim() && string(value).trim())) as Record<string, string>,
     images: images([row.image, ...rows(row.images)]),
+    colorCode: /^#[a-f0-9]{6}$/i.test(string(row.color_code)) ? string(row.color_code) : undefined,
     price: variantPrice(row, market),
   };
 }

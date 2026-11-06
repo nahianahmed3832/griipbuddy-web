@@ -1,11 +1,15 @@
 'use client';
 
-import { ImageIcon, Minus, Plus, X, ZoomIn } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ImageIcon, Minus, Plus, X, ZoomIn } from 'lucide-react';
 import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
 import { currentPrice, formatMoney, productBadges, type CatalogProduct, type CatalogVariant, type Market } from './catalog';
 import { WishlistButton } from './wishlist';
 import { AddToBag } from '@/features/cart/actions';
+import { FamilySelector, ProductAddons, SizeChart } from './product-options';
+import { ProductReviews } from './product-reviews';
+import type { merchandising } from './merchandising';
+import type { ReviewPage } from './reviews';
 
 function Gallery({ images, product }: { images: string[]; product: string }) {
   const [active, setActive] = useState(0);
@@ -13,17 +17,38 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
   const [zoomed, setZoomed] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const image = images[active];
+  const swipeStart = useRef<number | null>(null);
+  const ignoreTap = useRef(false);
+
+  function step(direction: number) {
+    setActive(current => (current + direction + images.length) % images.length);
+  }
 
   if (!image) return <div className="gallery-main catalog-image-empty"><ImageIcon aria-hidden size={34} /><span>Image unavailable</span></div>;
 
   return (
     <div className="product-gallery">
       <button className="gallery-main" type="button" aria-label={'Zoom image ' + (active + 1)}
-        onClick={() => { setOpen(true); setZoomed(false); dialog.current?.showModal(); }}>
+        onTouchStart={event => { swipeStart.current = event.touches[0].clientX; ignoreTap.current = false; }}
+        onTouchEnd={event => {
+          if (images.length < 2 || swipeStart.current === null) return;
+          const delta = event.changedTouches[0].clientX - swipeStart.current;
+          if (Math.abs(delta) > 45) { ignoreTap.current = true; step(delta < 0 ? 1 : -1); }
+          swipeStart.current = null;
+        }}
+        onClick={event => {
+          if (ignoreTap.current && event.detail) { ignoreTap.current = false; return; }
+          setOpen(true); setZoomed(false); dialog.current?.showModal();
+        }}>
         <Image src={image} fill priority={active === 0} unoptimized={image.startsWith('https://')} referrerPolicy="no-referrer" alt={product + ' — image ' + (active + 1)}
           sizes="(max-width: 760px) 92vw, 46vw" />
         <span className="gallery-zoom"><ZoomIn size={19} aria-hidden /></span>
       </button>
+      {images.length > 1 && <div className="gallery-controls">
+        <button type="button" className="icon-button" aria-label="Previous image" onClick={() => step(-1)}><ChevronLeft aria-hidden /></button>
+        <span aria-live="polite">{active + 1} / {images.length}</span>
+        <button type="button" className="icon-button" aria-label="Next image" onClick={() => step(1)}><ChevronRight aria-hidden /></button>
+      </div>}
       {images.length > 1 && <div className="gallery-thumbs" aria-label="Product images">
         {images.map((src, index) => <button key={src} type="button" onClick={() => setActive(index)}
           aria-label={'Show image ' + (index + 1)} aria-pressed={active === index}>
@@ -57,7 +82,9 @@ function variantDimensions(variants: CatalogVariant[]) {
       dimensions.set(key, dimension);
     }
   }
-  return [...dimensions];
+  const priority = ['device', 'model', 'style', 'color', 'fit', 'size'];
+  return [...dimensions].sort(([a], [b]) => (priority.includes(a) ? priority.indexOf(a) : priority.length)
+    - (priority.includes(b) ? priority.indexOf(b) : priority.length));
 }
 
 function valuesFor(variant?: CatalogVariant) {
@@ -66,18 +93,24 @@ function valuesFor(variant?: CatalogVariant) {
 
 function chooseVariant(variants: CatalogVariant[], selected: CatalogVariant | undefined, dimension: string, value: string) {
   const current = valuesFor(selected);
-  const candidates = variants.filter((variant) => valuesFor(variant).get(dimension) === value);
+  const candidates = variants.filter((variant) => {
+    if (!variant.price) return false;
+    const values = valuesFor(variant);
+    return values.get(dimension) === value && (dimension !== 'size' ||
+      ['color', 'fit', 'style', 'model', 'device'].every(key => !current.has(key) || values.get(key) === current.get(key)));
+  });
   function score(variant: CatalogVariant) {
     const values = valuesFor(variant);
     return [...current].filter(([key, value]) => key !== dimension && values.get(key) === value).length;
   }
   return candidates.reduce<CatalogVariant | undefined>((best, variant) => (
-    !best || score(variant) > score(best) || (score(variant) === score(best) && variant.price && !best.price) ? variant : best
+    !best || score(variant) > score(best) ? variant : best
   ), undefined);
 }
 
-export function ProductExperience({ product, market, initialId, initialStock }: {
+export function ProductExperience({ product, market, initialId, initialStock, extras, reviews, reviewsEnabled }: {
   product: CatalogProduct; market: Market; initialId?: string; initialStock: number | null;
+  extras: Awaited<ReturnType<typeof merchandising>>; reviews: ReviewPage | null; reviewsEnabled: boolean;
 }) {
   const [selectedId, setSelectedId] = useState(initialId);
   const [reply, setReply] = useState<{ id: string; stock: number | null }>();
@@ -94,6 +127,11 @@ export function ProductExperience({ product, market, initialId, initialStock }: 
   });
   const images = [...new Set([...(selected?.images ?? []), ...product.images])];
   const dimensions = variantDimensions(product.variants);
+  const reviewTotal = reviews?.ratings.reduce((sum, count) => sum + count, 0) ?? 0;
+  const showReviews = () => {
+    const panel = document.querySelector<HTMLDetailsElement>('#product-reviews');
+    if (panel) { panel.open = true; panel.scrollIntoView({ block: 'start' }); panel.querySelector('summary')?.focus({ preventScroll: true }); }
+  };
   const current = valuesFor(selected);
 
   useEffect(() => {
@@ -122,6 +160,7 @@ export function ProductExperience({ product, market, initialId, initialStock }: 
       <div className="detail-copy">
         {product.brand && <p className="eyebrow">{product.brand.name}</p>}
         <h1>{product.name}</h1>
+        {reviewTotal > 0 && <button type="button" className="text-link review-jump" onClick={showReviews}>{reviewTotal} {reviewTotal === 1 ? 'customer review' : 'customer reviews'}</button>}
         {badges.length > 0 && <ul className="detail-badges" aria-label="Product badges">
           {badges.map((badge) => <li data-badge={badge} key={badge}>{badge}</li>)}
         </ul>}
@@ -132,21 +171,44 @@ export function ProductExperience({ product, market, initialId, initialStock }: 
           <p className="detail-stock" data-stock={knownStock === 0 ? 'out' : knownStock && price ? 'in' : 'unknown'}>{availability}</p>
           {(selected?.sku || product.sku) && <p className="detail-sku">SKU <span>{selected?.sku || product.sku}</span></p>}
         </div>
-        {product.description && <p className="detail-description">{product.description}</p>}
+        <FamilySelector family={extras.family} slug={product.slug} market={market} />
         {dimensions.length > 0 && <div className="variant-groups">
-          {dimensions.map(([key, { title, values }]) => <fieldset key={key} className="variant-group">
-            <legend>{title}{current.get(key) && <span> · {current.get(key)}</span>}</legend>
-            <div>{[...values].map((value) => <button type="button" key={value} className="variant-option"
-              aria-label={title + ': ' + value} aria-pressed={current.get(key) === value}
-              onClick={() => select(key, value)}>{value}</button>)}</div>
-          </fieldset>)}
+          {dimensions.map(([key, { title, values }]) => <div key={key} className="variant-section">
+            {key === 'size' && extras.guide && <SizeChart guide={extras.guide} product={product.name} />}
+            <fieldset className="variant-group" data-dimension={key}>
+              <legend>{title}{current.get(key) && <span> · {current.get(key)}</span>}</legend>
+              {['device', 'model'].includes(key) && values.size > 4 ? <select aria-label={title} value={current.get(key) ?? ''}
+                onChange={event => select(key, event.currentTarget.value)}>
+                {!current.get(key) && <option value="" disabled>Choose {title.toLowerCase()}</option>}
+                {[...values].map(value => <option key={value} value={value} disabled={!chooseVariant(product.variants, selected, key, value)}>{value}</option>)}
+              </select> : <div>{[...values].map(value => {
+                const next = chooseVariant(product.variants, selected, key, value);
+                const image = key === 'color' ? next?.images[0] : undefined;
+                const soldOut = next && (next.id === selectedId && knownStock !== undefined ? knownStock : extras.stock[next.id]) === 0;
+                return <button type="button" key={value} className="variant-option" disabled={!next} data-sold-out={soldOut || undefined}
+                  aria-label={title + ': ' + value} aria-pressed={current.get(key) === value} onClick={() => select(key, value)}>
+                  {image ? <span className="option-image"><Image src={image} alt="" fill sizes="74px" unoptimized={image.startsWith('https://')} /></span>
+                    : key === 'color' && next?.colorCode && <span className="option-swatch" style={{ backgroundColor: next.colorCode }} />}
+                  <span>{value}</span>{soldOut && <span className="option-stock">Sold out</span>}
+                </button>;
+              })}</div>}
+            </fieldset>
+          </div>)}
         </div>}
+        {!dimensions.some(([key]) => key === 'size') && extras.guide && <SizeChart guide={extras.guide} product={product.name} />}
+        {extras.guide?.note && <p className="detail-fit-note"><strong>Fit note</strong> {extras.guide.note}</p>}
         <AddToBag key={selectedId ?? product.id} product={product} variant={selected} stock={knownStock} />
         {price && <WishlistButton slug={product.slug} name={product.name} className="button button-outline detail-wish" showLabel />}
-        {product.specifications.length > 0 && <details className="product-specifications">
-          <summary>Specifications</summary>
-          <dl>{product.specifications.map(({ title, values }, index) => <div key={title + index}><dt>{title}</dt><dd>{values.join(' · ')}</dd></div>)}</dl>
-        </details>}
+        <ProductAddons addons={extras.addons} market={market} />
+        <div className="product-information">
+          {product.description && <details className="detail-accordion" open><summary>Description</summary>
+            <p className="detail-description">{product.description}</p></details>}
+          <ProductReviews product={product} market={market} initial={reviews} enabled={reviewsEnabled} />
+          {product.specifications.length > 0 && <details className="detail-accordion product-specifications">
+            <summary>Specifications</summary>
+            <dl>{product.specifications.map(({ title, values }, index) => <div key={title + index}><dt>{title}</dt><dd>{values.join(' · ')}</dd></div>)}</dl>
+          </details>}
+        </div>
       </div>
     </div>
   );
