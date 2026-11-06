@@ -125,8 +125,8 @@ export async function accountAction(request: Request, action: string, body: Reco
         await recoveredRegister(local, name, validateNewPassword(body));
         return { next:'verify' };
       }
-      const code = text(body.code, 6);
-      if (!/^\d{6}$/.test(code)) throw new AccountError(400, 'Enter the six-digit verification code.');
+      const code = text(body.code, 5);
+      if (!/^\d{5}$/.test(code)) throw new AccountError(400, 'Enter the five-digit verification code.');
       const account = await recoveredVerify(local, Number(code));
       await setSession(request, { mode:'recovered', id:account.profile.id, token:account.token }, account.expires);
       return { signedIn:true, transferred:false };

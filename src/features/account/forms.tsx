@@ -51,9 +51,9 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="account-field"><span>{label}</span>{children}</label>;
 }
 
-function CodeField() {
+function CodeField({ length = 6 }: { length?: number }) {
   return <Field label="Verification code">
-    <input name="code" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required />
+    <input name="code" autoComplete="one-time-code" inputMode="numeric" pattern={`[0-9]{${length}}`} maxLength={length} required />
   </Field>;
 }
 
@@ -135,7 +135,7 @@ export function AuthForm({ initial, market, fixture, integrated }: {
       {step === 'login' && method === 'email' &&
         <Field key="email" label="Email address"><input name="email" type="email" autoComplete="email" maxLength={254} required /></Field>}
       {step === 'login' && <Field label="Password"><input name="password" type="password" autoComplete="current-password" maxLength={128} required /></Field>}
-      {(step === 'verify' || step === 'reset') && <CodeField />}
+      {(step === 'verify' || step === 'reset') && <CodeField length={integrated && step === 'verify' ? 5 : 6} />}
       {(step === 'register' || step === 'reset') && <NewPasswordFields />}
       {code && <PreviewCode code={code} />}
       <Feedback error={action.error} message={notice} />
