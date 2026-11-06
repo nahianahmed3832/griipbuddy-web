@@ -1,0 +1,135 @@
+import { ArrowLeft } from 'lucide-react';
+import Link from 'next/link';
+import { notFound, redirect } from 'next/navigation';
+import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
+import { categoryAt, categoryHref, collections, flattenCategories, marketHref, productHref, type Market } from '@/features/catalog/catalog';
+import { canonicalFor } from '@/features/catalog/seo';
+import { catalogNavigation, catalogProduct } from '@/features/catalog/data';
+import { CatalogListing } from '@/features/catalog/listing';
+import { ProductPage } from '@/features/catalog/product-page';
+import { WishlistPage } from '@/features/catalog/saved-products';
+import type { CatalogParams } from '@/features/catalog/browse';
+import { Homepage } from '@/features/home/homepage';
+import { resolveMarket } from '@/features/markets/resolve';
+import { CartView } from '@/features/cart/cart-view';
+import { checkoutPaused, methodsFor } from '@/features/checkout/config';
+import { OrderPage } from '@/features/checkout/order-page';
+import { CustomerPage } from '@/features/account/account-page';
+
+const information: Record<string, { title: string; description: string }> = {
+  'about-us': { title: 'About GriipBuddy', description: 'A place to discover considered accessories and everyday favorites across technology, fashion, clothing, bags, and lifestyle.' },
+  'contact-and-support': { title: 'Contact & support', description: 'Customer support details will be published with the storefront.' },
+  'shipping-procedure': { title: 'Shipping information', description: 'Shipping options and charges for each market will be published before checkout opens.' },
+  'returns-and-exchange': { title: 'Returns & exchanges', description: 'Returns and exchange terms will be published before orders open.' },
+  'privacy-and-policy': { title: 'Privacy policy', description: 'The storefront privacy policy will be available before launch.' },
+  'terms-and-conditions': { title: 'Terms & conditions', description: 'The storefront terms will be available before launch.' },
+};
+
+function PageFrame({ market, title, subtitle, children }: { market: Market; title: string; subtitle?: string; children?: ReactNode }) {
+  return (
+    <div className="container interior">
+      <Link className="back-link" href={marketHref(market)}><ArrowLeft size={16} aria-hidden /> Home</Link>
+      <div className="interior-heading"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
+      {children}
+    </div>
+  );
+}
+
+type PageProps = { params: Promise<{ path?: string[] }>; searchParams: Promise<CatalogParams> };
+
+async function resolvePath(path: string[]) {
+  const { markets, categories } = await catalogNavigation();
+  const { market, explicit } = await resolveMarket(markets, path[0]);
+  const [section, ...rest] = explicit ? path.slice(1) : path;
+  return { market, categories, section, rest, canonical: explicit && path[0] === market.prefix.slice(1) };
+}
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { market, categories, section, rest } = await resolvePath((await params).path ?? []);
+  if (section === 'product' && rest.length === 1) {
+    const product = await catalogProduct(market, rest[0]);
+    if (product) return { title: product.name, description: product.description.slice(0, 160) || undefined, ...canonicalFor(productHref(market, product.slug)) };
+  }
+  if (section === 'category') {
+    const category = categoryAt(categories, rest);
+    if (category) return { title: category.label, description: category.description || undefined, ...canonicalFor(categoryHref(market, category.path)) };
+  }
+  if (section === 'collections') {
+    const collection = collections.find((entry) => entry.id === rest[0]);
+    if (collection) return { title: collection.label, description: collection.description, ...canonicalFor(marketHref(market, '/collections/' + collection.id)) };
+  }
+  if (section === 'search') return { title: 'Search' };
+  if (section === 'products') return { title: 'Shop all', ...canonicalFor(marketHref(market, '/products')) };
+  if (section === 'account' || section === 'login') return { title: 'My account' };
+  if (section === 'cart') return { title: 'Shopping bag' };
+  if (section === 'checkout') return { title: 'Review checkout' };
+  if (section === 'order') return { title: 'Order details', referrer: 'no-referrer' };
+  if (!section) return canonicalFor(marketHref(market));
+  return {};
+}
+
+export default async function StorefrontPage({ params, searchParams }: PageProps) {
+  const { market, categories, section, rest, canonical } = await resolvePath((await params).path ?? []);
+  const query = await searchParams;
+
+  if (!canonical) {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) search.append(key, item);
+    }
+    const destination = marketHref(market, '/' + (section ? [section, ...rest].map(encodeURIComponent).join('/') : ''));
+    redirect(destination + (search.size ? '?' + search : ''));
+  }
+  if (!section) return <Homepage market={market} categories={categories} />;
+  if (section === 'category' && rest.length && rest.length <= 4) {
+    const category = categoryAt(categories, rest);
+    if (!category) notFound();
+    return <CatalogListing market={market} categories={categories} category={category} title={category.label} description={category.description}
+      path={'/category/' + category.path.map(encodeURIComponent).join('/')} params={query} />;
+  }
+  if (section === 'collections' && rest.length === 1) {
+    const collection = collections.find((entry) => entry.id === rest[0]);
+    if (!collection) notFound();
+    return <CatalogListing market={market} categories={categories} collection={collection.id} title={collection.label}
+      description={collection.description} path={'/collections/' + collection.id} params={query} />;
+  }
+  if (section === 'product' && rest.length === 1) {
+    const product = await catalogProduct(market, rest[0]);
+    if (!product) notFound();
+    if (product.slug !== rest[0]) redirect(productHref(market, product.slug));
+    return <ProductPage product={product} market={market} categories={categories}
+      requestedVariant={typeof query.variant === 'string' ? query.variant : undefined} />;
+  }
+  if (section === 'products' && rest.length === 1) {
+    const match = flattenCategories(categories).filter((category) => category.slug === rest[0]);
+    if (match.length === 1) redirect(categoryHref(market, match[0].path));
+    notFound();
+  }
+  if (section === 'account' || section === 'login') {
+    if (section === 'login' && rest.length) notFound();
+    return <CustomerPage market={market} path={rest} login={section === 'login'}
+      requestedOrder={typeof query.order === 'string' ? query.order : undefined} />;
+  }
+  if (section === 'order' && rest.length === 1) return <OrderPage id={rest[0]} market={market} />;
+  if (rest.length) notFound();
+
+  if (section === 'products' || section === 'search') {
+    return <CatalogListing market={market} categories={categories} title={section === 'search' ? 'Search' : 'Shop all'}
+      path={'/' + section} params={query} search={section === 'search'} />;
+  }
+  if (section === 'wishlist') return <PageFrame market={market} title="Wishlist"><WishlistPage market={market} /></PageFrame>;
+  if (section === 'cart' || section === 'checkout') {
+    const checkout = section === 'checkout';
+    const methods = checkout ? methodsFor(market.code) : undefined;
+    return <PageFrame market={market} title={checkout ? 'Review checkout' : 'Shopping bag'}
+      subtitle={checkout ? (methods?.length ? 'Confirm delivery and payment for your test order.' : 'Review the current prices, availability and delivery estimate before running a simulation.') : undefined}>
+      <CartView key={market.code + ':' + section} market={market} view={checkout ? 'checkout' : 'page'} methods={methods} paused={checkout && checkoutPaused()} />
+    </PageFrame>;
+  }
+  if (Object.hasOwn(information, section)) {
+    const page = information[section];
+    return <PageFrame market={market} title={page.title} subtitle={page.description} />;
+  }
+  notFound();
+}
