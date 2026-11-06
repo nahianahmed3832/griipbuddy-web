@@ -128,7 +128,8 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
   if (section === 'account' || section === 'login') {
     if (section === 'login' && rest.length) notFound();
     return <CustomerPage market={market} path={rest} login={section === 'login'}
-      requestedOrder={typeof query.order === 'string' ? query.order : undefined} />;
+      requestedOrder={typeof query.order === 'string' ? query.order : undefined}
+      returnTo={typeof query.next === 'string' ? query.next : undefined} />;
   }
   if (section === 'order' && rest.length === 1) return <OrderPage id={rest[0]} market={market} />;
   if (rest.length) notFound();
@@ -145,7 +146,7 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
     const methods = checkout && !signIn ? integrated ? await integratedMethods(market.code) : methodsFor(market.code) : undefined;
     return <PageFrame market={market} title={checkout ? 'Review checkout' : 'Shopping bag'}
       subtitle={checkout ? (methods?.length ? 'Confirm delivery and payment for your test order.' : 'Review the current prices, availability and delivery estimate before running a simulation.') : undefined}>
-      {signIn && <Link className="button button-primary" href={marketHref(market, '/login')}>Sign in to check out</Link>}
+      {signIn && <Link className="button button-primary" href={marketHref(market, '/login?next=%2Fcheckout')}>Sign in to check out</Link>}
       <CartView key={market.code + ':' + section} market={market} view={checkout ? 'checkout' : 'page'} methods={methods} paused={checkout && checkoutPaused()} />
     </PageFrame>;
   }

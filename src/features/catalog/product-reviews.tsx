@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { BadgeCheck, Camera, Star, X } from 'lucide-react';
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { marketHref, type CatalogProduct, type Market } from './catalog';
 import type { Eligible, ReviewMedia, ReviewPage } from './reviews';
 
@@ -27,6 +27,7 @@ export function ProductReviews({ product, market, initial, enabled }: {
   product: CatalogProduct; market: Market; initial: ReviewPage | null; enabled: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const section = useRef<HTMLDetailsElement>(null);
   const [eligibility, setEligibility] = useState<Eligible | null>();
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [message, setMessage] = useState('');
@@ -40,6 +41,9 @@ export function ProductReviews({ product, market, initial, enabled }: {
   const total = data?.ratings.reduce((sum, count) => sum + count, 0) ?? 0;
   const average = total ? data!.ratings.reduce((sum, count, index) => sum + count * (index + 1), 0) / total : 0;
   const gallery = data?.reviews.flatMap(review => review.media).slice(0, 6) ?? [];
+  useEffect(() => {
+    if (window.location.hash === '#product-reviews' && section.current) section.current.open = true;
+  }, []);
   if (!enabled) return null;
 
   async function list(next: number, order: string) {
@@ -106,7 +110,7 @@ export function ProductReviews({ product, market, initial, enabled }: {
     } finally { setBusy(false); }
   }
 
-  return <details className="detail-accordion review-accordion" id="product-reviews">
+  return <details className="detail-accordion review-accordion" id="product-reviews" ref={section}>
     <summary><span>Customer reviews</span><span className="review-count">{total > 0 ? <><Star size={14} fill="currentColor" aria-hidden /> {average.toFixed(1)} · {total}</> : 'Reviews'}</span></summary>
     <div className="review-panel">
       {total > 0 && <div className="review-score">

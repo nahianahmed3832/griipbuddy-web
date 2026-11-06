@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { apiConfigured } from '@/features/catalog/api';
-import { marketHref, type Market } from '@/features/catalog/catalog';
+import { marketHref, validSlug, type Market } from '@/features/catalog/catalog';
 import { WishlistPage } from '@/features/catalog/saved-products';
 import { accountId, orderStatus, type Customer, type CustomerOrder } from './contracts';
 import { AccountBagLink, AccountNotice, AddressesForm, AddressText, AuthForm, PreferencesForm, ProfileForm, ReturnForm, SecurityForms, SignOut } from './forms';
@@ -98,15 +98,19 @@ function OrderDetail({ order, market, fixture }: { order: CustomerOrder; market:
   </>;
 }
 
-export async function CustomerPage({ market, path, login = false, requestedOrder }: {
-  market: Market; path: string[]; login?: boolean; requestedOrder?: string;
+export async function CustomerPage({ market, path, login = false, requestedOrder, returnTo }: {
+  market: Market; path: string[]; login?: boolean; requestedOrder?: string; returnTo?: string;
 }) {
   const account = await currentAccount();
   const tab = path[0] ?? '';
   const initial = login ? 'login' : tab === 'register' ? 'register' : tab === 'recover' ? 'recover' : undefined;
   if (initial) {
     if (path.length > 1) notFound();
-    if (account) redirect(href(market));
+    const productSlug = returnTo?.startsWith('/product/') ? returnTo.slice('/product/'.length) : undefined;
+    const destination = returnTo === '/checkout' ? returnTo
+      : productSlug && validSlug(productSlug) ? '/product/' + encodeURIComponent(productSlug) + '#product-reviews' : undefined;
+    const returnQuery = destination && returnTo ? '?next=' + encodeURIComponent(returnTo) : '';
+    if (account) redirect(destination ? marketHref(market, destination) : href(market));
     return <div className="container account-auth">
       <div className="account-auth-aside">
         <p className="eyebrow">THE GRIIPBUDDY ACCOUNT</p>
@@ -114,7 +118,7 @@ export async function CustomerPage({ market, path, login = false, requestedOrder
         <p>Keep track of orders, save your favourites and pick up where you left off.</p>
         <div><ShoppingBag size={19} aria-hidden /> Shopping bag <Heart size={19} aria-hidden /> Wishlist <Package size={19} aria-hidden /> Orders</div>
       </div>
-      <AuthForm key={initial} initial={initial} market={market} fixture={!apiConfigured()} integrated={apiConfigured() && process.env.GRIIPBUDDY_CHECKOUT === 'integrated'} />
+      <AuthForm key={initial} initial={initial} market={market} destination={destination} returnQuery={returnQuery} fixture={!apiConfigured()} integrated={apiConfigured() && process.env.GRIIPBUDDY_CHECKOUT === 'integrated'} />
     </div>;
   }
   if (!navigation.some((item) => item.id === tab) || path.length > 2 || (path.length === 2 && tab !== 'orders')) notFound();

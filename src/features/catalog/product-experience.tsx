@@ -204,6 +204,9 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
           {product.description && <details className="detail-accordion" open><summary>Description</summary>
             <p className="detail-description">{product.description}</p></details>}
           <ProductReviews product={product} market={market} initial={reviews} enabled={reviewsEnabled} />
+          {product.deliveryEstimate && <details className="detail-accordion"><summary>Delivery</summary>
+            <p className="detail-description">Estimated delivery · {product.deliveryEstimate}. Shipping charges are shown in your bag.</p>
+          </details>}
           {product.specifications.length > 0 && <details className="detail-accordion product-specifications">
             <summary>Specifications</summary>
             <dl>{product.specifications.map(({ title, values }, index) => <div key={title + index}><dt>{title}</dt><dd>{values.join(' · ')}</dd></div>)}</dl>

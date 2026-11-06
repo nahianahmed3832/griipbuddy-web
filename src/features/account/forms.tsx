@@ -69,8 +69,8 @@ function PreviewCode({ code, channel = 'SMS' }: { code: string; channel?: string
   return <div className="account-preview-code">Preview {channel} code <output aria-label={'Preview ' + channel + ' code'}>{code}</output></div>;
 }
 
-export function AuthForm({ initial, market, fixture, integrated }: {
-  initial: 'login' | 'register' | 'recover'; market: Market; fixture: boolean; integrated?: boolean;
+export function AuthForm({ initial, market, fixture, integrated, destination, returnQuery }: {
+  initial: 'login' | 'register' | 'recover'; market: Market; fixture: boolean; integrated?: boolean; destination?: string; returnQuery: string;
 }) {
   const [step, setStep] = useState<AuthStep>(initial);
   const [method, setMethod] = useState<'phone' | 'email'>('phone');
@@ -101,7 +101,7 @@ export function AuthForm({ initial, market, fixture, integrated }: {
       if (message) {
         try { window.sessionStorage.setItem(noticeKey, message); } catch { /* Continue with the account. */ }
       }
-      window.location.assign(marketHref(market, '/account'));
+      window.location.assign(marketHref(market, destination ?? '/account'));
       return;
     }
     if (result.next) {
@@ -149,11 +149,11 @@ export function AuthForm({ initial, market, fixture, integrated }: {
         <p id="google-design-note">Design preview</p>
       </div>
       <div className="account-auth-links">
-        <Link className="text-link" href={marketHref(market, '/account/recover')}>Forgot password</Link>
-        <Link className="text-link" href={marketHref(market, '/account/register')}>Create an account</Link>
+        <Link className="text-link" href={marketHref(market, '/account/recover') + returnQuery}>Forgot password</Link>
+        <Link className="text-link" href={marketHref(market, '/account/register') + returnQuery}>Create an account</Link>
       </div>
     </> : <div className="account-auth-links">
-      <Link className="text-link" href={marketHref(market, '/login')}>Back to sign in</Link>
+      <Link className="text-link" href={marketHref(market, '/login') + returnQuery}>Back to sign in</Link>
       {(step === 'verify' || step === 'reset') && <button type="button" className="text-link" onClick={() => {
         setStep(step === 'verify' ? 'register' : 'recover');
         setCode('');

@@ -52,6 +52,7 @@ export type CatalogProduct = {
   category: string[];
   brand?: { id: string; name: string };
   description: string;
+  deliveryEstimate?: string;
   images: string[];
   variants: CatalogVariant[];
   specifications: { title: string; values: string[] }[];

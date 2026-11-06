@@ -150,6 +150,7 @@ export function apiProduct(
     category: categoryPath(row, taxonomy),
     brand: brands.get(ref(row.brand)),
     description: string(row.description),
+    deliveryEstimate: string(row.approximately_delivery_time).trim().slice(0, 160) || undefined,
     images: images([row.thumbnail, ...rows(row.slider_images)]),
     variants: rows(variants).flatMap((variant) => apiVariant(variant, id, market) ?? []),
     specifications: specs(row),
