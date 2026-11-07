@@ -26,6 +26,7 @@ test('search, saved items and market changes use the fixture catalog', async ({ 
   await search.fill('arc');
   await search.press('Enter');
   await expect(page).toHaveURL(/\/search\?.*q=arc$/);
+  await page.getByRole('link', { name: 'The Arc Shoulder Bag', exact: true }).click();
   await page.getByRole('button', { name: 'Save The Arc Shoulder Bag' }).click();
   await expect(page.getByRole('button', { name: 'Remove The Arc Shoulder Bag' })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('link', { name: 'Wishlist' }).click();

@@ -4,15 +4,14 @@ import { ArrowUpRight, Search } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useId, useState } from 'react';
-import { marketHref, type Category, type Market, type Suggestion } from './catalog';
+import { marketHref, type Market, type Suggestion } from './catalog';
 import { CatalogImage } from './catalog-image';
 import { updateBrowserList, useBrowserList } from './browser-lists';
 
 export function SearchBox({
-  market, categories = [], style, initialQuery = '', initialCategory = '', onChoose, onFocus,
+  market, style, initialQuery = '', initialCategory = '', onChoose, onFocus,
 }: {
   market: Market;
-  categories?: Category[];
   style: 'header' | 'drawer' | 'page';
   initialQuery?: string;
   initialCategory?: string;
@@ -22,7 +21,7 @@ export function SearchBox({
   const id = useId();
   const router = useRouter();
   const [query, setQuery] = useState(initialQuery);
-  const [category, setCategory] = useState(initialCategory);
+  const category = initialCategory;
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(-1);
   const [reply, setReply] = useState<{ key: string; matches: Suggestion[]; failed?: boolean }>();
@@ -76,14 +75,7 @@ export function SearchBox({
         router.push(suggestion?.href ?? resultPath(clean));
       }}
     >
-      {style === 'header' && categories.length > 0 && (
-        <select className="search-category" name="category" aria-label="Search category" value={category}
-          onChange={(event) => { setCategory(event.target.value); setActive(-1); }}>
-          <option value="">All categories</option>
-          {categories.map((entry) => <option key={entry.id} value={entry.slug}>{entry.label}</option>)}
-        </select>
-      )}
-      {style !== 'header' && initialCategory && <input type="hidden" name="category" value={initialCategory} />}
+      {category && <input type="hidden" name="category" value={category} />}
       <input type="search" name="q" value={query} maxLength={100} aria-label="Search products"
         data-first-focus={style === 'drawer' ? '' : undefined} autoComplete="off"
         aria-controls={open ? id : undefined} aria-expanded={open} role="combobox" aria-autocomplete="list"

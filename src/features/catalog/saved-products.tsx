@@ -25,10 +25,10 @@ export function WishlistPage({ market }: { market: Market }) {
     <>
       {readOnly && <p className="catalog-notice">Saved products from your recovered account are available to view.</p>}
       {error && <p role="status" className="catalog-notice">{error}</p>}
-      {products.length > 0 ? <div className="product-grid">{products.map((product) => <ProductCard key={product.id} product={product} market={market} />)}</div>
+      {products.length > 0 ? <div className="product-grid">{products.map((product) => <ProductCard key={product.id} product={product} market={market} allowUnsave />)}</div>
         : <div className="empty-state">
           <Heart size={30} aria-hidden /><h2>No saved items in this market</h2>
-          <p>Tap the heart on something you love to find it here later.</p>
+          <p>Save items from their product page to find them here later.</p>
           <Link className="button button-primary" href={marketHref(market, '/collections/new-arrivals')}>Explore new arrivals</Link>
         </div>}
       <SavedCollections market={market} />

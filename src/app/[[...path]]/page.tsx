@@ -1,4 +1,4 @@
-import { fixturesEnabled, hostedCatalogPreview, publicBuild } from '@/features/public-build';
+import { hostedCatalogPreview, publicBuild } from '@/features/public-build';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
@@ -6,7 +6,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { categoryAt, categoryHref, collections, flattenCategories, marketHref, productHref, type Market } from '@/features/catalog/catalog';
 import { canonicalFor, canonicalOrigin } from '@/features/catalog/seo';
-import { apiConfigured } from '@/features/catalog/api';
+import { accountMode } from '@/features/account/config';
 import { Comparison } from '@/features/catalog/compare';
 import { DiscoveryPage, discoveryPages, type DiscoveryPageKey } from '@/features/discovery/discovery-page';
 import { catalogNavigation, catalogProduct } from '@/features/catalog/data';
@@ -147,7 +147,7 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
     notFound();
   }
   if (section === 'account' || section === 'login') {
-    if (publicBuild() || (!apiConfigured() && !fixturesEnabled())) redirect(marketHref(market, '/products'));
+    if (!accountMode()) redirect(marketHref(market, '/products'));
     if (section === 'login' && rest.length) notFound();
     return <CustomerPage market={market} path={rest} login={section === 'login'}
       requestedOrder={typeof query.order === 'string' ? query.order : undefined}
@@ -184,7 +184,7 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
         paused={checkout && checkoutPaused()} allowSimulation={!integrated} preview={hostedCatalogPreview()} />
     </PageFrame>;
   }
-  if (section === 'profile') return <ProfilePage market={market} accountsEnabled={!publicBuild() && (apiConfigured() || fixturesEnabled())}
+  if (section === 'profile') return <ProfilePage market={market} accountsEnabled={Boolean(accountMode())}
     signedIn={Boolean(await currentAccount())} />;
   if (Object.hasOwn(information, section)) return <InformationPage market={market} slug={section as InformationPageKey} />;
   notFound();

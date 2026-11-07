@@ -2,8 +2,9 @@ import 'server-only';
 
 import { randomUUID } from 'node:crypto';
 import { cookies } from 'next/headers';
-import { apiConfigured } from '@/features/catalog/api';
+import { hostedCatalogPreview } from '@/features/public-build';
 import { validSlug } from '@/features/catalog/catalog';
+import { accountMode } from './config';
 import { AccountError, emailAddress, passwordValue, phoneKey, phoneNumber, text, type Address } from './contracts';
 import { addFixtureAccount, findFixturePhone, findVerifiedFixtureEmail } from './fixture';
 import { recoveredFavorite, recoveredLogin, recoveredRegister, recoveredVerify, recoveredWishlistEnabled } from './recovered';
@@ -15,15 +16,24 @@ function unavailable() {
   return new AccountError(409, 'This change is unavailable for recovered accounts. Contact support for help.');
 }
 
+function requireTestPhone(phone: string) {
+  if (!/^0000000\d{4}$/.test(phoneKey(phone))) {
+    throw new AccountError(400, 'Use a test phone number starting with 0000000, followed by four digits.');
+  }
+}
+
 async function login(request: Request, body: Record<string, unknown>) {
   const phone = phoneNumber(body.phone);
   const email = emailAddress(body.email);
   const password = passwordValue(body.password, 1);
   if ((!phone && !email) || (phone && email) || !password) throw new AccountError(400, 'Enter your phone number or email and your password.');
-  if (email && apiConfigured()) throw new AccountError(409, 'Use your verified phone to sign in to a recovered account.');
+  const preview = hostedCatalogPreview();
+  if (preview) requireTestPhone(phone);
+  const recoveredAccount = accountMode() === 'recovered';
+  if (email && recoveredAccount) throw new AccountError(409, 'Use your verified phone to sign in to a recovered account.');
   limitAttempt('login:' + (email || phoneKey(phone)), 8);
   limitAttempt('login:all', 120);
-  if (apiConfigured()) {
+  if (recoveredAccount) {
     const recovered = await recoveredLogin(phone, password).catch((error) => {
       if (error instanceof AccountError && error.status === 401 && phoneKey(phone) !== phone) return recoveredLogin(phoneKey(phone), password);
       throw error;
@@ -36,7 +46,7 @@ async function login(request: Request, body: Record<string, unknown>) {
     throw new AccountError(401, email ? 'Check your verified email and password.' : 'Check your phone number and password.');
   }
   await setSession(request, { mode: 'fixture', id: account.profile.id });
-  return { signedIn: true, ...transferGuestCart(account, body.guest) };
+  return { signedIn: true, ...(preview ? { transferred: false } : transferGuestCart(account, body.guest)) };
 }
 
 async function fixtureChallenge(request: Request, purpose: Parameters<typeof makeChallenge>[0], destination: string, id?: string,
@@ -112,7 +122,7 @@ export async function accountAction(request: Request, action: string, body: Reco
   }
 
   if (action === 'register' || action === 'verify' || action === 'recover' || action === 'reset') {
-    if (apiConfigured()) {
+    if (accountMode() === 'recovered') {
       if (process.env.GRIIPBUDDY_CHECKOUT !== 'integrated' || !['register','verify'].includes(action)) throw unavailable();
       const phone = phoneNumber(body.phone);
       if (!phone || !/^\d{10,15}$/.test(phoneKey(phone))) throw new AccountError(400, 'Enter a valid phone number.');
@@ -134,7 +144,9 @@ export async function accountAction(request: Request, action: string, body: Reco
     if (action === 'register') {
       const phone = phoneNumber(body.phone);
       const name = text(body.name, 120);
-      const email = emailAddress(body.email);
+      const preview = hostedCatalogPreview();
+      if (preview) requireTestPhone(phone);
+      const email = preview ? '' : emailAddress(body.email);
       const password = validateNewPassword(body);
       if (!phone || !name || (body.email !== undefined && body.email !== '' && !email)) {
         throw new AccountError(400, 'Enter a name, phone number and a valid email address if supplied.');
@@ -150,7 +162,7 @@ export async function accountAction(request: Request, action: string, body: Reco
       const { name, email, password } = challenge.registration;
       const account = await addFixtureAccount(name, challenge.destination, email, password);
       await setSession(request, { mode: 'fixture', id: account.profile.id });
-      return { signedIn: true, ...transferGuestCart(account, body.guest) };
+      return { signedIn: true, ...(hostedCatalogPreview() ? { transferred: false } : transferGuestCart(account, body.guest)) };
     }
     if (action === 'recover') {
       const phone = phoneNumber(body.phone);

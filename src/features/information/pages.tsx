@@ -102,7 +102,9 @@ export function ProfilePage({ market, accountsEnabled, signedIn }: { market: Mar
       <section className="guide-navigation" aria-label="Your shopping">
         <h2>Your shopping</h2>
         {accountsEnabled && <TileLink market={market} path={signedIn ? '/account' : '/login'} label={signedIn ? 'My account' : 'Sign in'}
-          description="Access your account and order history." icon={UserRound} />}
+          description="Access your account." icon={UserRound} />}
+        {accountsEnabled && !signedIn && <TileLink market={market} path="/account/register" label="Create an account"
+          description="Register with GriipBuddy." icon={UserRound} />}
         <TileLink market={market} path="/wishlist" label="Saved items" description="Find the products you’ve saved." icon={Heart} />
         <TileLink market={market} path="/rewards" label="Rewards" description="See rewards availability in your market." icon={Info} />
       </section>

@@ -9,9 +9,11 @@ import { availableMerchandise, catalogSample, withAvailability } from '@/feature
 import { CatalogImage } from '@/features/catalog/catalog-image';
 import { CatalogGrid } from '@/features/catalog/listing';
 import { record, rows } from '@/features/catalog/api';
+import { approvedCatalogVideo } from '@/features/catalog/media';
 import { ShoppingHistory } from '@/features/catalog/saved-products';
 import { discoveryLinks } from '@/features/discovery/contracts';
 import { ShelfRail } from './shelf-rail';
+import { CampaignStage } from './campaign-stage';
 import { contentMedia, contentPath, contentRows, siteContent, text } from './content';
 
 function Hero({ market, content }: { market: Market; content: Record<string, unknown> }) {
@@ -113,16 +115,6 @@ async function retailEdit(market: Market, popular = false) {
   return availableMerchandise(distinctProducts(candidates).slice(0, 16));
 }
 
-function RetailHeroFeature({ market, category }: { market: Market; category?: Category }) {
-  const photo = <Image src="/editorial/device-edit-campaign.webp"
-    alt={category ? '' : 'White, gray and charcoal phone cases with orange camera rims on terracotta'}
-    fill priority sizes="(max-width: 760px) 100vw, (max-width: 960px) 62vw, (max-width: 1550px) 55vw, 795px" />;
-  if (!category) return <div className="retail-hero-feature">{photo}</div>;
-  return <Link className="retail-hero-feature" prefetch={false} href={categoryHref(market, category.path)}>
-    {photo}<span className="retail-hero-caption">Shop phone cases <ArrowUpRight aria-hidden size={16} /></span>
-  </Link>;
-}
-
 async function RetailShelf({ market, arrivals, best }: {
   market: Market; arrivals: Promise<CatalogProduct[]>; best?: Promise<CatalogProduct[]>;
 }) {
@@ -165,19 +157,19 @@ function RetailHomepage({ market, categories }: { market: Market; categories: Ca
   const best = retailEdit(market, true).catch(() => []);
   const arrivals = retailEdit(market).then(products => products.slice(0, 8)).catch(() => []);
   const phoneCases = categories.find(({ slug }) => slug === 'phone-cases');
+  const video = approvedCatalogVideo('videos/3b208e92-0ae6-4c3b-ae30-c285e683536b.mp4');
   return <>
-    <section className="container retail-hero" aria-labelledby="hero-title">
-      <div className="retail-hero-copy">
-        <p className="eyebrow"><span aria-hidden /> THE DEVICE EDIT</p>
-        <h1 id="hero-title">Protect what<br /> you carry.</h1>
-        <p>Phone cases, screen protectors and everyday tech accessories.</p>
-        <div className="market-hero-actions">
-          <Link className="button button-primary" href={marketHref(market, '/products')}>Shop accessories <ArrowRight size={17} aria-hidden /></Link>
-          <Link className="text-link" href={marketHref(market, '/collections/new-arrivals')}>New arrivals <ArrowUpRight size={15} aria-hidden /></Link>
-        </div>
+    <CampaignStage video={video}>
+      <p className="eyebrow"><span aria-hidden /> THE DEVICE EDIT</p>
+      <h1>Protect what<br /> you carry.</h1>
+      <p>Phone cases, screen protectors and everyday tech accessories.</p>
+      <div className="market-hero-actions">
+        <Link className="button button-primary" href={marketHref(market, '/products')}>Shop accessories <ArrowRight size={17} aria-hidden /></Link>
+        <Link className="text-link" href={phoneCases ? categoryHref(market, phoneCases.path) : marketHref(market, '/collections/new-arrivals')}>
+          {phoneCases ? 'Shop phone cases' : 'New arrivals'} <ArrowUpRight size={15} aria-hidden />
+        </Link>
       </div>
-      <RetailHeroFeature market={market} category={phoneCases} />
-    </section>
+    </CampaignStage>
     <div className="home container retail-home">
       <Departments market={market} categories={categories} />
       <Suspense fallback={<div className="skeleton-shelf" aria-hidden>{[1, 2, 3, 4].map(i => <span className="skeleton-tile" key={i} />)}</div>}>

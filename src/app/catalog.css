@@ -101,9 +101,6 @@ body:has(.zoom-dialog[open]) { overflow: hidden; }
   .gallery-thumbs button { flex-basis: 58px; height: 58px; }
 }
 
-.product-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: auto; }
-.product-card-action { display: grid; flex: 0 0 34px; height: 34px; place-items: center; border: 1px solid var(--line); color: var(--plum); border-radius: 50%; }
-.product-card:has(.product-title-link:is(:hover, :focus-visible)) .product-card-action { background: var(--plum); color: white; }
 .product-sold { color: var(--muted); font-size: .72rem; }
 .gallery-main { touch-action: pan-y pinch-zoom; border-radius: 14px; }
 .gallery-controls { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 4px; color: var(--muted); font-size: .77rem; font-variant-numeric: tabular-nums; }

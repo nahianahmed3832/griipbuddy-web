@@ -1,12 +1,13 @@
-import { fixturesEnabled, publicBuild } from '@/features/public-build';
-import { apiConfigured } from '@/features/catalog/api';
+import { hostedCatalogPreview } from '@/features/public-build';
 import { sameOriginRequest } from '@/app/api/request-origin';
 import { accountAction } from '@/features/account/actions-server';
+import { accountMode } from '@/features/account/config';
 import { AccountError, fields } from '@/features/account/contracts';
 import { accountScope, ownOrders, requireCustomer } from '@/features/account/session';
 
 const actions = new Set(['login', 'register', 'verify', 'recover', 'reset', 'logout', 'profile', 'address', 'return',
   'preferences', 'email-send', 'email-verify', 'password', 'cart', 'wishlist']);
+const previewActions = new Set(['login', 'register', 'verify', 'logout']);
 
 function json(data: unknown, status = 200) {
   return Response.json(data, { status, headers: { 'Cache-Control': 'private, no-store' } });
@@ -18,9 +19,9 @@ function failure(error: unknown) {
 }
 
 export async function GET(_request: Request, { params }: { params: Promise<{ action: string }> }) {
-  if (publicBuild() || (!apiConfigured() && !fixturesEnabled())) return json({ error: 'Customer accounts are unavailable in this storefront.' }, 404);
+  if (!accountMode()) return json({ error: 'Customer accounts are unavailable in this storefront.' }, 404);
   const { action } = await params;
-  if (action !== 'me' && action !== 'orders') return json({ error: 'Account action not found.' }, 404);
+  if (action !== 'me' && (action !== 'orders' || hostedCatalogPreview())) return json({ error: 'Account action not found.' }, 404);
   try {
     const account = await requireCustomer();
     return json(action === 'me' ? accountScope(account) : { orders: await ownOrders(account) });
@@ -30,9 +31,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ act
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ action: string }> }) {
-  if (publicBuild() || (!apiConfigured() && !fixturesEnabled())) return json({ error: 'Customer accounts are unavailable in this storefront.' }, 404);
+  if (!accountMode()) return json({ error: 'Customer accounts are unavailable in this storefront.' }, 404);
   const { action } = await params;
-  if (!actions.has(action)) return json({ error: 'Account action not found.' }, 404);
+  if (!(hostedCatalogPreview() ? previewActions : actions).has(action)) return json({ error: 'Account action not found.' }, 404);
   if (!sameOriginRequest(request)) return json({ error: 'Use the storefront to manage your account.' }, 403);
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) return json({ error: 'Use JSON for account requests.' }, 415);
   if (Number(request.headers.get('content-length')) > 24_000) return json({ error: 'Account request is too large.' }, 413);

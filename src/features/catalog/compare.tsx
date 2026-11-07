@@ -11,27 +11,6 @@ import { useCatalogItems } from './use-catalog-items';
 const compareLimit = 3;
 const keyFor = (market: Market) => 'griipbuddy-compare:' + market.code;
 
-export function CompareButton({ market, slug, name }: { market: Market; slug: string; name: string }) {
-  const key = keyFor(market);
-  const { items, hydrated } = useBrowserList(key);
-  const selected = items.includes(slug);
-  const full = !selected && items.length >= compareLimit;
-
-  return <button className="compare-toggle" type="button" aria-pressed={selected} disabled={!hydrated || full}
-    aria-label={(selected ? 'Remove ' : 'Compare ') + name + (selected ? ' from comparison' : '')}
-    title={full ? 'Remove an item to compare another product' : undefined}
-    onClick={() => updateBrowserList(key, (previous) => previous.includes(slug) ? previous.filter((item) => item !== slug) : [...previous, slug].slice(0, compareLimit))}>
-    <Columns2 size={14} aria-hidden /> {selected ? 'Comparing' : 'Compare'}
-  </button>;
-}
-
-export function CompareLink({ market }: { market: Market }) {
-  const { items } = useBrowserList(keyFor(market));
-  return <Link className="button button-outline compare-link" href={marketHref(market, '/compare')}>
-    <Columns2 size={16} aria-hidden /> Compare{items.length ? ' (' + items.length + ')' : ''}
-  </Link>;
-}
-
 export function Comparison({ market }: { market: Market }) {
   const key = keyFor(market);
   const { items, hydrated } = useBrowserList(key);
@@ -41,8 +20,8 @@ export function Comparison({ market }: { market: Market }) {
 
   if (!hydrated || loading) return <p role="status" className="catalog-notice">Loading comparison…</p>;
   if (failed) return <p role="status" className="catalog-notice">Comparison products could not be loaded. Try refreshing.</p>;
-  if (!items.length) return <div className="empty-state"><Columns2 aria-hidden /><h2>Start a comparison</h2>
-    <p>Choose Compare on up to three products to see their prices and details side by side.</p>
+  if (!items.length) return <div className="empty-state"><Columns2 aria-hidden /><h2>No saved comparison</h2>
+    <p>There are no products saved in your comparison.</p>
     <Link className="button button-primary" href={marketHref(market, '/products')}>Browse products</Link></div>;
 
   return <>

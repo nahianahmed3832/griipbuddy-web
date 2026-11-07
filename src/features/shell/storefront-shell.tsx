@@ -106,12 +106,12 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
           </Link>
           <div className="header-find">
             <button type="button" className="icon-button header-browse" aria-label="Browse categories" onClick={(event) => open('browse', event.currentTarget)}><Menu aria-hidden /></button>
-            <SearchBox market={market} categories={categories} style="header" onFocus={() => setMega(null)} />
+            <SearchBox market={market} style="header" onFocus={() => setMega(null)} />
           </div>
           <div className="header-utilities">
             <button type="button" className="market-trigger" aria-label={'Choose country, current market ' + market.name}
               onClick={(event) => open('market', event.currentTarget)}><Globe size={16} aria-hidden /><span>{market.code}<span className="market-currency"> / {market.currency}</span></span><ChevronDown size={11} aria-hidden /></button>
-            {accountsEnabled && <Link className="icon-button header-account" aria-label="Account" href={marketHref(market, signedIn ? '/account' : '/login')} onClick={() => setMega(null)}><UserRound aria-hidden /></Link>}
+            {accountsEnabled && <Link className="icon-button header-account" aria-label="Account" href={marketHref(market, signedIn ? '/account' : '/login')} onClick={() => setMega(null)}><UserRound aria-hidden /><span>Account</span></Link>}
             <Link className="icon-button desktop-utility" aria-label="Wishlist" href={marketHref(market, '/wishlist')} onClick={() => setMega(null)}><Heart aria-hidden /></Link>
             <button type="button" className="icon-button desktop-utility bag-trigger"
               aria-label={count ? 'Shopping bag, ' + countLabel : 'Shopping bag'}
@@ -162,7 +162,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
         )}
       </header>
       <main id="main-content" className="storefront-route" tabIndex={-1}>{children}</main>
-      <Footer market={market} categories={categories} geoAttribution={preview} accountsEnabled={accountsEnabled} onMarket={(trigger) => open('market', trigger)} />
+      <Footer market={market} categories={categories} geoAttribution={preview} accountsEnabled={accountsEnabled && !preview} onMarket={(trigger) => open('market', trigger)} />
       <nav className="mobile-nav" aria-label="Mobile navigation">
         <Link href={marketHref(market)} aria-current={localPath === '/' ? 'page' : undefined}><House aria-hidden /><span>Home</span></Link>
         <Link className="bag-trigger" href={marketHref(market, '/cart')} aria-label={count ? 'Cart, ' + countLabel : 'Cart'}

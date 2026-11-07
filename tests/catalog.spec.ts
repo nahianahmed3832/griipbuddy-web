@@ -17,7 +17,7 @@ test('catalog filters and sorts matching variants by the selected market price',
   const card = results.getByRole('article');
   await expect(card.getByText('£33')).toBeVisible();
   await expect(card.getByText('38 units sold', { exact: true })).toBeVisible();
-  await expect(card.getByText('Out of Stock', { exact: true })).toBeVisible();
+  await expect(card.getByRole('button')).toHaveCount(0);
   await expect(card.getByRole('link')).toHaveCount(1);
   await results.getByRole('link', { name: 'Remove filter: Color: Cobalt' }).click();
   await expect(results.getByRole('link', { name: 'Remove filter: Color: Cobalt' })).toHaveCount(0);
@@ -85,12 +85,12 @@ test('mobile gallery and variant selection update image, price, SKU and stock', 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 });
 
-test('scoped autocomplete supports keyboard selection and recent items stay market eligible', async ({ page }) => {
+test('header autocomplete supports keyboard selection and recent items stay market eligible', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/us/product/day-bottle');
   await expect(page.locator('.detail-stock')).toHaveText('Out of stock');
   const header = page.getByRole('search', { name: 'Storefront search' });
-  await header.getByRole('combobox', { name: 'Search category' }).selectOption('bags');
+  await expect(header.getByRole('combobox', { name: 'Search category' })).toHaveCount(0);
   const search = header.getByRole('combobox', { name: 'Search products' });
   await search.fill('arc');
   await expect(header.getByRole('option', { name: /The Arc Shoulder Bag/ })).toBeVisible();

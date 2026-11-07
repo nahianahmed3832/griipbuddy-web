@@ -9,7 +9,6 @@ import { compareProducts, facetValue, inCategory, inCollection, matchingVariants
 import { catalogBrowse, mapLimited, variantStock, withAvailability } from './data';
 import { ProductCard } from './product-card';
 import { SearchBox } from './search-box';
-import { CompareLink } from './compare';
 import { FilterDisclosure } from './filter-disclosure';
 
 const perPage = 20;
@@ -223,7 +222,7 @@ async function ListingResults({ market, categories, category, collection, params
         <section aria-label="Catalog results" className="catalog-results">
           <div className="results-toolbar">
             <p>{notice ? 'Update filters' : total + (total === 1 ? ' product' : ' products') + (batch ? ' in this batch' : '')}{filters.query && ' for “' + filters.query + '”'}</p>
-            <div className="results-actions"><CompareLink market={market} />
+            <div className="results-actions">
             <Form className="sort-form" action={action}>
               {[...query].filter(([name]) => name !== 'sort').map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
               <label>Sort by <select name="sort" defaultValue={filters.sort} aria-label="Sort by">

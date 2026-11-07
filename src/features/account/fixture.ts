@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { randomUUID } from 'node:crypto';
+import { hostedCatalogPreview } from '@/features/public-build';
 import { AccountError, phoneKey, type Customer, type CustomerOrder } from './contracts';
 import { accountState, hashPassword, type FixtureAccount } from './state';
 
@@ -26,6 +27,7 @@ function fixtureAccount(name: string, phone: string, email: string, password: Fi
 }
 
 export async function seedAccounts() {
+  if (hostedCatalogPreview()) return;
   accountState.seed ??= (async () => {
     const password = await hashPassword('Preview-only-2026');
     const account = fixtureAccount('Maya Rahman', '01000000021', 'maya@preview.invalid', password, 'preview-customer-maya');

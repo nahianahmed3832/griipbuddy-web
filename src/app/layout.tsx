@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import '@fontsource-variable/manrope';
 import '@fontsource-variable/inter';
-import { apiConfigured } from '@/features/catalog/api';
+import { accountMode } from '@/features/account/config';
 import { catalogNavigation } from '@/features/catalog/data';
 import { currentAccount } from '@/features/account/session';
 import { recoveredWishlistEnabled } from '@/features/account/recovered';
@@ -30,10 +30,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     : fixturesEnabled() ? 'DEVELOPMENT PREVIEW · Synthetic catalog and offers'
       : preview ? 'Sample storefront · Explore the catalog'
         : text(contentRows(content.top_bar_messages).sort((a,b) => Number(a.position) - Number(b.position))[0]?.message);
-  const shop = navigation ? <StorefrontShell {...navigation} signedIn={Boolean(account)} accountsEnabled={!preview && (apiConfigured() || fixturesEnabled())}
+  const shop = navigation ? <StorefrontShell {...navigation} signedIn={Boolean(account)} accountsEnabled={Boolean(accountMode())}
     announcement={announcement} preview={hostedCatalogPreview()}>{children}</StorefrontShell> : children;
   return <html lang="en"><body>
-    {account ? <AccountShoppingProvider key={account.profile.id}
+    {account && !preview ? <AccountShoppingProvider key={account.profile.id}
       scope={{ mode: account.mode, saved: account.profile.saved, cart: account.fixture?.cart,
         wishlistWritable: account.mode === 'fixture' || recoveredWishlistEnabled() }}>{shop}</AccountShoppingProvider> : shop}
   </body></html>;

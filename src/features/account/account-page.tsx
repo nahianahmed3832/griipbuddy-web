@@ -2,13 +2,14 @@ import { ArrowLeft, ArrowRight, Bell, ClipboardList, Gift, Heart, MapPin, Packag
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { apiConfigured } from '@/features/catalog/api';
+import { hostedCatalogPreview } from '@/features/public-build';
 import { marketHref, validSlug, type Market } from '@/features/catalog/catalog';
 import { WishlistPage } from '@/features/catalog/saved-products';
 import { accountId, orderStatus, type Customer, type CustomerOrder } from './contracts';
 import { AccountBagLink, AccountNotice, AddressesForm, AddressText, AuthForm, PreferencesForm, ProfileForm, ReturnForm, SecurityForms, SignOut } from './forms';
 import { OrderPage } from '@/features/checkout/order-page';
 import { currentAccount, ownOrders } from './session';
+import { accountMode } from './config';
 
 const navigation = [
   { id: '', label: 'Overview', icon: UserRound },
@@ -104,27 +105,37 @@ export async function CustomerPage({ market, path, login = false, requestedOrder
 }) {
   const account = await currentAccount();
   const tab = path[0] ?? '';
+  const preview = hostedCatalogPreview();
+  if (preview && tab && tab !== 'register') notFound();
   const initial = login ? 'login' : tab === 'register' ? 'register' : tab === 'recover' ? 'recover' : undefined;
   if (initial) {
     if (path.length > 1) notFound();
     const productSlug = returnTo?.startsWith('/product/') ? returnTo.slice('/product/'.length) : undefined;
-    const destination = returnTo === '/checkout' ? returnTo
+    const destination = preview ? undefined : returnTo === '/checkout' ? returnTo
       : productSlug && validSlug(productSlug) ? '/product/' + encodeURIComponent(productSlug) + '#product-reviews' : undefined;
     const returnQuery = destination && returnTo ? '?next=' + encodeURIComponent(returnTo) : '';
     if (account) redirect(destination ? marketHref(market, destination) : href(market));
     return <div className="container account-auth">
       <div className="account-auth-aside">
-        <p className="eyebrow">THE GRIIPBUDDY ACCOUNT</p>
-        <h2>Everything you carry, together.</h2>
-        <p>Keep track of orders, save your favourites and pick up where you left off.</p>
-        <div><ShoppingBag size={19} aria-hidden /> Shopping bag <Heart size={19} aria-hidden /> Wishlist <Package size={19} aria-hidden /> Orders</div>
+        <p className="eyebrow">{preview ? 'DEVELOPMENT PREVIEW' : 'THE GRIIPBUDDY ACCOUNT'}</p>
+        <h2>{preview ? 'Try a GriipBuddy account.' : 'Everything you carry, together.'}</h2>
+        <p>{preview ? 'Use a test name, test phone number and a new test password. The verification code appears on this page. Test accounts reset when the dev server restarts.' : 'Keep track of orders, save your favourites and pick up where you left off.'}</p>
+        {!preview && <div><ShoppingBag size={19} aria-hidden /> Shopping bag <Heart size={19} aria-hidden /> Wishlist <Package size={19} aria-hidden /> Orders</div>}
       </div>
-      <AuthForm key={initial} initial={initial} market={market} destination={destination} returnQuery={returnQuery} fixture={!apiConfigured()} integrated={apiConfigured() && process.env.GRIIPBUDDY_CHECKOUT === 'integrated'} />
+      <AuthForm key={initial} initial={initial} market={market} destination={destination} returnQuery={returnQuery}
+        preview={preview} fixture={accountMode() === 'fixture'} integrated={accountMode() === 'recovered' && process.env.GRIIPBUDDY_CHECKOUT === 'integrated'} />
     </div>;
   }
   if (!navigation.some((item) => item.id === tab) || path.length > 2 || (path.length === 2 && tab !== 'orders')) notFound();
   if (!account) redirect(marketHref(market, '/login'));
   const customer = account.profile;
+  if (preview) return <div className="container account-page">
+    <div className="account-heading"><div><p className="eyebrow">DEVELOPMENT PREVIEW</p><h1>My account</h1></div></div>
+    <AccountSection title={'Welcome, ' + customer.name} intro="Your test account is signed in. Test accounts reset when the dev server restarts.">
+      <Link className="text-link" href={marketHref(market, '/products')}>Continue shopping <ArrowRight size={15} aria-hidden /></Link>
+      <SignOut market={market} />
+    </AccountSection>
+  </div>;
   const fixture = account.mode === 'fixture';
   const orders = tab === '' || tab === 'orders' || tab === 'returns' ? await ownOrders(account) : [];
   const order = path[1] && accountId(path[1]) ? orders.find((item) => item.id === path[1]) : undefined;

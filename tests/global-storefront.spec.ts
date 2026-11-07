@@ -1,23 +1,14 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 
-test('quick view, comparison and watchlist keep the selected market and variant', async ({ page }) => {
+test('clean product cards link to the selected market and keep watchlist actions on the product page', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/us/products');
-  const trigger = page.getByRole('button', { name: 'Quick view The Form Case' });
-  await trigger.click();
-  const dialog = page.getByRole('dialog', { name: 'The Form Case' });
-  await dialog.getByLabel('Options').selectOption('form-case-plus');
-  await expect(dialog.getByText('$39', { exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(trigger).toBeFocused();
-  await page.getByRole('button', { name: 'Compare The Form Case' }).click();
-  await page.getByRole('button', { name: 'Compare Studio Frames' }).click();
-  await page.getByRole('link', { name: 'Compare (2)' }).click();
-  await expect(page.getByRole('heading', { name: 'Compare products' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Studio Frames' })).toBeVisible();
-  await page.getByRole('button', { name: 'Remove Studio Frames from comparison' }).click();
-  await expect(page.getByRole('heading', { name: 'Studio Frames' })).toHaveCount(0);
+  const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'The Form Case' }) });
+  await expect(card.locator('.product-price')).toContainText('$34');
+  await expect(card.getByText('38 units sold', { exact: true })).toBeVisible();
+  await expect(card.getByRole('button')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Compare', exact: true })).toHaveCount(0);
   await page.getByRole('link', { name: 'The Form Case', exact: true }).click();
   await page.getByRole('button', { name: 'Add to watchlist' }).click();
   await page.getByText('Save to collection', { exact: true }).click();
@@ -38,16 +29,17 @@ test('quick view, comparison and watchlist keep the selected market and variant'
 test('group preview persists on this device and closes on its scheduled end', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-11-08T02:00:00Z') });
   await page.goto('/us/group-buy');
-  await expect(page.getByText('SYNTHETIC DEVELOPMENT PREVIEW', { exact: true })).toBeVisible();
-  await expect(page.getByRole('timer')).toBeVisible();
-  await page.getByRole('button', { name: 'Join sample group' }).click();
-  await expect(page.getByRole('progressbar')).toHaveAttribute('value', '2');
+  const group = page.getByRole('region', { name: 'The Market Tote circle' });
+  await expect(group.getByText('SYNTHETIC DEVELOPMENT PREVIEW', { exact: true })).toBeVisible();
+  await expect(group.getByRole('timer')).toBeVisible();
+  await group.getByRole('button', { name: 'Join sample group' }).click();
+  await expect(group.getByRole('progressbar')).toHaveAttribute('value', '2');
   await page.reload();
-  await expect(page.getByRole('button', { name: 'Leave sample group' })).toBeEnabled();
+  await expect(group.getByRole('button', { name: 'Leave sample group' })).toBeEnabled();
   await page.clock.setSystemTime(new Date('2027-01-01T00:00:01Z'));
   await page.clock.runFor(1000);
-  await expect(page.getByText('Campaign ended')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Leave sample group' })).toBeDisabled();
+  await expect(group.getByText('Campaign ended')).toBeVisible();
+  await expect(group.getByRole('button', { name: 'Leave sample group' })).toBeDisabled();
   await page.goto('/gb/group-buy');
   await expect(page.getByRole('heading', { name: 'No group offers in this market' })).toBeVisible();
   await expect(page.getByRole('timer')).toHaveCount(0);

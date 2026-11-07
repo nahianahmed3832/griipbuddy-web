@@ -69,8 +69,8 @@ function PreviewCode({ code, channel = 'SMS' }: { code: string; channel?: string
   return <div className="account-preview-code">Preview {channel} code <output aria-label={'Preview ' + channel + ' code'}>{code}</output></div>;
 }
 
-export function AuthForm({ initial, market, fixture, integrated, destination, returnQuery }: {
-  initial: 'login' | 'register' | 'recover'; market: Market; fixture: boolean; integrated?: boolean; destination?: string; returnQuery: string;
+export function AuthForm({ initial, market, fixture, integrated, preview, destination, returnQuery }: {
+  initial: 'login' | 'register' | 'recover'; market: Market; fixture: boolean; integrated?: boolean; preview?: boolean; destination?: string; returnQuery: string;
 }) {
   const [step, setStep] = useState<AuthStep>(initial);
   const [method, setMethod] = useState<'phone' | 'email'>('phone');
@@ -80,8 +80,8 @@ export function AuthForm({ initial, market, fixture, integrated, destination, re
   const titles = { login: 'Sign in', register: 'Create an account', verify: 'Verify your phone', recover: 'Forgot password', reset: 'Reset password' };
   const submits = { login: 'Sign in', register: 'Send verification code', verify: 'Verify and continue', recover: 'Send reset code', reset: 'Reset password' };
   const descriptions = {
-    login: fixture ? 'Use your phone number or verified email.' : 'Use the verified phone number on your GriipBuddy account.',
-    register: 'Create an account to keep your bag, saved products and orders together.',
+    login: preview ? 'Sign in with the test details you registered on dev.' : fixture ? 'Use your phone number or verified email.' : 'Use the verified phone number on your GriipBuddy account.',
+    register: preview ? 'Register a test account to try the sign-in flow.' : 'Create an account to keep your bag, saved products and orders together.',
     recover: 'Enter the phone number on your account.',
     verify: 'Enter the code issued for this request. Codes expire after five minutes.',
     reset: 'Enter the code issued for this request. Codes expire after five minutes.',
@@ -90,7 +90,7 @@ export function AuthForm({ initial, market, fixture, integrated, destination, re
   async function submit(event: FormEvent<HTMLFormElement>) {
     const body = values(event);
     setNotice('');
-    const guest = step === 'login' || step === 'verify' ? guestTransfer() : undefined;
+    const guest = !preview && (step === 'login' || step === 'verify') ? guestTransfer() : undefined;
     const result = await action.run(() => accountRequest<{
       signedIn?: boolean; transferred?: boolean; message?: string; next?: 'verify' | 'reset'; previewCode?: string; reset?: boolean;
     }>(step, { ...body, guest }));
@@ -122,34 +122,39 @@ export function AuthForm({ initial, market, fixture, integrated, destination, re
     {!fixture && step !== 'login' && !(integrated && ['register','verify'].includes(step)) ? <div className="account-feedback">
       This service is unavailable for recovered accounts. <Link className="text-link" href={marketHref(market, '/contact-and-support')}>Contact support</Link>
     </div> : <form key={step} method="post" className="account-form" onSubmit={(event) => void submit(event)}>
-      {step === 'login' && <div className="account-methods" aria-label="Sign-in method">
+      {step === 'login' && !preview && <div className="account-methods" aria-label="Sign-in method">
         <button type="button" aria-pressed={method === 'phone'} onClick={() => setMethod('phone')}>Phone</button>
         <button type="button" aria-pressed={method === 'email'} disabled={!fixture} onClick={() => setMethod('email')}>Email</button>
       </div>}
       {step === 'register' && <>
-        <Field label="Full name"><input name="name" autoComplete="name" maxLength={120} required /></Field>
-        {fixture && <Field label="Email address (optional)"><input name="email" type="email" autoComplete="email" maxLength={254} /></Field>}
+        <Field label={preview ? 'Test name' : 'Full name'}><input name="name" autoComplete={preview ? 'off' : 'name'} maxLength={120} required /></Field>
+        {fixture && !preview && <Field label="Email address (optional)"><input name="email" type="email" autoComplete="email" maxLength={254} /></Field>}
       </>}
       {((step === 'login' && method === 'phone') || step === 'register' || step === 'recover' || (integrated && step === 'verify')) &&
-        <Field key="phone" label="Phone number"><input name="phone" type="tel" autoComplete="tel" maxLength={30} required /></Field>}
+        <Field key="phone" label={preview ? 'Test phone number' : 'Phone number'}><input name="phone" type="tel"
+          autoComplete={preview ? 'off' : 'tel'} pattern={preview ? '0000000[0-9]{4}' : undefined} maxLength={preview ? 11 : 30}
+          aria-describedby={preview ? 'test-phone-format' : undefined} required />
+          {preview && <small id="test-phone-format">Enter 0000000 followed by any four digits.</small>}</Field>}
       {step === 'login' && method === 'email' &&
         <Field key="email" label="Email address"><input name="email" type="email" autoComplete="email" maxLength={254} required /></Field>}
       {step === 'login' && <Field label="Password"><input name="password" type="password" autoComplete="current-password" maxLength={128} required /></Field>}
       {(step === 'verify' || step === 'reset') && <CodeField length={integrated && step === 'verify' ? 5 : 6} />}
       {(step === 'register' || step === 'reset') && <NewPasswordFields />}
-      {code && <PreviewCode code={code} />}
+      {code && <PreviewCode code={code} channel={preview ? 'verification' : undefined} />}
       <Feedback error={action.error} message={notice} />
-      <button type="submit" className="button button-primary" disabled={action.pending}>{action.pending ? 'Please wait…' : submits[step]}<ArrowRight size={16} aria-hidden /></button>
+      <button type="submit" className="button button-primary" disabled={action.pending}>
+        {action.pending ? 'Please wait…' : preview && step === 'register' ? 'Show test code' : submits[step]}<ArrowRight size={16} aria-hidden />
+      </button>
     </form>}
     {step === 'login' ? <>
-      <div className="account-google">
+      {!preview && <div className="account-google">
         <button type="button" className="button button-outline" disabled aria-describedby="google-design-note">
           <span className="account-google-mark" aria-hidden>G</span> Continue with Google
         </button>
         <p id="google-design-note">Design preview</p>
-      </div>
+      </div>}
       <div className="account-auth-links">
-        <Link className="text-link" href={marketHref(market, '/account/recover') + returnQuery}>Forgot password</Link>
+        {!preview && <Link className="text-link" href={marketHref(market, '/account/recover') + returnQuery}>Forgot password</Link>}
         <Link className="text-link" href={marketHref(market, '/account/register') + returnQuery}>Create an account</Link>
       </div>
     </> : <div className="account-auth-links">

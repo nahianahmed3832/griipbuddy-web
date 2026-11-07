@@ -1,14 +1,13 @@
-import { publicBuild } from '@/features/public-build';
 import 'server-only';
 
 import { cookies } from 'next/headers';
 import { cache } from 'react';
-import { apiConfigured } from '@/features/catalog/api';
 import { checkoutEnabled } from '@/features/checkout/config';
 import { statusLabels } from '@/features/checkout/contracts';
 import { customerOrders } from '@/features/checkout/orders';
 import { currencyScale } from '@/features/cart/cart';
 import { AccountError, type AccountScope, type CustomerOrder } from './contracts';
+import { accountMode } from './config';
 import { seedAccounts } from './fixture';
 import { recoveredCustomer, recoveredOrders } from './recovered';
 import { accountState, endSession, readSession, startSession } from './state';
@@ -17,10 +16,11 @@ export const sessionCookie = 'griipbuddy-customer';
 export const challengeCookie = 'griipbuddy-verification';
 
 export const currentAccount = cache(async () => {
-  if (publicBuild()) return null;
+  const mode = accountMode();
+  if (!mode) return null;
   const handle = (await cookies()).get(sessionCookie)?.value;
   const session = readSession(handle);
-  if (!session || (session.mode === 'recovered') !== apiConfigured()) return null;
+  if (!session || session.mode !== mode) return null;
   if (session.mode === 'recovered') {
     if (!session.token) return null;
     try {
