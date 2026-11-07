@@ -65,3 +65,20 @@
 .checkout-items summary::-webkit-details-marker { display: none; }
 .checkout-items[open] summary svg { transform: rotate(180deg); }
 .checkout-items .bag-items { padding-bottom: 6px; }
+
+.checkout-layout .checkout-form fieldset + fieldset { padding-top: 14px; border-top: 1px solid var(--line); }
+.checkout-layout .checkout-form legend { display: flex; gap: 8px; align-items: center; padding: 0 9px 0 0; }
+.checkout-layout .checkout-form legend span {
+  display: inline-grid; place-items: center; inline-size: 25px; block-size: 25px;
+  border-radius: 50%; color: var(--plum); background: #efe6ef; font: 700 .78rem var(--body);
+}
+.checkout-layout .checkout-totals { background: var(--white); border-color: var(--line); }
+.order-confirmation {
+  display: flex; flex-wrap: wrap; align-items: center; gap: clamp(12px, 2.5vw, 24px);
+  padding: clamp(16px, 3vw, 32px); border: 1px solid var(--line); border-radius: 8px; background: var(--white);
+}
+.order-confirmation > div { flex: 1 1 235px; min-width: 0; }
+.order-confirmation h1 { font-size: clamp(1.8rem, 4vw, 3.4rem); }
+.order-confirmation-icon { flex: none; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; color: #654617; background: #faf0d9; }
+.order-confirmation[data-tone="confirmed"] .order-confirmation-icon { color: #175344; background: #e5f3ec; }
+.order-confirmation[data-tone="attention"] .order-confirmation-icon { color: #8f2635; background: #f9e8eb; }

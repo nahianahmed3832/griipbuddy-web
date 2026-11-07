@@ -4,7 +4,7 @@ import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { methodDetails, type Method, type Status } from './contracts';
 
-export function OrderActions({ id, status, method, returnState }: { id: string; status: Status; method: Method; returnState?: string }) {
+export function OrderActions({ id, status, method, returnState, refundOnly }: { id: string; status: Status; method: Method; returnState?: string; refundOnly: boolean }) {
   const router = useRouter();
   const [working, setWorking] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -27,7 +27,7 @@ export function OrderActions({ id, status, method, returnState }: { id: string; 
   function requestReturn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    void run('return', { kind: form.get('kind'), reason: form.get('reason') });
+    void run('return', { kind: form.get('kind') ?? 'return', reason: form.get('reason') });
   }
   return <div className="checkout-actions">
     {status === 'awaiting-payment' && <section>
@@ -48,9 +48,9 @@ export function OrderActions({ id, status, method, returnState }: { id: string; 
       </> : <button className="text-link" disabled={!!working} onClick={() => setCancelPrompt(true)}>Cancel order</button>}
     </section>}
     {status === 'delivered' && !returnState && <form className="checkout-form" onSubmit={requestReturn}>
-      <fieldset disabled={!!working}><legend>Request a return or refund</legend>
+      <fieldset disabled={!!working}><legend>{refundOnly ? 'Request a return or refund' : 'Request a return'}</legend>
         <div className="checkout-fields">
-          <label>Request type<select name="kind"><option value="return">Return items</option><option value="refund">Refund only</option></select></label>
+          {refundOnly && <label>Request type<select name="kind"><option value="return">Return items</option><option value="refund">Refund only</option></select></label>}
           <label className="checkout-wide">Reason<textarea name="reason" required maxLength={500} rows={3} /></label>
         </div>
         <button className="button button-outline" type="submit">Submit request</button>

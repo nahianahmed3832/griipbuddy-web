@@ -85,3 +85,12 @@
   .bag-item h3 { font-size: .93rem; }
   .bag-line-total { font-size: .77rem; }
 }
+
+.bag-state { display: flex; gap: 12px; align-items: center; padding: 18px; background: var(--white); border: 1px solid var(--line); border-radius: 8px; }
+.bag-state svg { color: var(--plum); flex: none; }
+.bag-state div { display: grid; gap: 4px; }
+.bag-state span { color: var(--muted); font-size: .84rem; }
+.bag-quote-skeleton { display: grid; gap: 10px; padding-block: 4px; }
+.bag-quote-skeleton i { width: 85%; height: 10px; background: var(--line); border-radius: 3px; }
+.bag-quote-skeleton i:nth-child(3) { width: 63%; }
+.bag-quote-skeleton i:nth-child(4) { width: 94%; }

@@ -458,3 +458,23 @@ button.text-link { padding-inline: 0; background: transparent; border: 0; }
   .guide-layout { grid-template-columns: minmax(0, 1fr); }
   .guide-heading p:not(.eyebrow), .guide-sections p { font-size: .89rem; }
 }
+
+.catalog-heading { border: 1px solid var(--line); border-radius: 8px; }
+.catalog-heading-with-image { overflow: clip; }
+.catalog-heading-copy .page-search { max-width: 40rem; }
+.results-toolbar > .results-count { color: var(--ink); font-weight: 650; }
+.catalog-notice > .text-link { display: inline-flex; margin-top: 8px; }
+.retail-home .market-category-section { margin-bottom: 0; }
+@media (min-width: 761px) {
+  .retail-home .market-category-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .retail-home .market-category-tiles a {
+    grid-template-columns: minmax(56px, 85px) minmax(0, 1fr); align-items: center; gap: 12px;
+    background: var(--white); border: 1px solid var(--line); padding: 8px;
+  }
+  .retail-home .market-category-image { aspect-ratio: 1; }
+  .retail-home .market-category-image img { object-fit: contain; }
+}
+@media (max-width: 760px) {
+  .catalog-heading-copy .category-chips a { min-height: 42px; }
+  .retail-home .market-category-tiles a { min-height: 52px; }
+}

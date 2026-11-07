@@ -27,7 +27,9 @@ function Quantity({ line, title }: { line: CartLine; title: string }) {
 
   const commands = useBagCommands();
   function change(quantity: number) {
-    if (line.quantity !== quantity) void commands.quantity(lineKey(line), quantity);
+    if (Number.isInteger(quantity) && quantity >= 1 && quantity <= maxLineQuantity && line.quantity !== quantity) {
+      void commands.quantity(lineKey(line), quantity);
+    }
     setEdit(undefined);
   }
 
@@ -147,6 +149,7 @@ export function CartView({ market, view, onNavigate, methods, paused, allowSimul
   const actions = useContext(CartActions);
   const commands = useBagCommands();
   const [attempt, setAttempt] = useState(0);
+  const [openingOrder, setOpeningOrder] = useState(false);
   const [reply, setReply] = useState<{ key: string; quote?: CartQuote }>();
   const [outcome, setOutcome] = useState<'approve' | 'decline'>('approve');
   const [simulation, setSimulation] = useState<{ key: string; text: string }>();
@@ -181,7 +184,11 @@ export function CartView({ market, view, onNavigate, methods, paused, allowSimul
     return () => controller.abort();
   }, [hasLines, payload, requestKey]);
 
-  if (!hydrated) return <p role="status" className="bag-loading">Loading your bag…</p>;
+  if (!hydrated || openingOrder) return <div className="bag-state" role="status">
+    <ShoppingBag size={22} aria-hidden/>
+    <div><strong>{openingOrder ? 'Opening your order…' : 'Loading your bag…'}</strong>
+      <span>{openingOrder ? 'Your order has been saved.' : 'Retrieving your saved items.'}</span></div>
+  </div>;
   if (!lines.length) return <div className="empty-state">
     <ShoppingBag aria-hidden /><h2>Your bag is empty</h2><p>Find something you love in the catalog.</p>
     <Link className="button button-primary" href={marketHref(market, '/products')} onClick={onNavigate}>Shop all <ArrowRight size={16} aria-hidden /></Link>
@@ -223,7 +230,7 @@ export function CartView({ market, view, onNavigate, methods, paused, allowSimul
 
   return <div className={'bag-layout bag-' + view + (checkoutEnabled ? ' checkout-layout' : '')}>
     {checkoutEnabled ? <CheckoutForm market={market} methods={methods!} lines={lines} quote={quote} coupon={code}
-      refreshQuote={() => setAttempt(value => value + 1)} /> : items}
+      refreshQuote={() => setAttempt(value => value + 1)} onPlaced={() => setOpeningOrder(true)} /> : items}
     <section className={checkoutEnabled ? "bag-summary checkout-totals" : "bag-summary"} aria-label="Bag summary">
       <h2>{checkout ? 'Checkout estimate' : 'Order summary'}</h2>
       {checkoutEnabled && <details className="checkout-items" ref={checkoutItems} open>
@@ -231,7 +238,9 @@ export function CartView({ market, view, onNavigate, methods, paused, allowSimul
         {items}
       </details>}
       {commands.error && <p role="status" className="bag-line-error">{commands.error}</p>}
-      {!current ? <p role="status" className="bag-loading">Checking prices and availability…</p>
+      {!current ? <div className="bag-quote-skeleton" role="status">
+          <span className="bag-loading">Checking prices and availability…</span><i aria-hidden/><i aria-hidden/><i aria-hidden/>
+        </div>
         : !quote ? <div className="bag-quote-error"><p role="status">Prices and stock could not be verified.</p>
           <button type="button" className="button button-outline" onClick={() => setAttempt(attempt + 1)}>Retry estimate</button></div>
           : <Totals quote={quote} market={market} preview={preview} />}

@@ -221,7 +221,7 @@ async function ListingResults({ market, categories, category, collection, params
         </aside>
         <section aria-label="Catalog results" className="catalog-results">
           <div className="results-toolbar">
-            <p>{notice ? 'Update filters' : total + (total === 1 ? ' product' : ' products') + (batch ? ' in this batch' : '')}{filters.query && ' for “' + filters.query + '”'}</p>
+            <p className="results-count" role="status">{notice ? 'Update filters' : total + (total === 1 ? ' product' : ' products') + (batch ? ' in this batch' : '')}{filters.query && ' for “' + filters.query + '”'}</p>
             <div className="results-actions">
             <Form className="sort-form" action={action}>
               {[...query].filter(([name]) => name !== 'sort').map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
@@ -233,7 +233,8 @@ async function ListingResults({ market, categories, category, collection, params
           </div>
           <AppliedFilters filters={filters} scope={scope} scoped={Boolean(category)} products={scopeProducts} market={market} action={action} />
           {batch && <p className="catalog-notice">Browse batch {batch} of {batches}. Prices, filters and availability reflect this batch in your market.</p>}
-          {notice ? <p className="catalog-notice" role="status">{notice}</p>
+          {notice ? <div className="catalog-notice" role="status"><p>{notice}</p>
+            <Link className="text-link" href={action + (filters.query ? '?q=' + encodeURIComponent(filters.query) : '')}>Clear filters</Link></div>
             : visible.length ? <CatalogGrid products={visible} market={market} linkVariant={Boolean(collection === 'sale'
               || optionFacets.some(({ key }) => filters[key]) || filters.min !== undefined || filters.max !== undefined || filters.availability)} />
               : <div className="empty-state"><Search aria-hidden /><h2>No products found</h2><p>Try another search or clear your filters.</p>

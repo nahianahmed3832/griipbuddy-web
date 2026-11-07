@@ -193,6 +193,7 @@ body:has(.drawer[open]) { overflow: hidden; }
 
 @media (max-width: 760px) {
   :root { --gutter: 18px; }
+  html { scroll-padding-bottom: calc(75px + env(safe-area-inset-bottom)); }
   body { padding-bottom: calc(63px + env(safe-area-inset-bottom)); }
   .announcement { min-height: 33px; font-size: .66rem; }
   .header-inner { grid-template-rows: 56px auto; gap: 0 2px; }

@@ -19,6 +19,7 @@ export type CheckoutOrder = {
   id: string; number: string; createdAt: string; market: string; currency: string; total: number; shipping: number;
   discount: number; method: Method; delivery: Delivery; lines: OrderLine[]; status: Status; payment: PaymentStatus;
   paid: number; advanceDue: number; refunded: number; expiresAt: number | null; history: { status: Status; date: string }[];
+  failure?: 'declined' | 'receipt-rejected';
   tracking?: string; collectedOnDelivery?: number; manualReference?: string; manualPhone?: string; transaction?: string; providerAttempt?: string;
   returnRequest?: { kind: 'return' | 'refund'; reason: string; state: 'requested' | 'accepted'; date: string };
 };

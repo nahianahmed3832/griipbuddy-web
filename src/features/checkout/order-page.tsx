@@ -1,5 +1,6 @@
 import 'server-only';
 import Link from 'next/link';
+import { ArrowRight, Check, Clock, CircleAlert } from 'lucide-react';
 import { notFound } from 'next/navigation';
 import { formatMinor } from '@/features/cart/cart';
 import { marketForSegment, marketHref, type Market } from '@/features/catalog/catalog';
@@ -21,10 +22,23 @@ export async function OrderPage({ id, market }: { id: string; market: Market }) 
   }
   const orderMarket = marketForSegment((await catalogNavigation()).markets, order.market) ?? market;
   const money = (amount: number) => formatMinor(amount, orderMarket);
+  const confirmed = ['placed', 'dispatched', 'delivered'].includes(order.status);
+  const blocked = ['cancelled', 'expired'].includes(order.status);
+  const Icon = confirmed ? Check : blocked ? CircleAlert : Clock;
+  const declined = order.failure === 'declined' || order.failure === 'receipt-rejected';
+  const orderStatus = order.failure === 'declined' ? 'Payment declined'
+    : order.failure === 'receipt-rejected' ? 'Receipt rejected' : statusLabels[order.status];
   return <div className="container interior checkout-order">
     <Link className="back-link" href={marketHref(market, '/products')}>Continue shopping</Link>
-    <div className="interior-heading"><p className="eyebrow">TEST ORDER · {orderMarket.name}</p>
-      <h1>Order {order.number}</h1><p>{statusLabels[order.status]} · {paymentLabels[order.payment]}</p>
+    <div className="interior-heading order-confirmation" data-tone={confirmed ? 'confirmed' : blocked ? 'attention' : 'pending'}>
+      <span className="order-confirmation-icon"><Icon size={23} aria-hidden /></span>
+      <div><p className="eyebrow">TEST ORDER · {orderMarket.name}</p>
+        <h1>Order {order.number}</h1><p>{orderStatus} · {paymentLabels[order.payment]}</p>
+        {declined && <p className="checkout-note">The stock hold was released. Add the items to your bag again to start a new checkout.</p>}
+      </div>
+      {integratedCheckout() && <Link className="button button-outline" href={marketHref(orderMarket, '/account/orders')}>
+        Order history <ArrowRight size={16} aria-hidden/>
+      </Link>}
     </div>
     <div className="bag-layout">
       <div className="checkout-order-main">
@@ -36,10 +50,11 @@ export async function OrderPage({ id, market }: { id: string; market: Market }) 
         <section><h2>Order tracking</h2>
           {order.tracking && <p>Simulated tracking reference: <strong>{order.tracking}</strong></p>}
           <ol className="account-tracking">{order.history.map((event, index) =>
-            <li key={index}>{statusLabels[event.status]} <small>{event.date.slice(0, 10)}</small></li>)}</ol>
+            <li key={index}>{event.status === 'expired' ? orderStatus : statusLabels[event.status]} <small>
+              <time dateTime={event.date}>{event.date.slice(0, 10)}</time></small></li>)}</ol>
           {order.returnRequest && <p>{order.returnRequest.kind === 'return' ? 'Return' : 'Refund'} request: {order.returnRequest.state}</p>}
         </section>
-        <OrderActions id={order.id} status={order.status} method={order.method} returnState={order.returnRequest?.state} />
+        <OrderActions id={order.id} status={order.status} method={order.method} returnState={order.returnRequest?.state} refundOnly={!integratedCheckout()} />
       </div>
       <section className="bag-summary" aria-label="Payment summary"><h2>Payment summary</h2>
         <dl className="bag-totals">

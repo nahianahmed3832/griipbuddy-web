@@ -20,19 +20,25 @@ async function requestKey(payload: unknown, receipt?: File) {
   return { key, storageKey };
 }
 
-export function CheckoutForm({ market, methods, lines, quote, coupon, refreshQuote }: {
-  market: Market; methods: MethodOption[]; lines: CartLine[]; quote?: CartQuote; coupon?: string; refreshQuote: () => void;
+export function CheckoutForm({ market, methods, lines, quote, coupon, refreshQuote, onPlaced }: {
+  market: Market; methods: MethodOption[]; lines: CartLine[]; quote?: CartQuote; coupon?: string; refreshQuote: () => void; onPlaced: () => void;
 }) {
   const [chosen, setMethod] = useState<Method>(methods[0].id);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submitting = useRef(false);
+  const errorRef = useRef<HTMLParagraphElement>(null);
   const router = useRouter();
   const commands = useBagCommands();
   const selected = methods.find((entry) => entry.id === chosen) ?? methods[0];
   const method = selected.id;
   const total = quote?.estimatedTotal;
   const advance = selected?.advancePercent && total != null ? Math.ceil(total * selected.advancePercent / 100) : undefined;
+
+  function fail(message: string) {
+    setError(message);
+    requestAnimationFrame(() => errorRef.current?.focus());
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -42,11 +48,12 @@ export function CheckoutForm({ market, methods, lines, quote, coupon, refreshQuo
     const file = fields.get('receipt');
     const receipt = file instanceof File && file.size ? file : undefined;
     if (method === 'manual' && (!receipt || receipt.size > 4 * 1024 * 1024)) {
-      setError('Choose a JPEG or PNG receipt under 4 MB.'); return;
+      fail('Choose a JPEG or PNG receipt under 4 MB.'); return;
     }
     submitting.current = true;
     setBusy(true);
     setError('');
+    let placed = false;
     try {
       const session = await fetch('/api/checkout/session', { method: 'POST' });
       if (!session.ok) throw new Error('Could not establish your checkout session.');
@@ -68,28 +75,32 @@ export function CheckoutForm({ market, methods, lines, quote, coupon, refreshQuo
       const result = await response.json();
       if (response.status === 409) { refreshQuote(); router.refresh(); }
       if (!response.ok || !result.order?.id) throw new Error(result.error ?? 'Checkout could not place your order.');
-      for (const line of lines) await commands.remove(lineKey(line));
-      if (coupon) await commands.coupon(market.code);
-      sessionStorage.removeItem(storageKey);
-      router.push(marketHref(market, '/order/' + result.order.id));
+      placed = true;
+      onPlaced();
+      try {
+        for (const line of lines) await commands.remove(lineKey(line));
+        if (coupon) await commands.coupon(market.code);
+        sessionStorage.removeItem(storageKey);
+      } finally {
+        router.push(marketHref(market, '/order/' + result.order.id));
+      }
     } catch (problem) {
-      setError(problem instanceof Error ? problem.message : 'Checkout could not complete. Retry with the same details.');
+      if (!placed) fail(problem instanceof Error ? problem.message : 'Checkout could not complete. Retry with the same details.');
     } finally {
-      submitting.current = false;
-      setBusy(false);
+      if (!placed) { submitting.current = false; setBusy(false); }
     }
   }
 
-  return <form className="checkout-form" onSubmit={submit}>
+  return <form className="checkout-form" onSubmit={submit} aria-busy={busy}>
     <div className="checkout-banner"><LockKeyhole size={18} aria-hidden /><div><strong>Test checkout</strong><span>Use sample details. Payments and delivery are simulated.</span></div></div>
     <fieldset disabled={busy}>
-      <legend>Contact</legend>
+      <legend><span aria-hidden>1</span> Contact</legend>
       <div className="checkout-fields">
         <label className="checkout-wide">Delivery phone<input name="phone" type="tel" autoComplete="shipping tel" required maxLength={28} /></label>
       </div>
     </fieldset>
     <fieldset disabled={busy}>
-      <legend>Delivery details</legend>
+      <legend><span aria-hidden>2</span> Delivery details</legend>
       <div className="checkout-fields">
         <div className="checkout-wide checkout-market"><Globe size={17} aria-hidden /><span>{market.name}</span><strong>{market.currency}</strong></div>
         <label className="checkout-wide">Recipient name<input name="name" autoComplete="shipping name" required maxLength={100} /></label>
@@ -100,7 +111,7 @@ export function CheckoutForm({ market, methods, lines, quote, coupon, refreshQuo
       </div>
     </fieldset>
     <fieldset className="checkout-payment" disabled={busy}>
-      <legend>Payment method</legend>
+      <legend><span aria-hidden>3</span> Payment method</legend>
       {methods.map((option) => {
         const Icon = methodIcons[option.id];
         return <label className="checkout-method" key={option.id}>
@@ -118,7 +129,7 @@ export function CheckoutForm({ market, methods, lines, quote, coupon, refreshQuo
         <label className="checkout-wide">Payment receipt (JPEG or PNG, up to 4 MB)<input name="receipt" type="file" accept="image/png,image/jpeg" required /></label>
       </div>}
     </fieldset>
-    {error && <p className="checkout-error" role="alert">{error}</p>}
+    {error && <p ref={errorRef} tabIndex={-1} className="checkout-error" role="alert">{error}</p>}
     <button type="submit" className="button button-primary" disabled={!quote?.reviewReady || busy}>
       {busy ? 'Placing order…' : 'Place test order' + (total != null ? ' · ' + formatMinor(total, market) : '')} <ArrowRight size={17} aria-hidden />
     </button>

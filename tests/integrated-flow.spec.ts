@@ -94,6 +94,8 @@ test('recovered buyer can place a COD test order when the estimate excludes an u
   expect((await placed).status()).toBe(201);
   await expect(page).toHaveURL(/\/bd\/order\/[a-f0-9]{24}$/);
   await expect(page.getByText('Order placed · Due on delivery')).toBeVisible();
+  await expect(page.getByRole('link', { name:'Order history',exact:true })).toHaveAttribute('href', '/bd/account/orders');
+  await capture(page, 'order-confirmation-mobile');
   await page.getByRole('button', { name: 'Cancel order', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm cancellation' }).click();
   await expect(page.getByText('Cancelled · Voided')).toBeVisible();

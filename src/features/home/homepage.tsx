@@ -127,6 +127,7 @@ async function RetailHomepage({ market, categories }: { market: Market; categori
     categories.find(category => category.slug === slug) ?? []);
   return <div className="home container retail-home">
     <Hero market={market} content={content} retail />
+    {departments.length > 0 && <Departments market={market} categories={departments} />}
     <Suspense fallback={<div className="skeleton-shelf" aria-hidden>{[1, 2, 3, 4].map(i => <span className="skeleton-tile" key={i} />)}</div>}>
       <MarketplaceShelves market={market} />
     </Suspense>
