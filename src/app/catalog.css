@@ -67,6 +67,10 @@ body:has(.zoom-dialog[open]) { overflow: hidden; }
 .detail-stock[data-stock="out"] { color: #793c35; }
 .detail-sku { color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
 .detail-description { color: var(--muted); line-height: 1.62; white-space: pre-line; overflow-wrap: anywhere; }
+.product-video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 12px; margin-top: 10px; }
+.product-video-grid figure { margin: 0; min-width: 0; }
+.product-video-grid video { display: block; width: 100%; height: clamp(220px, 32vw, 380px); border-radius: 7px; background: #191a1c; }
+.product-video-grid figcaption { color: var(--muted); font-size: .8rem; margin-top: 6px; }
 .variant-groups { display: grid; gap: 11px; }
 .variant-group { min-width: 0; margin: 0; padding: 0; border: 0; }
 .variant-group legend { padding: 0; margin-bottom: 6px; color: var(--plum); font-size: .81rem; font-weight: 700; }

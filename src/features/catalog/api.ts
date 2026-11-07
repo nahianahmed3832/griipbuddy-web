@@ -1,7 +1,7 @@
 import 'server-only';
 import { hostedCatalogPreview } from '@/features/public-build';
 import { validSlug, type CatalogProduct, type CatalogVariant, type Category, type Market, type Money } from './catalog';
-import { approvedCatalogImage } from './media';
+import { approvedCatalogImage, approvedCatalogVideo } from './media';
 
 export class CatalogError extends Error {}
 
@@ -150,6 +150,15 @@ function descriptionText(value: unknown) {
     .trim();
 }
 
+function productVideos(value: unknown) {
+  const clips = rows(value).flatMap((entry) => {
+    const item = record(entry);
+    const url = approvedCatalogVideo(string(item.url));
+    return url ? [{ url, title: string(item.title).trim().slice(0, 100) || undefined }] : [];
+  });
+  return [...new Map(clips.map((clip) => [clip.url, clip])).values()];
+}
+
 export function apiProduct(
   value: unknown,
   variants: unknown,
@@ -169,6 +178,7 @@ export function apiProduct(
     description: descriptionText(row.description),
     deliveryEstimate: string(row.approximately_delivery_time).trim().slice(0, 160) || undefined,
     images: images([row.thumbnail, ...rows(row.slider_images)]),
+    videos: productVideos(row.short_videos),
     variants: rows(variants).flatMap((variant) => apiVariant(variant, id, market) ?? []),
     specifications: specs(row),
     tags: [...strings(row.search_tags), ...strings(row.offer_tags)],

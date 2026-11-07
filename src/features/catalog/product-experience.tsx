@@ -8,6 +8,7 @@ import { productHref } from './catalog';
 import { ShareLink } from '@/features/discovery/interactions';
 import { DeliveryDetails } from './delivery-details';
 import { CatalogImage } from './catalog-image';
+import { ProductVideos } from './product-videos';
 import { WatchButton } from './product-watch';
 import { SaveToCollection } from './collections-local';
 import { AddToBag } from '@/features/cart/actions';
@@ -219,6 +220,7 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
         <div className="product-information">
           {product.description && <details className="detail-accordion" open><summary>Description</summary>
             <p className="detail-description">{product.description}</p></details>}
+          {product.videos && product.videos.length > 0 && <ProductVideos videos={product.videos} />}
           <ProductReviews product={product} market={market} initial={reviews} enabled={reviewsEnabled} writable={reviewsWritable} />
           <DeliveryDetails product={product} market={market} />
           <SaveToCollection slug={product.slug} />

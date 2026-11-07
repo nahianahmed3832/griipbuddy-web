@@ -51,7 +51,11 @@ async function main() {
   await products.updateOne({ _id: id(3), sku: 'FIXTURE-BD' }, { $set: { brand: id(104), sub_subcategory: id(105), third_subcategory: id(106) } });
   await products.updateOne({ _id: id(4), sku: 'FIXTURE-INT' }, {
     $addToSet: { available_countries: { $each: [id(101), id(102), id(103)] } },
-    $set: { brand: id(104), sub_subcategory: id(105), third_subcategory: id(106), thumbnail: 'https://media.fixture.invalid/fixture-case.webp' },
+    $set: { brand: id(104), sub_subcategory: id(105), third_subcategory: id(106), thumbnail: 'https://media.fixture.invalid/fixture-case.webp',
+      short_videos: [
+        { url: 'https://media.fixture.invalid/fixture-case.mp4', title: 'Case overview', format: 'mp4' },
+        { url: 'https://blocked.fixture.invalid/unapproved.mp4', title: 'Unapproved', format: 'mp4' },
+      ] },
   });
   await db.collection('variants').updateOne({ _id: id(6), sku: 'FIXTURE-INT-BLUE' }, {
     $set: {

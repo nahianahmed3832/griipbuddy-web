@@ -41,6 +41,12 @@ test('API country prices and original media references survive the storefront ad
   await expect(page.getByRole('img', { name: 'Fixture international case — image 2' })).toHaveAttribute('src', 'https://media.fixture.invalid/fixture-detail.webp');
   await expect.poll(() => requestedImages.has('https://media.fixture.invalid/fixture-detail.webp')).toBe(true);
   await expect(page.locator('img[src*="blocked.fixture.invalid"]')).toHaveCount(0);
+  await expect(page.locator('.product-videos video')).toHaveCount(0);
+  await page.getByText('Product videos', { exact: true }).click();
+  const clip = page.locator('.product-videos video');
+  await expect(clip).toHaveCount(1);
+  await expect(clip).toHaveAttribute('src', 'https://media.fixture.invalid/fixture-case.mp4');
+  await expect(clip).toHaveAttribute('preload', 'none');
 
   await page.getByRole('button', { name: 'Color: Graphite' }).click();
   await expect(page.locator('.detail-sku')).toContainText('FIXTURE-INT-GRAPHITE');

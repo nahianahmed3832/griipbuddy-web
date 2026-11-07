@@ -57,6 +57,7 @@ export type CatalogProduct = {
   delivery?: { origin?: string; customs?: string; consolidation?: string };
   images: string[];
   variants: CatalogVariant[];
+  videos?: { url: string; title?: string }[];
   specifications: { title: string; values: string[] }[];
   tags: string[];
   labels: string[];
