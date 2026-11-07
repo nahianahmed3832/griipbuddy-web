@@ -129,15 +129,27 @@ test('quote ignores submitted totals and rejects malformed quantities and duplic
 
 
 test('product quantity adds the selected number of units up to remaining variant stock', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/us/product/form-case');
   const detail = page.locator('.detail-copy');
-  const quantity = detail.getByRole('combobox', { name: 'Quantity' });
-  await expect(quantity.locator('option')).toHaveCount(8);
-  await quantity.selectOption('3');
+  const quantity = detail.getByRole('spinbutton', { name: 'Quantity', exact: true });
+  const decrease = detail.getByRole('button', { name: 'Decrease quantity' });
+  const increase = detail.getByRole('button', { name: 'Increase quantity' });
+  await expect(quantity).toHaveAttribute('max', '8');
+  await expect(decrease).toBeDisabled();
+  await increase.click();
+  await expect(quantity).toHaveValue('2');
+  await decrease.click();
+  await expect(quantity).toHaveValue('1');
+  await quantity.fill('99');
+  await quantity.press('Enter');
+  await expect(quantity).toHaveValue('8');
+  await expect(increase).toBeDisabled();
+  await quantity.fill('3');
   await detail.getByRole('button', { name: 'Add to bag', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: 'Shopping bag' });
   await expect(drawer.getByRole('spinbutton', { name: 'Quantity for The Form Case' })).toHaveValue('3');
   await drawer.getByRole('button', { name: 'Close shopping bag' }).click();
-  await expect(quantity.locator('option')).toHaveCount(5);
+  await expect(quantity).toHaveAttribute('max', '5');
   await expect(quantity).toHaveValue('1');
 });

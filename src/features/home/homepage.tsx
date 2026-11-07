@@ -126,9 +126,10 @@ async function RetailHeroFeature({ market, selections }: { market: Market; selec
   const image = hero?.images[0] ?? hero?.variants[0]?.images[0];
   if (!hero || !image) return <div className="retail-hero-mark" aria-hidden>GB<span>.</span></div>;
   return <Link className="retail-hero-feature" prefetch={false}
+    aria-label={'Shop the featured product, ' + hero.name}
     href={productHref(market, hero.slug) + '?variant=' + encodeURIComponent(hero.variants[0].id)}>
-    <div className="retail-hero-image"><CatalogImage src={image} alt="" fill priority sizes="(max-width: 760px) 100vw, 58vw" /></div>
-    <div className="retail-hero-caption"><div><span>FROM THE CATALOG</span><strong>{hero.name}</strong></div><ArrowUpRight aria-hidden size={22} /></div>
+    <CatalogImage src={image} alt="" fill priority sizes="(max-width: 760px) 100vw, 58vw" />
+    <span className="retail-hero-caption">Shop featured <ArrowUpRight aria-hidden size={16} /></span>
   </Link>;
 }
 
@@ -177,14 +178,14 @@ function RetailHomepage({ market, categories }: { market: Market; categories: Ca
     <section className="container retail-hero" aria-labelledby="hero-title">
       <div className="retail-hero-copy">
         <p className="eyebrow"><span aria-hidden /> THE DEVICE EDIT</p>
-        <h1 id="hero-title">Good gear.<br /> Better grip.</h1>
-        <p>Cases, protectors and accessories for the tech you carry every day.</p>
+        <h1 id="hero-title">Protect what<br /> you carry.</h1>
+        <p>Phone cases, screen protectors and everyday tech accessories.</p>
         <div className="market-hero-actions">
-          <Link className="button button-primary" href={marketHref(market, '/products')}>Shop all <ArrowRight size={17} aria-hidden /></Link>
-          <Link className="text-link" href={marketHref(market, '/collections/new-arrivals')}>New arrivals</Link>
+          <Link className="button button-primary" href={marketHref(market, '/products')}>Shop accessories <ArrowRight size={17} aria-hidden /></Link>
+          <Link className="text-link" href={marketHref(market, '/collections/new-arrivals')}>New arrivals <ArrowUpRight size={15} aria-hidden /></Link>
         </div>
       </div>
-      <Suspense fallback={<div className="retail-hero-feature retail-hero-placeholder" aria-hidden><div className="retail-hero-image" /><div className="retail-hero-caption" /></div>}>
+      <Suspense fallback={<div className="retail-hero-mark" aria-hidden>GB<span>.</span></div>}>
         <RetailHeroFeature market={market} selections={selections} />
       </Suspense>
     </section>

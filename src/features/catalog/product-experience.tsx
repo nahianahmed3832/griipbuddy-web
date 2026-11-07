@@ -1,7 +1,7 @@
 'use client';
 
-import { ChevronLeft, ChevronRight, ImageIcon, Minus, PackageCheck, Plus, X, ZoomIn } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Check, ChevronLeft, ChevronRight, ImageIcon, Minus, PackageCheck, Plus, X, ZoomIn } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { currentPrice, formatMoney, formatUnitsSold, productBadges, productHref, type CatalogProduct, type CatalogVariant, type Market } from './catalog';
 import { WishlistButton } from './wishlist';
 import { ShareLink } from '@/features/discovery/interactions';
@@ -143,6 +143,7 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
 }) {
   const [selectedId, setSelectedId] = useState(initialId);
   const [reply, setReply] = useState<{ id: string; stock: number | null }>();
+  const optionId = useId();
   const selected = product.variants.find((variant) => variant.id === selectedId);
   const price = selected?.price;
   const sold = formatUnitsSold(product.sold);
@@ -210,7 +211,7 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
         </div>
         <FamilySelector family={extras.family} slug={product.slug} market={market} />
         {dimensions.length > 0 && <div className="variant-groups">
-          {dimensions.map(([key, { title, values }]) => <div key={key} className="variant-section">
+          {dimensions.map(([key, { title, values }], groupIndex) => <div key={key} className="variant-section">
             {key === 'size' && extras.guide && <SizeChart guide={extras.guide} product={product.name} />}
             <fieldset className="variant-group" data-dimension={key}>
               <legend>{title}{current.get(key) && <span> · {values.get(current.get(key)!)}</span>}</legend>
@@ -218,15 +219,19 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
                 onChange={event => select(key, event.currentTarget.value)}>
                 {!current.get(key) && <option value="" disabled>Choose {title.toLowerCase()}</option>}
                 {[...values].map(([value, label]) => <option key={value} value={value} disabled={!chooseVariant(product.variants, selected, key, value)}>{label}</option>)}
-              </select> : <div>{[...values].map(([value, label]) => {
+              </select> : <div>{[...values].map(([value, label], valueIndex) => {
                 const next = chooseVariant(product.variants, selected, key, value);
                 const image = key === 'color' ? next?.images[0] : undefined;
                 const soldOut = next && (next.id === selectedId && knownStock !== undefined ? knownStock : extras.stock[next.id]) === 0;
+                const isSelected = current.get(key) === value;
+                const stockLabelId = soldOut ? `${optionId}-${groupIndex}-${valueIndex}` : undefined;
                 return <button type="button" key={value} className="variant-option" disabled={!next} data-sold-out={soldOut || undefined}
-                  aria-label={title + ': ' + label} aria-pressed={current.get(key) === value} onClick={() => select(key, value)}>
+                  aria-label={title + ': ' + label} aria-describedby={stockLabelId}
+                  aria-pressed={isSelected} onClick={() => select(key, value)}>
                   {image ? <span className="option-image"><CatalogImage src={image} alt="" fill sizes="74px" /></span>
                     : key === 'color' && next?.colorCode && <span className="option-swatch" style={{ backgroundColor: next.colorCode }} />}
-                  <span>{label}</span>{soldOut && <span className="option-stock">Sold out</span>}
+                  <span className="option-label">{label}</span>{soldOut && <span className="option-stock" id={stockLabelId}>Sold out</span>}
+                  {isSelected && <span className="option-selected"><Check size={12} aria-hidden /></span>}
                 </button>;
               })}</div>}
             </fieldset>
