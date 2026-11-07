@@ -6,7 +6,7 @@ import { storefrontExtrasEnabled } from './merchandising';
 export type ReviewMedia = { type: 'image' | 'video'; src: string };
 export type Review = { id: string; rating: number; title?: string; content: string; createdAt: string; verified: boolean; media: ReviewMedia[] };
 export type ReviewPage = { ratings: number[]; reviews: Review[] };
-export type Eligible = { reviewed: boolean; orders: { id: string; number?: string; date: string }[] };
+export type Eligible = { reviewed: boolean; orders: { id: string; number?: string; date?: string }[] };
 
 type SourceReview = {
   _id: string; rating: number; title?: string; content: string; createdAt: string; verifiedPurchase?: boolean;

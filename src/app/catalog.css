@@ -26,6 +26,9 @@
 .filter-actions .text-link { font-size: .76rem; }
 .results-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 9px; min-height: 45px; margin-bottom: 11px; }
 .results-toolbar > p { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+.applied-filters { display: flex; flex-wrap: wrap; gap: 7px; padding: 0; margin: 0 0 14px; list-style: none; }
+.applied-filters a { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--plum-tint); color: var(--plum); font-size: .75rem; }
+.applied-filters a:hover { border-color: var(--plum); }
 .sort-form, .sort-form label { display: flex; gap: 7px; align-items: center; white-space: nowrap; font-size: .79rem; }
 .sort-form .button { min-height: 38px; padding: 6px 10px; }
 .catalog-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 26px; font-size: .81rem; }
@@ -94,9 +97,9 @@ body:has(.zoom-dialog[open]) { overflow: hidden; }
   .gallery-thumbs button { flex-basis: 58px; height: 58px; }
 }
 
-.product-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.product-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: auto; }
 .product-card-action { display: grid; flex: 0 0 34px; height: 34px; place-items: center; border: 1px solid var(--line); color: var(--plum); border-radius: 50%; }
-.product-card-action:hover { background: var(--plum); color: white; }
+.product-card:has(.product-title-link:is(:hover, :focus-visible)) .product-card-action { background: var(--plum); color: white; }
 .product-sold { color: var(--muted); font-size: .72rem; }
 .gallery-main { touch-action: pan-y pinch-zoom; border-radius: 14px; }
 .gallery-controls { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 4px; color: var(--muted); font-size: .77rem; font-variant-numeric: tabular-nums; }

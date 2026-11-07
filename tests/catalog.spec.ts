@@ -17,6 +17,10 @@ test('catalog filters and sorts matching variants by the selected market price',
   const card = results.getByRole('article');
   await expect(card.getByText('£33')).toBeVisible();
   await expect(card.getByText('Out of Stock', { exact: true })).toBeVisible();
+  await expect(card.getByRole('link')).toHaveCount(1);
+  await results.getByRole('link', { name: 'Remove filter: Color: Cobalt' }).click();
+  await expect(results.getByRole('link', { name: 'Remove filter: Color: Cobalt' })).toHaveCount(0);
+  await expect(results.getByRole('link', { name: 'Remove filter: Size: Plus' })).toBeVisible();
   await card.getByRole('link', { name: 'The Form Case', exact: true }).click();
   await expect(page).toHaveURL(/\/gb\/product\/form-case\?variant=form-case-plus$/);
   await expect(page.getByText('DEMO-FORM-CASE-PLUS')).toBeVisible();

@@ -14,8 +14,9 @@ test('recovered catalog quotes real fixture IDs, regional prices and reservation
     estimatedTotal: 88000, paymentPreview: 'approved', coupon: { status: 'unavailable' },
   });
   expect(await getQuote('US', bd)).toMatchObject({ lines: [{ status: 'unavailable' }], estimatedTotal: null });
-  expect(await getQuote('US', intl)).toMatchObject({ currency: 'USD', lines: [{ unit: 1400, status: 'out' }] });
-  expect(await getQuote('DE', intl)).toMatchObject({ currency: 'EUR', lines: [{ unit: 1200, status: 'out' }] });
+  expect(await getQuote('US', intl)).toMatchObject({ currency: 'USD', lines: [{ unit: 1400, status: 'ready', available: 8 }] });
+  expect(await getQuote('DE', intl)).toMatchObject({ currency: 'EUR', lines: [{ unit: 1200, status: 'ready', available: 8 }] });
+  expect(await getQuote('US', { ...intl, variantId: '00000000000000000000006e' })).toMatchObject({ lines: [{ unit: 1700, status: 'out' }] });
   expect(await getQuote('AU', intl)).toMatchObject({ lines: [{ status: 'unpriced' }], reviewReady: false });
   expect(await getQuote('INTL', intl)).toMatchObject({
     currency: 'USD', lines: [{ unit: 1400 }], shipping: { status: 'destination-required' }, estimatedTotal: null,

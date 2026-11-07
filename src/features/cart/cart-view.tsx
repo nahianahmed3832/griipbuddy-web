@@ -1,9 +1,9 @@
 'use client';
 
-import { ArrowRight, ImageIcon, Minus, Plus, ShoppingBag, Trash2 } from 'lucide-react';
+import { ArrowRight, ChevronDown, ImageIcon, Minus, Plus, ShoppingBag, Trash2 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { marketHref, productHref, type Market } from '@/features/catalog/catalog';
 import { CheckoutForm } from '@/features/checkout/checkout-form';
 import type { MethodOption } from '@/features/checkout/contracts';
@@ -134,14 +134,14 @@ function Totals({ quote, market }: { quote: CartQuote; market: Market }) {
     <div><dt>{issues ? 'Subtotal for available items' : 'Subtotal'}</dt><dd>{money(quote.subtotal)}</dd></div>
     {quote.saleDiscount > 0 && <div><dt>Sale savings</dt><dd>−{money(quote.saleDiscount)}</dd></div>}
     {quote.couponDiscount > 0 && <div><dt>Coupon discount</dt><dd>−{money(quote.couponDiscount)}</dd></div>}
-    <div><dt>Merchandise</dt><dd>{money(quote.merchandise)}</dd></div>
+    {(quote.saleDiscount > 0 || quote.couponDiscount > 0) && <div><dt>Merchandise</dt><dd>{money(quote.merchandise)}</dd></div>}
     <div><dt>Estimated shipping</dt><dd>{shipping}</dd></div>
     <div className="bag-estimate"><dt>Estimated total before tax</dt><dd>{quote.estimatedTotal === null ? '—' : money(quote.estimatedTotal)}</dd></div>
   </dl>;
 }
 
-export function CartView({ market, view, onNavigate, methods, paused }: {
-  market: Market; view: 'drawer' | 'page' | 'checkout'; onNavigate?: () => void; methods?: MethodOption[]; paused?: boolean;
+export function CartView({ market, view, onNavigate, methods, paused, allowSimulation = true }: {
+  market: Market; view: 'drawer' | 'page' | 'checkout'; onNavigate?: () => void; methods?: MethodOption[]; paused?: boolean; allowSimulation?: boolean;
 }) {
   const { lines, coupon, hydrated } = useCart();
   const actions = useContext(CartActions);
@@ -151,6 +151,7 @@ export function CartView({ market, view, onNavigate, methods, paused }: {
   const [outcome, setOutcome] = useState<'approve' | 'decline'>('approve');
   const [simulation, setSimulation] = useState<{ key: string; text: string }>();
   const [pending, setPending] = useState<string>();
+  const checkoutItems = useRef<HTMLDetailsElement>(null);
   const code = coupon?.market === market.code ? coupon.code : undefined;
   const payload = JSON.stringify({ market: market.code, lines, coupon: code });
   const requestKey = attempt + ':' + payload;
@@ -158,6 +159,16 @@ export function CartView({ market, view, onNavigate, methods, paused }: {
   const checkout = view === 'checkout';
   const checkoutEnabled = checkout && Boolean(methods?.length);
   const count = lines.reduce((total, line) => total + line.quantity, 0);
+
+  useEffect(() => {
+    const details = checkoutItems.current;
+    if (!checkoutEnabled || !details) return;
+    const wide = window.matchMedia('(min-width: 761px)');
+    const update = () => { details.open = wide.matches; };
+    update();
+    wide.addEventListener('change', update);
+    return () => wide.removeEventListener('change', update);
+  }, [checkoutEnabled, hasLines, hydrated]);
 
   useEffect(() => {
     if (!hasLines) return;
@@ -204,24 +215,27 @@ export function CartView({ market, view, onNavigate, methods, paused }: {
   }
 
   const items = <section className="bag-items" aria-label={checkout ? 'Items for review' : 'Bag items'}>
-    <p className="bag-context">{count} {count === 1 ? 'item' : 'items'} · {market.name} · {market.currency}</p>
+    {!checkoutEnabled && <p className="bag-context">{count} {count === 1 ? 'item' : 'items'} · {market.name} · {market.currency}</p>}
     <ul>{lines.map((line) => <BagItem key={lineKey(line)} line={line} quoted={byKey.get(lineKey(line))} market={market}
       onNavigate={onNavigate} readonly={checkout} />)}</ul>
     {checkout && <Link className="text-link" href={bagPath}>Edit shopping bag</Link>}
   </section>;
 
   return <div className={'bag-layout bag-' + view + (checkoutEnabled ? ' checkout-layout' : '')}>
-    {checkoutEnabled ? <CheckoutForm market={market} methods={methods!} lines={lines} quote={quote} coupon={code} /> : items}
+    {checkoutEnabled ? <CheckoutForm market={market} methods={methods!} lines={lines} quote={quote} coupon={code}
+      refreshQuote={() => setAttempt(value => value + 1)} /> : items}
     <section className={checkoutEnabled ? "bag-summary checkout-totals" : "bag-summary"} aria-label="Bag summary">
       <h2>{checkout ? 'Checkout estimate' : 'Order summary'}</h2>
-      {checkoutEnabled && items}
+      {checkoutEnabled && <details className="checkout-items" ref={checkoutItems} open>
+        <summary>{count} {count === 1 ? 'item' : 'items'} in your bag <ChevronDown size={16} aria-hidden /></summary>
+        {items}
+      </details>}
       {commands.error && <p role="status" className="bag-line-error">{commands.error}</p>}
       {!current ? <p role="status" className="bag-loading">Checking prices and availability…</p>
         : !quote ? <div className="bag-quote-error"><p role="status">Prices and stock could not be verified.</p>
           <button type="button" className="button button-outline" onClick={() => setAttempt(attempt + 1)}>Retry estimate</button></div>
           : <Totals quote={quote} market={market} />}
       {(view === 'page' || checkoutEnabled) && <Coupon market={market} code={code} coupon={quote?.coupon} />}
-      {checkout && quote?.coupon && quote.coupon.status !== 'applied' && <p className="bag-line-error">Coupon {quote.coupon.code} is excluded from the estimate.</p>}
       {quote && !ready && <p className="bag-estimate-note">
         {quote.lines.some((line) => line.status !== 'ready') ? 'Update unavailable items before checkout review.'
           : 'Choose a country with configured shipping for a checkout estimate.'}
@@ -234,7 +248,7 @@ export function CartView({ market, view, onNavigate, methods, paused }: {
           ? <Link className="button button-primary" href={checkoutPath} onClick={onNavigate}>Review checkout <ArrowRight size={16} aria-hidden /></Link>
           : <button className="button button-primary" type="button" disabled>Review checkout</button>)}
         {checkout && paused && <p role="status">Test checkout is temporarily paused.</p>}
-        {checkout && !checkoutEnabled && !paused && <div className="payment-preview">
+        {checkout && !checkoutEnabled && !paused && allowSimulation && <div className="payment-preview">
           <p>Simulated payment</p>
           <label>Test outcome <select value={outcome} onChange={(event) => {
             setOutcome(event.target.value === 'decline' ? 'decline' : 'approve');

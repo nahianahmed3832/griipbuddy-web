@@ -9,6 +9,7 @@ import type { Eligible, ReviewMedia, ReviewPage } from './reviews';
 
 const MB = 1024 * 1024;
 const dateFormat = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeZone: 'UTC' });
+const reviewDate = (value?: string) => value && Number.isFinite(Date.parse(value)) ? dateFormat.format(new Date(value)) : '';
 
 function Stars({ rating }: { rating: number }) {
   return <span className="rating-stars" role="img" aria-label={rating.toFixed(1) + ' out of 5 stars'}>
@@ -111,7 +112,7 @@ export function ProductReviews({ product, market, initial, enabled, writable }: 
   }
 
   return <details className="detail-accordion review-accordion" id="product-reviews" ref={section}>
-    <summary><span>Customer reviews</span><span className="review-count">{total > 0 ? <><Star size={14} fill="currentColor" aria-hidden /> {average.toFixed(1)} · {total}</> : 'Reviews'}</span></summary>
+    <summary><span>Customer reviews</span>{data && <span className="review-count">{total > 0 ? <><Star size={14} fill="currentColor" aria-hidden /> {average.toFixed(1)} · {total}</> : 'No reviews yet'}</span>}</summary>
     <div className="review-panel">
       {total > 0 && <div className="review-score">
         <div><strong>{average.toFixed(1)}</strong><Stars rating={average} /><small>Based on {total} {total === 1 ? 'review' : 'reviews'}</small></div>
@@ -138,7 +139,7 @@ export function ProductReviews({ product, market, initial, enabled, writable }: 
         <h3>{review.title || 'Customer review'}</h3>
         <p>{review.content}</p>
         {review.media.length > 0 && <div className="review-gallery">{review.media.map((file, index) => <Media key={file.src + index} file={file} index={index} />)}</div>}
-        {review.createdAt && <time dateTime={review.createdAt}>{dateFormat.format(new Date(review.createdAt))}</time>}
+        {reviewDate(review.createdAt) && <time dateTime={review.createdAt}>{reviewDate(review.createdAt)}</time>}
       </article>)}
       {total > 10 && <div className="review-pagination">
         <button className="button button-outline" disabled={page === 1 || listing} type="button" onClick={() => void list(page - 1, sort)}>Previous</button>
@@ -157,7 +158,7 @@ export function ProductReviews({ product, market, initial, enabled, writable }: 
                 : eligibility && !eligibility.orders.length ? <p>You can review a product once your order is delivered.</p>
                   : eligibility && <form className="review-form" onSubmit={submit}>
                     <label>Delivered order<select name="order" required>{eligibility.orders.map(order => <option key={order.id} value={order.id}>
-                      {order.number ? 'Order ' + order.number : 'Order ' + order.id.slice(-6)} · {dateFormat.format(new Date(order.date))}
+                      {'Order ' + (order.number || order.id.slice(-6))}{reviewDate(order.date) && ' · ' + reviewDate(order.date)}
                     </option>)}</select></label>
                     <label>Rating<select name="rating" required defaultValue=""><option value="" disabled>Select a rating</option>
                       {[5, 4, 3, 2, 1].map(rating => <option value={rating} key={rating}>{rating} {rating === 1 ? 'star' : 'stars'}</option>)}

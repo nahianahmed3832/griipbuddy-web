@@ -87,3 +87,20 @@ Rollback rehearsal: restart with `GRIIPBUDDY_CHECKOUT_PAUSED=1` and the same syn
 Set `GRIIPBUDDY_CONTENT_API` to the isolated loopback recovery API ending in `/api/v1` to read the admin-managed announcement, homepage and SEO content. Media uses local storefront assets or the configured catalog media origins. Canonical URLs and the preview indexing policy stay in storefront configuration.
 
 `src/features/checkout/provider-setup.ts` contains sandbox-only session creation for Stripe and PayPal. It expects `GRIIPBUDDY_PROVIDER_RETURN_ORIGIN`, `GRIIPBUDDY_STRIPE_TEST_SECRET`, `GRIIPBUDDY_PAYPAL_SANDBOX_CLIENT_ID`, and `GRIIPBUDDY_PAYPAL_SANDBOX_CLIENT_SECRET` at runtime. The adapters are setup code and are not wired to checkout, captures, callbacks, refunds or MongoDB reservation writers.
+
+## Step 10 local verification
+
+Run `npm run lint`, `npm run build` and `npm test` on Node 20.20.2. The default browser suite checks the storefront route inventory, responsive layouts and fixture accounts. `GRIIPBUDDY_TEST_SOURCE=release npm test` adds simulated payment and checkout checks.
+
+For recovered API tests, start `npm start` in the private `backend` directory with local MongoDB, Redis and FFmpeg on `PATH`. It seeds a disposable, network restricted replica at `127.0.0.1:38100` and sample products for the integrated browser tests. From the storefront directory:
+
+```sh
+export GRIIPBUDDY_TEST_BACKEND_DIR=/path/to/griipbuddy/backend
+export GRIIPBUDDY_TEST_FIXTURE_PASSWORD="$(node -p 'require(process.env.GRIIPBUDDY_TEST_BACKEND_DIR + "/recovery/fixture.cjs").customerLogin.password')"
+export GRIIPBUDDY_CATALOG_MEDIA_ORIGINS=https://media.fixture.invalid
+node tests/seed-catalog-api.mjs "$GRIIPBUDDY_TEST_BACKEND_DIR"
+GRIIPBUDDY_TEST_SOURCE=api npm test -- --workers=1
+GRIIPBUDDY_TEST_SOURCE=integrated npm test -- --workers=1
+```
+
+The integrated suite uses the recovered order ledger, simulated payments and the local media processor. `GRIIPBUDDY_SCREENSHOTS` can point to a local evidence directory. `GRIIPBUDDY_RECOVERED_WISHLIST=1` enables saving to existing customer favorites when the matching backend version is available. The public sample storefront continues to use guest storage.

@@ -14,8 +14,8 @@ export function useWishlist() {
   ));
   return {
     saved: account?.saved ?? items, hydrated,
-    toggle: account?.mode === 'fixture' ? account.toggleSaved : toggle,
-    readOnly: account?.mode === 'recovered', error: account?.error,
+    toggle: account ? account.toggleSaved : toggle,
+    readOnly: account !== null && !account.wishlistWritable, error: account?.error,
   };
 }
 

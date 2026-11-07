@@ -17,7 +17,7 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
   const [zoomed, setZoomed] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const image = images[active];
-  const swipeStart = useRef<number | null>(null);
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const ignoreTap = useRef(false);
 
   function step(direction: number) {
@@ -29,11 +29,17 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
   return (
     <div className="product-gallery">
       <button className="gallery-main" type="button" aria-label={'Zoom image ' + (active + 1)}
-        onTouchStart={event => { swipeStart.current = event.touches[0].clientX; ignoreTap.current = false; }}
+        onTouchStart={event => {
+          const { clientX: x, clientY: y } = event.touches[0];
+          swipeStart.current = event.touches.length === 1 ? { x, y } : null;
+          ignoreTap.current = false;
+        }}
+        onTouchCancel={() => { swipeStart.current = null; }}
         onTouchEnd={event => {
           if (images.length < 2 || swipeStart.current === null) return;
-          const delta = event.changedTouches[0].clientX - swipeStart.current;
-          if (Math.abs(delta) > 45) { ignoreTap.current = true; step(delta < 0 ? 1 : -1); }
+          const delta = event.changedTouches[0].clientX - swipeStart.current.x;
+          const vertical = event.changedTouches[0].clientY - swipeStart.current.y;
+          if (Math.abs(delta) > 45 && Math.abs(delta) > Math.abs(vertical)) { ignoreTap.current = true; step(delta < 0 ? 1 : -1); }
           swipeStart.current = null;
         }}
         onClick={event => {
@@ -72,13 +78,17 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
   );
 }
 
+const optionKey = (value: string) => value.normalize('NFKC').trim().toLowerCase();
+const dimensionKey = (title: string) => optionKey(title).replace(/^colour$/, 'color');
+
 function variantDimensions(variants: CatalogVariant[]) {
-  const dimensions = new Map<string, { title: string; values: Set<string> }>();
+  const dimensions = new Map<string, { title: string; values: Map<string, string> }>();
   for (const variant of variants) {
     for (const [title, value] of Object.entries(variant.attributes)) {
-      const key = title.toLowerCase().replace(/^colour$/, 'color');
-      const dimension = dimensions.get(key) ?? { title, values: new Set<string>() };
-      dimension.values.add(value);
+      const key = dimensionKey(title);
+      const dimension = dimensions.get(key) ?? { title: title.trim(), values: new Map<string, string>() };
+      const normalized = optionKey(value);
+      if (!dimension.values.has(normalized)) dimension.values.set(normalized, value.trim());
       dimensions.set(key, dimension);
     }
   }
@@ -88,7 +98,7 @@ function variantDimensions(variants: CatalogVariant[]) {
 }
 
 function valuesFor(variant?: CatalogVariant) {
-  return new Map(Object.entries(variant?.attributes ?? {}).map(([key, value]) => [key.toLowerCase().replace(/^colour$/, 'color'), value]));
+  return new Map(Object.entries(variant?.attributes ?? {}).map(([key, value]) => [dimensionKey(key), optionKey(value)]));
 }
 
 function chooseVariant(variants: CatalogVariant[], selected: CatalogVariant | undefined, dimension: string, value: string) {
@@ -175,20 +185,20 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
           {dimensions.map(([key, { title, values }]) => <div key={key} className="variant-section">
             {key === 'size' && extras.guide && <SizeChart guide={extras.guide} product={product.name} />}
             <fieldset className="variant-group" data-dimension={key}>
-              <legend>{title}{current.get(key) && <span> · {current.get(key)}</span>}</legend>
+              <legend>{title}{current.get(key) && <span> · {values.get(current.get(key)!)}</span>}</legend>
               {['device', 'model'].includes(key) && values.size > 4 ? <select aria-label={title} value={current.get(key) ?? ''}
                 onChange={event => select(key, event.currentTarget.value)}>
                 {!current.get(key) && <option value="" disabled>Choose {title.toLowerCase()}</option>}
-                {[...values].map(value => <option key={value} value={value} disabled={!chooseVariant(product.variants, selected, key, value)}>{value}</option>)}
-              </select> : <div>{[...values].map(value => {
+                {[...values].map(([value, label]) => <option key={value} value={value} disabled={!chooseVariant(product.variants, selected, key, value)}>{label}</option>)}
+              </select> : <div>{[...values].map(([value, label]) => {
                 const next = chooseVariant(product.variants, selected, key, value);
                 const image = key === 'color' ? next?.images[0] : undefined;
                 const soldOut = next && (next.id === selectedId && knownStock !== undefined ? knownStock : extras.stock[next.id]) === 0;
                 return <button type="button" key={value} className="variant-option" disabled={!next} data-sold-out={soldOut || undefined}
-                  aria-label={title + ': ' + value} aria-pressed={current.get(key) === value} onClick={() => select(key, value)}>
+                  aria-label={title + ': ' + label} aria-pressed={current.get(key) === value} onClick={() => select(key, value)}>
                   {image ? <span className="option-image"><Image src={image} alt="" fill sizes="74px" unoptimized={image.startsWith('https://')} /></span>
                     : key === 'color' && next?.colorCode && <span className="option-swatch" style={{ backgroundColor: next.colorCode }} />}
-                  <span>{value}</span>{soldOut && <span className="option-stock">Sold out</span>}
+                  <span>{label}</span>{soldOut && <span className="option-stock">Sold out</span>}
                 </button>;
               })}</div>}
             </fieldset>

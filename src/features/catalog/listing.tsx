@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { ChevronRight, Search } from 'lucide-react';
-import { attribute, categoryAt, categoryHref, marketHref, type CatalogProduct, type Category, type CollectionId, type Market } from './catalog';
+import { ChevronRight, Search, X } from 'lucide-react';
+import { attribute, categoryAt, categoryHref, formatMoney, marketHref, type CatalogProduct, type Category, type CollectionId, type Market } from './catalog';
 import { compareProducts, inCategory, inCollection, matchingVariants, parseFilters, relevance, sortLabels, type CatalogParams, type Filters } from './browse';
 import { catalogProducts, mapLimited, variantStock, withAvailability } from './data';
 import { ProductCard } from './product-card';
@@ -38,7 +38,12 @@ export function CatalogGrid({ products, market, linkVariant = false }: {
 }
 
 function choices(values: string[], current = '') {
-  return [...new Set([...values, current].filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const unique = new Map<string, string>();
+  for (const value of [current, ...values].map(value => value.trim()).filter(Boolean)) {
+    const key = value.normalize('NFKC').toLowerCase();
+    if (!unique.has(key)) unique.set(key, value);
+  }
+  return [...unique.values()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
 function SelectFilter({ label, name, selected, options }: {
@@ -120,6 +125,28 @@ async function filterStock(products: CatalogProduct[], availability: NonNullable
   })).flatMap((product) => product ?? []);
 }
 
+function AppliedFilters({ filters, scope, scoped, products, market, action }: {
+  filters: Filters; scope?: Category; scoped: boolean; products: CatalogProduct[]; market: Market; action: string;
+}) {
+  const chips = [
+    ['category', !scoped && filters.category ? 'Category: ' + (scope?.label ?? filters.category) : ''],
+    ['brand', filters.brand ? 'Brand: ' + (products.find(product => product.brand?.id === filters.brand)?.brand?.name ?? 'Selected brand') : ''],
+    ['size', filters.size ? 'Size: ' + filters.size : ''],
+    ['color', filters.color ? 'Color: ' + filters.color : ''],
+    ['min', filters.min !== undefined ? 'From ' + formatMoney(filters.min, market) : ''],
+    ['max', filters.max !== undefined ? 'Up to ' + formatMoney(filters.max, market) : ''],
+    ['availability', filters.availability === 'in' ? 'In stock' : filters.availability === 'out' ? 'Out of stock' : ''],
+  ].filter(([, label]) => label);
+  if (!chips.length) return null;
+  return <ul className="applied-filters" aria-label="Applied filters">{chips.map(([key, label]) => {
+    const params = queryFor(filters);
+    params.delete(key);
+    return <li key={key}><Link href={action + (params.size ? '?' + params : '')} aria-label={'Remove filter: ' + label}>
+      {label}<X size={13} aria-hidden />
+    </Link></li>;
+  })}</ul>;
+}
+
 export async function CatalogListing({ market, categories, category, collection, params, title, description, path, search = false }: {
   market: Market;
   categories: Category[];
@@ -193,6 +220,7 @@ export async function CatalogListing({ market, categories, category, collection,
               <button className="button button-outline" type="submit">Sort</button>
             </form>
           </div>
+          <AppliedFilters filters={filters} scope={scope} scoped={Boolean(category)} products={scopeProducts} market={market} action={action} />
           {notice ? <p className="catalog-notice" role="status">{notice}</p>
             : visible.length ? <CatalogGrid products={visible} market={market} linkVariant={Boolean(filters.size || filters.color || filters.min !== undefined || filters.max !== undefined || filters.availability)} />
               : <div className="empty-state"><Search aria-hidden /><h2>No products found</h2><p>Try another search or clear your filters.</p></div>}

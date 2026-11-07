@@ -5,6 +5,7 @@ import '@fontsource-variable/manrope';
 import '@fontsource-variable/inter';
 import { catalogNavigation } from '@/features/catalog/data';
 import { currentAccount } from '@/features/account/session';
+import { recoveredWishlistEnabled } from '@/features/account/recovered';
 import { AccountShoppingProvider } from '@/features/account/shopping-scope';
 import { StorefrontShell } from '@/features/shell/storefront-shell';
 import { siteContent, contentRows, text } from '@/features/home/content';
@@ -27,6 +28,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const shop = navigation ? <StorefrontShell {...navigation} signedIn={Boolean(account)} accountsEnabled={!preview} announcement={announcement}>{children}</StorefrontShell> : children;
   return <html lang="en"><body>
     {account ? <AccountShoppingProvider key={account.profile.id}
-      scope={{ mode: account.mode, saved: account.profile.saved, cart: account.fixture?.cart }}>{shop}</AccountShoppingProvider> : shop}
+      scope={{ mode: account.mode, saved: account.profile.saved, cart: account.fixture?.cart,
+        wishlistWritable: account.mode === 'fixture' || recoveredWishlistEnabled() }}>{shop}</AccountShoppingProvider> : shop}
   </body></html>;
 }

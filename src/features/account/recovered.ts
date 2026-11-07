@@ -7,7 +7,11 @@ function ref(value: unknown) {
   return typeof value === 'string' ? value : text(fields(value)._id, 90);
 }
 
-const paths = { register:'/user/register', verify:'/user/verify-otp', login: '/user/login', profile: '/user', orders: '/order/customer/my-order' };
+const paths = { register:'/user/register', verify:'/user/verify-otp', login: '/user/login', profile: '/user', orders: '/order/customer/my-order', favorite: '/user/customer/favorite' };
+
+export function recoveredWishlistEnabled() {
+  return process.env.GRIIPBUDDY_RECOVERED_WISHLIST === '1';
+}
 
 async function recovered(action: keyof typeof paths, { token, page, body }: { token?: string; page?: number; body?: unknown }) {
   const base = process.env.GRIIPBUDDY_CATALOG_API ?? '';
@@ -15,7 +19,7 @@ async function recovered(action: keyof typeof paths, { token, page, body }: { to
     throw new AccountError(503, 'The isolated customer API is unavailable.');
   }
   const response = await fetch(base + paths[action] + (page ? '?limit=50&page=' + page : ''), {
-    method: action === 'verify' ? 'PATCH' : body ? 'POST' : 'GET',
+    method: action === 'verify' || action === 'favorite' ? 'PATCH' : body ? 'POST' : 'GET',
     headers: {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
@@ -23,6 +27,9 @@ async function recovered(action: keyof typeof paths, { token, page, body }: { to
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(5000), cache: 'no-store', redirect: 'error',
   }).catch(() => { throw new AccountError(503, 'The isolated customer API is unavailable.'); });
+  if (action === 'favorite' && [400, 404, 409].includes(response.status)) {
+    throw new AccountError(response.status, response.status === 409 ? 'Your wishlist is full.' : 'This product is unavailable.');
+  }
   if ([400, 401, 403, 404].includes(response.status)) {
     if (action === 'register' || action === 'verify') throw new AccountError(400, action === 'register' ? 'Registration could not be started for this phone number.' : 'Enter a valid, unexpired verification code.');
     throw new AccountError(401, action === 'login' ? 'Check your phone number and password.' : 'Sign in again to continue.');
@@ -66,6 +73,11 @@ export async function recoveredRegister(phone: string, name: string, password: s
 }
 export async function recoveredVerify(phone: string, otp: number) {
   return customerSession(await recovered('verify', { body:{ phone_number:phone, otp } }));
+}
+export async function recoveredFavorite(token: string, slug: string, saved: boolean) {
+  const result = await recovered('favorite', { token, body: { slug, saved } });
+  if (!Array.isArray(result.saved)) throw new AccountError(503, 'Your wishlist could not be saved.');
+  return { saved: result.saved.filter((slug): slug is string => typeof slug === 'string') };
 }
 async function customerSession(result: Record<string, unknown>) {
   const token = text(result.access_token, 8000);

@@ -31,6 +31,9 @@
 }
 
 .checkout-layout { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: clamp(16px, 4vw, 62px); }
+.checkout-page { padding-top: clamp(20px, 3vw, 36px); }
+.checkout-page .interior-heading { margin-block: 12px 18px; }
+.checkout-page h1 { font-size: clamp(2rem, 4.2vw, 3.65rem); letter-spacing: -.045em; }
 .checkout-layout .checkout-form { min-width: 0; padding: clamp(15px, 2.5vw, 32px); gap: 1.45rem; background: #fffdfb; border: 1px solid var(--line); border-radius: 13px; }
 .checkout-layout .checkout-totals { background: #f5eff4; border-color: #e4d9e3; border-radius: 13px; }
 .checkout-totals .bag-items > ul { margin-bottom: 7px; }
@@ -48,11 +51,6 @@
 .checkout-banner span { color: #564259; font-size: .78rem; }
 .checkout-market { padding: 10px 12px; color: #523856; border: 1px solid var(--line); border-radius: 7px; font-size: .85rem; background: #fcf8fb; }
 .checkout-market strong { margin-left: auto; }
-.checkout-quick > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr)); gap: 7px; }
-.checkout-quick-method { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 5px; min-height: 44px; border: 1px solid transparent; border-radius: 7px; color: #fff; background: #30203a; font-size: .8rem; font-weight: 680; }
-.checkout-quick-method[data-method="paypal"] { color: #302038; background: #f2cf7e; }
-.checkout-quick-method[aria-pressed="true"] { outline: 2px solid var(--plum); outline-offset: 2px; }
-.checkout-quick-method small { font-size: .69rem; opacity: .94; }
 .checkout-method-icon { margin-left: auto; flex: 0 0 auto; color: #654665; }
 .checkout-form .checkout-method { align-items: center; }
 .checkout-method input { margin-block: 0; }
@@ -61,3 +59,9 @@
   .checkout-layout { grid-template-columns: minmax(0, 1fr); }
   .checkout-layout .checkout-totals { grid-row: 1; }
 }
+
+.checkout-items { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.checkout-items summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-block: 8px; cursor: pointer; list-style: none; color: var(--plum); font-size: .86rem; font-weight: 700; }
+.checkout-items summary::-webkit-details-marker { display: none; }
+.checkout-items[open] summary svg { transform: rotate(180deg); }
+.checkout-items .bag-items { padding-bottom: 6px; }

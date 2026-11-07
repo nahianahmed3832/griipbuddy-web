@@ -34,7 +34,7 @@ test('API country prices and original media references survive the storefront ad
   await page.goto('/de/product/fixture-int');
   await expect(page.locator('.detail-price')).toContainText('€12');
   await expect(page.locator('.detail-price del')).toHaveText('€15');
-  await expect(page.locator('.detail-stock')).toHaveText('Out of stock');
+  await expect(page.locator('.detail-stock')).toHaveText('In stock · 8 available');
   await expect(page.getByRole('button', { name: 'Show image 2' })).toBeVisible();
   await page.getByRole('button', { name: 'Show image 2' }).click();
   await expect(page.getByRole('img', { name: 'Fixture international case — image 2' })).toHaveAttribute('src', 'https://media.fixture.invalid/fixture-detail.webp');
@@ -52,9 +52,10 @@ test('API country prices and original media references survive the storefront ad
   await page.getByRole('dialog').getByRole('button', { name: /Fixture US/ }).click();
   await expect(page).toHaveURL(/\/product\/fixture-int\?variant=00000000000000000000006e$/);
   await expect(page.locator('.detail-price')).toContainText('$17');
+  await expect(page.locator('.detail-stock')).toHaveText('Out of stock');
   await page.getByRole('button', { name: 'Color: Blue' }).click();
   await expect(page.locator('.detail-price')).toContainText('$14');
-  await expect(page.locator('.detail-stock')).toHaveText('Out of stock');
+  await expect(page.locator('.detail-stock')).toHaveText('In stock · 8 available');
 
   await page.goto('/au/product/fixture-int');
   await expect(page.locator('.detail-stock')).toHaveText('Unavailable in this market');

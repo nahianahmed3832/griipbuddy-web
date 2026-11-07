@@ -96,6 +96,7 @@ test('canonical, sitemap, noindex, redirects and security headers match the isol
   await page.goto('/US/product/form-case?variant=form-case-plus');
   await expect(page).toHaveURL(/\/us\/product\/form-case\?variant=form-case-plus$/);
   await expect(page.locator('link[rel=canonical]')).toHaveAttribute('href', baseURL + '/us/product/form-case');
+  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', baseURL + '/catalog/form-case.webp');
   await expect(page.locator('meta[name=robots]')).toHaveAttribute('content', 'noindex, nofollow');
   const robots = await request.get('/robots.txt');
   expect(await robots.text()).toContain('Disallow: /');

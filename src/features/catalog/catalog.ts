@@ -96,7 +96,7 @@ export function currentPrice(price: Money) {
 }
 
 export function attribute(variant: CatalogVariant, name: string) {
-  return Object.entries(variant.attributes).find(([key]) => key.toLowerCase() === name)?.[1];
+  return Object.entries(variant.attributes).find(([key]) => key.trim().toLowerCase() === name)?.[1];
 }
 
 export function productBadges(product: CatalogProduct) {

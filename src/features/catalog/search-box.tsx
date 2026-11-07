@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, Search } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useId, useState } from 'react';
 import { marketHref, type Category, type Market, type Suggestion } from './catalog';
 
@@ -17,13 +18,14 @@ export function SearchBox({
   onFocus?: () => void;
 }) {
   const id = useId();
+  const router = useRouter();
   const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState(initialCategory);
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(-1);
   const [reply, setReply] = useState<{ key: string; matches: Suggestion[]; failed?: boolean }>();
   const clean = query.trim();
-  const key = clean + '\n' + category;
+  const key = market.code + '\n' + clean + '\n' + category;
   const open = focused && clean.length >= 2;
   const suggestions = reply?.key === key ? reply.matches : [];
   const action = marketHref(market, '/search');
@@ -49,7 +51,8 @@ export function SearchBox({
     const suggestion = suggestions[active];
     if (suggestion) {
       onChoose?.();
-      window.location.assign(suggestion.href);
+      setFocused(false);
+      router.push(suggestion.href);
     }
   }
 
@@ -57,7 +60,7 @@ export function SearchBox({
     <form className={'search-form ' + style + '-search'} role="search"
       aria-label={style === 'header' ? 'Storefront search' : style === 'page' ? 'Search results' : 'Mobile search'}
       method="get" action={action}
-      onFocus={() => { setFocused(true); onFocus?.(); }}
+      onFocus={onFocus}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) { setFocused(false); setActive(-1); }
       }}
@@ -78,6 +81,7 @@ export function SearchBox({
         aria-controls={open ? id : undefined} aria-expanded={open} role="combobox" aria-autocomplete="list"
         aria-activedescendant={open && suggestions[active] ? id + '-' + active : undefined}
         placeholder={style === 'header' ? 'Search products' : 'Search the catalog'}
+        onFocus={() => setFocused(true)}
         onChange={(event) => { setQuery(event.target.value); setFocused(true); setActive(-1); }}
         onKeyDown={(event) => {
           if (event.key === 'Escape' && open) {

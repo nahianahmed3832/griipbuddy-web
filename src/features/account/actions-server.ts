@@ -6,7 +6,7 @@ import { apiConfigured } from '@/features/catalog/api';
 import { validSlug } from '@/features/catalog/catalog';
 import { AccountError, emailAddress, passwordValue, phoneKey, phoneNumber, text, type Address } from './contracts';
 import { addFixtureAccount, findFixturePhone, findVerifiedFixtureEmail } from './fixture';
-import { recoveredLogin, recoveredRegister, recoveredVerify } from './recovered';
+import { recoveredFavorite, recoveredLogin, recoveredRegister, recoveredVerify, recoveredWishlistEnabled } from './recovered';
 import { challengeCookie, clearSession, requireCustomer, setChallenge, setSession } from './session';
 import { accountState, checkChallenge, endCustomerSessions, hashPassword, limitAttempt, makeChallenge, validPassword, type FixtureAccount } from './state';
 import { changeAccountCart, transferGuestCart } from './customer-cart';
@@ -173,6 +173,11 @@ export async function accountAction(request: Request, action: string, body: Reco
   }
 
   const scope = await requireCustomer();
+  if (action === 'wishlist' && scope.mode === 'recovered' && recoveredWishlistEnabled()) {
+    const slug = text(body.slug, 180);
+    if (!validSlug(slug) || typeof body.saved !== 'boolean') throw new AccountError(400, 'Choose a product and wishlist action.');
+    return recoveredFavorite(scope.token, slug, body.saved);
+  }
   if (!scope.fixture) throw unavailable();
   const account = scope.fixture;
   if (action === 'cart') return { cart: changeAccountCart(account, body) };

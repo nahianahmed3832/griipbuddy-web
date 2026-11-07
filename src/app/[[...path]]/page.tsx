@@ -5,7 +5,7 @@ import { notFound, redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { categoryAt, categoryHref, collections, flattenCategories, marketHref, productHref, type Market } from '@/features/catalog/catalog';
-import { canonicalFor } from '@/features/catalog/seo';
+import { canonicalFor, canonicalOrigin } from '@/features/catalog/seo';
 import { catalogNavigation, catalogProduct } from '@/features/catalog/data';
 import { CatalogListing } from '@/features/catalog/listing';
 import { ProductPage } from '@/features/catalog/product-page';
@@ -30,10 +30,10 @@ const information: Record<string, { title: string; description: string }> = {
   'terms-and-conditions': { title: 'Terms & conditions', description: 'The storefront terms will be available before launch.' },
 };
 
-function PageFrame({ market, title, subtitle, children }: { market: Market; title: string; subtitle?: string; children?: ReactNode }) {
+function PageFrame({ market, title, subtitle, checkout = false, children }: { market: Market; title: string; subtitle?: string; checkout?: boolean; children?: ReactNode }) {
   return (
-    <div className="container interior">
-      <Link className="back-link" href={marketHref(market)}><ArrowLeft size={16} aria-hidden /> Home</Link>
+    <div className={'container interior' + (checkout ? ' checkout-page' : '')}>
+      <Link className="back-link" href={marketHref(market, checkout ? '/cart' : '/')}><ArrowLeft size={16} aria-hidden /> {checkout ? 'Shopping bag' : 'Home'}</Link>
       <div className="interior-heading"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
       {children}
     </div>
@@ -59,17 +59,24 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const entries = contentRows((await siteContent()).seo);
   const saved = entries.find(row => row.path === canonicalPath) ?? entries.find(row => row.path === path);
   if (!saved) return defaults;
-  const title = text(saved.title) || undefined;
-  const description = text(saved.description) || undefined;
+  const title = text(saved.title) || (typeof defaults.title === 'string' ? defaults.title : undefined);
+  const description = text(saved.description) || defaults.description || undefined;
   const image = contentMedia(saved.image);
   const share = image?.startsWith('/') ? canonicalFor(image).alternates?.canonical : image;
-  return { ...defaults, title, description, openGraph: { title, description, ...(typeof share === 'string' ? { images: [share] } : {}) } };
+  return { ...defaults, title, description, openGraph: { ...defaults.openGraph, title, description, ...(typeof share === 'string' ? { images: [share] } : {}) } };
 }
 
 async function defaultMetadata({ market, categories, section, rest }: Awaited<ReturnType<typeof resolvePath>>): Promise<Metadata> {
   if (section === 'product' && rest.length === 1) {
     const product = await catalogProduct(market, rest[0]);
-    if (product) return { title: product.name, description: product.description.slice(0, 160) || undefined, ...canonicalFor(productHref(market, product.slug)) };
+    if (product) {
+      const description = product.description.slice(0, 160) || undefined;
+      const image = product.images[0] ?? product.variants.find(variant => variant.images.length)?.images[0];
+      const origin = canonicalOrigin();
+      const share = image?.startsWith('/') ? origin && origin + image : image;
+      return { title: product.name, description, ...canonicalFor(productHref(market, product.slug)),
+        openGraph: { title: product.name, description, ...(share && { images: [share] }) } };
+    }
   }
   if (section === 'category') {
     const category = categoryAt(categories, rest);
@@ -83,8 +90,10 @@ async function defaultMetadata({ market, categories, section, rest }: Awaited<Re
   if (section === 'products') return { title: 'Shop all', ...canonicalFor(marketHref(market, '/products')) };
   if (section === 'account' || section === 'login') return { title: 'My account' };
   if (section === 'cart') return { title: 'Shopping bag' };
+  if (section === 'wishlist') return { title: 'Wishlist' };
   if (section === 'checkout') return { title: 'Review checkout' };
   if (section === 'order') return { title: 'Order details', referrer: 'no-referrer' };
+  if (section && !rest.length && Object.hasOwn(information, section)) return { ...information[section], ...canonicalFor(marketHref(market, '/' + section)) };
   if (!section) return canonicalFor(marketHref(market));
   return {};
 }
@@ -149,10 +158,15 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
     const integrated = checkout && !publicBuild() && integratedCheckout();
     const signIn = integrated && !await currentAccount();
     const methods = checkout && !signIn && !publicBuild() ? integrated ? await integratedMethods(market.code) : methodsFor(market.code) : undefined;
-    return <PageFrame market={market} title={checkout ? 'Review checkout' : 'Shopping bag'}
-      subtitle={checkout ? (methods?.length ? 'Confirm delivery and payment for your test order.' : 'Review the current prices, availability and delivery estimate before running a simulation.') : undefined}>
+    const checkoutIntro = methods?.length ? 'Confirm delivery and payment for your test order.'
+      : signIn ? 'Sign in to confirm delivery and payment for your test order.'
+        : integrated ? 'Checkout is unavailable for this delivery market. You can still review your bag.'
+          : 'Review the current prices, availability and delivery estimate before running a simulation.';
+    return <PageFrame market={market} title={checkout ? 'Review checkout' : 'Shopping bag'} checkout={checkout}
+      subtitle={checkout ? checkoutIntro : undefined}>
       {signIn && <Link className="button button-primary" href={marketHref(market, '/login?next=%2Fcheckout')}>Sign in to check out</Link>}
-      <CartView key={market.code + ':' + section} market={market} view={checkout ? 'checkout' : 'page'} methods={methods} paused={checkout && checkoutPaused()} />
+      <CartView key={market.code + ':' + section} market={market} view={checkout ? 'checkout' : 'page'} methods={methods}
+        paused={checkout && checkoutPaused()} allowSimulation={!integrated} />
     </PageFrame>;
   }
   if (Object.hasOwn(information, section)) {

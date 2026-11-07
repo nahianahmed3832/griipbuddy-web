@@ -10,36 +10,37 @@ export function ProductCard({ product, market, priority = false, linkVariant = f
 }) {
   const variant = lowestPricedVariant(product.variants);
   const price = variant?.price;
-  const colors = [...new Set(product.variants.flatMap((entry) => attribute(entry, 'color') ?? attribute(entry, 'colour') ?? []))];
+  const colors = [...new Map(product.variants.flatMap((entry) => {
+    const color = (attribute(entry, 'color') ?? attribute(entry, 'colour'))?.trim();
+    return color ? [[color.toLowerCase(), color] as const] : [];
+  })).values()];
   const image = variant?.images[0] ?? product.images[0];
   const href = productHref(market, product.slug) + (linkVariant && variant ? '?variant=' + encodeURIComponent(variant.id) : '');
   const hasRange = product.variants.some((entry) => entry.price && price && currentPrice(entry.price) !== currentPrice(price));
   return (
     <article className="product-card">
       <div className="product-image">
-        <Link href={href} aria-label={'View ' + product.name}>
-          {image
-            ? <Image src={image} alt={product.name} fill priority={priority} unoptimized={image.startsWith('https://')}
-              referrerPolicy="no-referrer" sizes="(max-width: 650px) 46vw, (max-width: 1000px) 31vw, 23vw" />
-            : <span className="catalog-image-empty"><ImageIcon aria-hidden size={28} /><span>Image unavailable</span></span>}
-        </Link>
+        {image
+          ? <Image src={image} alt="" fill priority={priority} unoptimized={image.startsWith('https://')}
+            referrerPolicy="no-referrer" sizes="(max-width: 650px) 46vw, (max-width: 1060px) 30vw, (max-width: 1440px) 23vw, 330px" />
+          : <span className="catalog-image-empty"><ImageIcon aria-hidden size={28} /><span>Image unavailable</span></span>}
         <div className="product-badges">
           {productBadges(product).map((badge) => <span className="product-badge" data-badge={badge} key={badge}>{badge}</span>)}
         </div>
-        <WishlistButton slug={product.slug} name={product.name} />
       </div>
+      <WishlistButton slug={product.slug} name={product.name} />
       <div className="product-copy">
         {product.brand && <p className="product-brand">{product.brand.name}</p>}
-        <h3><Link href={href}>{product.name}</Link></h3>
+        <h3><Link className="product-title-link" href={href}>{product.name}</Link></h3>
         {colors.length > 0 && <p className="product-color">{colors.length === 1 ? colors[0] : colors.length + ' colors'}</p>}
-        <div className="product-card-bottom">
-        {price && <p className="product-price">
-          {hasRange && <span className="price-from">From </span>}{formatMoney(currentPrice(price), market)}
-          {price.sale !== undefined && <del aria-label={'Regular price ' + formatMoney(price.regular, market)}>{formatMoney(price.regular, market)}</del>}
-        </p>}
-        <Link href={href} className="product-card-action" aria-label={'Choose options for ' + product.name}><ArrowUpRight size={17} aria-hidden /></Link>
-        </div>
         {Boolean(product.sold && product.sold > 0) && <small className="product-sold">{new Intl.NumberFormat(market.locale).format(product.sold!)} sold</small>}
+        <div className="product-card-bottom">
+          {price ? <p className="product-price">
+            {hasRange && <span className="price-from">From</span>}{formatMoney(currentPrice(price), market)}
+            {price.sale !== undefined && <del aria-label={'Regular price ' + formatMoney(price.regular, market)}>{formatMoney(price.regular, market)}</del>}
+          </p> : <p className="product-color">Price unavailable</p>}
+          <span className="product-card-action" aria-hidden="true"><ArrowUpRight size={17} /></span>
+        </div>
       </div>
     </article>
   );

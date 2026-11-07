@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight, ImageIcon, Ruler, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AddToBag } from '@/features/cart/actions';
@@ -10,18 +11,20 @@ import type { Addon, FamilyLink } from './merchandising';
 
 export function FamilySelector({ family, slug, market }: { family: FamilyLink[]; slug: string; market: Market }) {
   const rail = useRef<HTMLDivElement>(null);
+  const router = useRouter();
   if (!family.length) return null;
+  const showMenu = family.length > 4;
   return <section className="family-selector" aria-label="Model or style">
     <div className="option-heading">
-      <label className="option-title" htmlFor="linked-model">Model or style</label>
-      <div className="rail-controls">
-        <button type="button" aria-label="Previous models" onClick={() => rail.current?.scrollBy({ left: -240, behavior: 'smooth' })}><ChevronLeft size={16} aria-hidden /></button>
-        <button type="button" aria-label="More models" onClick={() => rail.current?.scrollBy({ left: 240, behavior: 'smooth' })}><ChevronRight size={16} aria-hidden /></button>
-      </div>
+      {showMenu ? <label className="option-title" htmlFor="linked-model">Model or style</label> : <span className="option-title">Model or style</span>}
+      {showMenu && <div className="rail-controls">
+        <button type="button" aria-label="Previous models" onClick={() => rail.current?.scrollBy({ left: -240 })}><ChevronLeft size={16} aria-hidden /></button>
+        <button type="button" aria-label="More models" onClick={() => rail.current?.scrollBy({ left: 240 })}><ChevronRight size={16} aria-hidden /></button>
+      </div>}
     </div>
-    <select id="linked-model" value={slug} onChange={event => { window.location.assign(productHref(market, event.currentTarget.value)); }}>
+    {showMenu && <select id="linked-model" value={slug} onChange={event => { router.push(productHref(market, event.currentTarget.value)); }}>
       {family.map(model => <option value={model.slug} key={model.slug}>{model.label}</option>)}
-    </select>
+    </select>}
     <div className="family-rail" ref={rail}>
       {family.map(model => <Link key={model.slug} href={productHref(market, model.slug)}
         aria-current={model.slug === slug ? 'page' : undefined} prefetch={false}>

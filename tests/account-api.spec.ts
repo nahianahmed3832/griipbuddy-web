@@ -1,35 +1,12 @@
 import { randomInt } from 'node:crypto';
-import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { withFixtureMongo } from './recovery-fixture';
 
 const api = 'http://127.0.0.1:38100/api/v1';
 const ownerId = '00000000000000000000000f';
 const ownedOrder = '00000000000000000000000a';
 const wrongOwnerOrder = '000000000000000000000080';
 
-async function withFixtureMongo<T>(work: (db: {
-  collection: (name: string) => {
-    findOne: (query: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
-    updateOne: (query: Record<string, unknown>, update: Record<string, unknown>, options?: Record<string, unknown>) => Promise<unknown>;
-  };
-}, id: (value: string) => unknown) => Promise<T>) {
-  const root = process.env.GRIIPBUDDY_TEST_BACKEND_DIR;
-  if (!root) throw new Error('Set GRIIPBUDDY_TEST_BACKEND_DIR to the local recovered backend with installed dependencies.');
-  const { MongoClient, ObjectId } = createRequire(resolve(root, 'package.json'))('mongoose').mongo;
-  const client = new MongoClient('mongodb://127.0.0.1:38117/griipbuddy_fixture?replicaSet=griip-recovery&directConnection=true', { serverSelectionTimeoutMS: 2000 });
-  try {
-    const db = client.db('griipbuddy_fixture');
-    const topology = await db.admin().command({ hello: 1 });
-    if (topology.setName !== 'griip-recovery' || topology.me !== '127.0.0.1:38117') throw new Error('Unexpected synthetic database topology.');
-    if (!await db.collection('users').findOne({ _id: new ObjectId(ownerId), phone_number: '01000000002', role: 'USER' })) {
-      throw new Error('Synthetic customer fixture not found.');
-    }
-    return await work(db, (value) => new ObjectId(value));
-  } finally {
-    await client.close();
-  }
-}
 
 test('recovered login preserves the guest bag and serves only explicitly owned orders', async ({ page }) => {
   const password = process.env.GRIIPBUDDY_TEST_FIXTURE_PASSWORD;
@@ -52,6 +29,18 @@ test('recovered login preserves the guest bag and serves only explicitly owned o
   await expect(page).toHaveURL(/\/bd\/account$/);
   await expect(page.getByRole('link', { name: 'View shopping bag (1)' })).toBeVisible();
 
+  await page.goto('/bd/product/fixture-bd');
+  await page.getByRole('button', { name: 'Save Fixture domestic case', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Remove Fixture domestic case', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Remove Fixture domestic case', exact: true })).toBeEnabled();
+  const duplicate = await page.request.post('/api/account/wishlist', { data: { slug: 'fixture-bd', saved: true } });
+  expect(await duplicate.json()).toEqual({ saved: ['fixture-bd'] });
+  expect((await page.request.post('/api/account/wishlist', { data: { slug: 'fixture-pos-only', saved: true } })).status()).toBe(404);
+  await page.getByRole('button', { name: 'Remove Fixture domestic case', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save Fixture domestic case', exact: true })).toBeVisible();
+  await page.goto('/bd/account');
+
   const profile = await page.request.get('/api/account/me?userId=00000000000000000000000e');
   const scope = await profile.json();
   expect(scope).toMatchObject({ mode: 'recovered', customer: { id: ownerId, phone: '01000000002' } });
@@ -67,6 +56,7 @@ test('recovered login preserves the guest bag and serves only explicitly owned o
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page).toHaveURL(/\/bd\/login$/);
   expect((await page.request.get('/api/account/me')).status()).toBe(401);
+  expect((await page.request.post('/api/account/wishlist', { data: { slug: 'fixture-bd', saved: true } })).status()).toBe(401);
   const staff = await page.request.post('/api/account/login', { data: { phone: '01000000001', password } });
   expect(staff.status()).toBe(401);
 });

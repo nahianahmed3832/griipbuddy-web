@@ -5,7 +5,7 @@ import type { CartSnapshot } from '@/features/cart/cart';
 import type { CartCommand } from './contracts';
 import { accountRequest } from './client';
 
-type Scope = { mode: 'fixture' | 'recovered'; saved: string[]; cart?: CartSnapshot };
+type Scope = { mode: 'fixture' | 'recovered'; saved: string[]; cart?: CartSnapshot; wishlistWritable: boolean };
 type Shopping = Scope & { changeCart: (command: CartCommand) => Promise<boolean>; toggleSaved: (slug: string) => void; error: string };
 
 const AccountShopping = createContext<Shopping | null>(null);
@@ -13,6 +13,7 @@ const AccountShopping = createContext<Shopping | null>(null);
 export function AccountShoppingProvider({ scope, children }: { scope: Scope; children: ReactNode }) {
   const [cart, setCart] = useState(scope.cart);
   const [saved, setSaved] = useState(scope.saved);
+  const savedRef = useRef(scope.saved);
   const [error, setError] = useState('');
   const queue = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -39,16 +40,18 @@ export function AccountShoppingProvider({ scope, children }: { scope: Scope; chi
   }
 
   function toggleSaved(slug: string) {
+    if (!scope.wishlistWritable) return;
     queue.current = queue.current.then(async () => {
       setError('');
-      const result = await accountRequest<{ saved: string[] }>('wishlist', { slug });
+      const result = await accountRequest<{ saved: string[] }>('wishlist', { slug, saved: !savedRef.current.includes(slug) });
+      savedRef.current = result.saved;
       setSaved(result.saved);
     }).catch((error: unknown) => {
       setError(error instanceof Error ? error.message : 'Your wishlist could not be saved.');
     });
   }
 
-  return <AccountShopping.Provider value={{ mode: scope.mode, cart, saved, changeCart, toggleSaved, error }}>
+  return <AccountShopping.Provider value={{ mode: scope.mode, cart, saved, wishlistWritable: scope.wishlistWritable, changeCart, toggleSaved, error }}>
     {children}
   </AccountShopping.Provider>;
 }

@@ -20,18 +20,17 @@ async function requestKey(payload: unknown, receipt?: File) {
   return { key, storageKey };
 }
 
-export function CheckoutForm({ market, methods, lines, quote, coupon }: {
-  market: Market; methods: MethodOption[]; lines: CartLine[]; quote?: CartQuote; coupon?: string;
+export function CheckoutForm({ market, methods, lines, quote, coupon, refreshQuote }: {
+  market: Market; methods: MethodOption[]; lines: CartLine[]; quote?: CartQuote; coupon?: string; refreshQuote: () => void;
 }) {
-  const [method, setMethod] = useState<Method>(methods[0].id);
+  const [chosen, setMethod] = useState<Method>(methods[0].id);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submitting = useRef(false);
-  const contact = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const commands = useBagCommands();
-  const online = methods.filter(option => option.id === 'paypal' || option.id === 'stripe');
-  const selected = methods.find((entry) => entry.id === method);
+  const selected = methods.find((entry) => entry.id === chosen) ?? methods[0];
+  const method = selected.id;
   const total = quote?.estimatedTotal;
   const advance = selected?.advancePercent && total != null ? Math.ceil(total * selected.advancePercent / 100) : undefined;
 
@@ -52,7 +51,7 @@ export function CheckoutForm({ market, methods, lines, quote, coupon }: {
       const session = await fetch('/api/checkout/session', { method: 'POST' });
       if (!session.ok) throw new Error('Could not establish your checkout session.');
       const payload = {
-        market: market.code, method, lines, coupon, review: quoteReview(quote),
+        market: market.code, method, lines, coupon: quote.coupon?.status === 'applied' ? coupon : undefined, review: quoteReview(quote),
         delivery: { name: text('name'), phone: text('phone'), street: text('street'), city: text('city'), region: text('region'), postal: text('postal') },
         ...(method === 'manual' && { reference: text('reference'), paymentPhone: text('paymentPhone') }),
       };
@@ -67,6 +66,7 @@ export function CheckoutForm({ market, methods, lines, quote, coupon }: {
         method: 'POST', body, ...(typeof body === 'string' && { headers: { 'Content-Type': 'application/json' } }),
       });
       const result = await response.json();
+      if (response.status === 409) { refreshQuote(); router.refresh(); }
       if (!response.ok || !result.order?.id) throw new Error(result.error ?? 'Checkout could not place your order.');
       for (const line of lines) await commands.remove(lineKey(line));
       if (coupon) await commands.coupon(market.code);
@@ -82,20 +82,10 @@ export function CheckoutForm({ market, methods, lines, quote, coupon }: {
 
   return <form className="checkout-form" onSubmit={submit}>
     <div className="checkout-banner"><LockKeyhole size={18} aria-hidden /><div><strong>Test checkout</strong><span>Use sample details. Payments and delivery are simulated.</span></div></div>
-    {online.length > 0 && <fieldset className="checkout-quick" disabled={busy}>
-      <legend>Quick payment selection</legend>
-      <div>{online.map(option => {
-        const Icon = methodIcons[option.id];
-        return <button key={option.id} type="button" className="checkout-quick-method" data-method={option.id}
-          aria-pressed={option.id === method} onClick={() => {
-            setMethod(option.id); setError(''); contact.current?.focus();
-          }}><Icon size={18} aria-hidden />{option.label}<small>Test</small></button>;
-      })}</div>
-    </fieldset>}
     <fieldset disabled={busy}>
       <legend>Contact</legend>
       <div className="checkout-fields">
-        <label className="checkout-wide">Delivery phone<input ref={contact} name="phone" type="tel" autoComplete="shipping tel" required maxLength={28} /></label>
+        <label className="checkout-wide">Delivery phone<input name="phone" type="tel" autoComplete="shipping tel" required maxLength={28} /></label>
       </div>
     </fieldset>
     <fieldset disabled={busy}>
@@ -105,7 +95,7 @@ export function CheckoutForm({ market, methods, lines, quote, coupon }: {
         <label className="checkout-wide">Recipient name<input name="name" autoComplete="shipping name" required maxLength={100} /></label>
         <label className="checkout-wide">Street address<input name="street" autoComplete="shipping address-line1" required maxLength={180} /></label>
         <label>City<input name="city" autoComplete="shipping address-level2" required maxLength={80} /></label>
-        <label>{market.code === 'US' ? 'State' : 'District'}<input name="region" autoComplete="shipping address-level1" required maxLength={80} /></label>
+        <label>{market.code === 'US' ? 'State' : market.code === 'BD' ? 'District' : 'State, province or region'}<input name="region" autoComplete="shipping address-level1" required maxLength={80} /></label>
         <label>{market.code === 'US' ? 'ZIP code' : 'Postal code (optional)'}<input name="postal" autoComplete="shipping postal-code" required={market.code === 'US'} maxLength={12} /></label>
       </div>
     </fieldset>
