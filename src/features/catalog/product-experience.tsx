@@ -107,9 +107,9 @@ function chooseVariant(variants: CatalogVariant[], selected: CatalogVariant | un
   ), undefined);
 }
 
-export function ProductExperience({ product, market, initialId, initialStock, extras, reviews, reviewsEnabled }: {
+export function ProductExperience({ product, market, initialId, initialStock, extras, reviews, reviewsEnabled, reviewsWritable }: {
   product: CatalogProduct; market: Market; initialId?: string; initialStock: number | null;
-  extras: Awaited<ReturnType<typeof merchandising>>; reviews: ReviewPage | null; reviewsEnabled: boolean;
+  extras: Awaited<ReturnType<typeof merchandising>>; reviews: ReviewPage | null; reviewsEnabled: boolean; reviewsWritable: boolean;
 }) {
   const [selectedId, setSelectedId] = useState(initialId);
   const [reply, setReply] = useState<{ id: string; stock: number | null }>();
@@ -202,7 +202,7 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
         <div className="product-information">
           {product.description && <details className="detail-accordion" open><summary>Description</summary>
             <p className="detail-description">{product.description}</p></details>}
-          <ProductReviews product={product} market={market} initial={reviews} enabled={reviewsEnabled} />
+          <ProductReviews product={product} market={market} initial={reviews} enabled={reviewsEnabled} writable={reviewsWritable} />
           {product.deliveryEstimate && <details className="detail-accordion"><summary>Delivery</summary>
             <p className="detail-description">Estimated delivery · {product.deliveryEstimate}. Shipping charges are shown in your bag.</p>
           </details>}

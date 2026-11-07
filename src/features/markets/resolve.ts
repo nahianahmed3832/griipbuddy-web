@@ -1,3 +1,4 @@
+import { publicBuild } from '@/features/public-build';
 import 'server-only';
 
 import { checkoutPreferences } from '@/features/checkout/admin-preferences';
@@ -29,7 +30,7 @@ export const resolveMarket = cache(async (markets: Market[], segment?: string) =
   const name = process.env.GRIIPBUDDY_COUNTRY_HEADER?.toLowerCase();
   const hint = name && /^x-[a-z0-9-]+$|^cf-ipcountry$|^cloudfront-viewer-country$/.test(name) ? (await headers()).get(name) : null;
   const detected = hint && /^[a-z]{2}$/i.test(hint) ? marketForSegment(markets, hint) : undefined;
-  const fallback = markets.find((market) => market.code === 'INTL');
+  const fallback = (publicBuild() ? marketForSegment(markets, 'bd') : undefined) ?? markets.find((market) => market.code === 'INTL');
   if (!fallback) throw new Error('International storefront is not configured.');
   return { market: detected ?? fallback, explicit: false };
 });

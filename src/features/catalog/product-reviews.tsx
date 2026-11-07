@@ -23,8 +23,8 @@ function Media({ file, index }: { file: ReviewMedia; index: number }) {
     </a>;
 }
 
-export function ProductReviews({ product, market, initial, enabled }: {
-  product: CatalogProduct; market: Market; initial: ReviewPage | null; enabled: boolean;
+export function ProductReviews({ product, market, initial, enabled, writable }: {
+  product: CatalogProduct; market: Market; initial: ReviewPage | null; enabled: boolean; writable: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const section = useRef<HTMLDetailsElement>(null);
@@ -128,9 +128,9 @@ export function ProductReviews({ product, market, initial, enabled }: {
         {total > 1 && <label>Sort reviews<select value={sort} disabled={listing} onChange={event => void list(1, event.currentTarget.value)}>
           <option value="recent">Most recent</option><option value="highest">Highest rated</option><option value="lowest">Lowest rated</option>
         </select></label>}
-        <button className="button button-outline" type="button" onClick={() => void write()}>Write a review</button>
+        {writable && <button className="button button-outline" type="button" onClick={() => void write()}>Write a review</button>}
       </div>
-      {data ? !total && <p>Be the first to review this product after delivery.</p>
+      {data ? !total && <p>{writable ? 'Be the first to review this product after delivery.' : 'No sample reviews for this product.'}</p>
         : <button className="text-link" type="button" disabled={listing} onClick={() => void list(1, 'recent')}>Load reviews</button>}
       {listingError && <p role="alert">{listingError}</p>}
       {data?.reviews.map(review => <article className="review-entry" key={review.id}>
@@ -146,7 +146,7 @@ export function ProductReviews({ product, market, initial, enabled }: {
         <button className="button button-outline" disabled={page * 10 >= total || listing} type="button" onClick={() => void list(page + 1, sort)}>Next</button>
       </div>}
     </div>
-    <dialog ref={dialog} className="review-dialog" aria-labelledby="review-title">
+    {writable && <dialog ref={dialog} className="review-dialog" aria-labelledby="review-title">
       <div className="size-chart-head"><h2 id="review-title">Write a review</h2>
         <button className="icon-button" type="button" aria-label="Close review form" onClick={() => dialog.current?.close()}><X aria-hidden /></button></div>
       <div className="size-chart-body">
@@ -171,6 +171,6 @@ export function ProductReviews({ product, market, initial, enabled }: {
                   </form>}
         {message && <p className="checkout-error" role="alert">{message}</p>}
       </div>
-    </dialog>
+    </dialog>}
   </details>;
 }

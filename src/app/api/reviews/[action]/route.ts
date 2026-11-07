@@ -1,3 +1,4 @@
+import { publicBuild } from '@/features/public-build';
 import { NextRequest } from 'next/server';
 import { currentAccount } from '@/features/account/session';
 import { objectId } from '@/features/catalog/api';
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest, context: Context) {
     if (action === 'list') {
       return Response.json(await publicReviews(id, params.get('sort') ?? 'recent', Number(params.get('page')) || 1), { headers });
     }
-    if (action === 'eligible') {
+    if (action === 'eligible' && !publicBuild()) {
       const account = await currentAccount();
       if (account?.mode !== 'recovered') return error('Sign in to write a review.', 401);
       return json(await upstream('/eligible/' + id, { headers: { Authorization: 'Bearer ' + account.token } }));
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest, context: Context) {
 }
 
 export async function POST(req: NextRequest, context: Context) {
-  if ((await context.params).action !== 'submit' || !storefrontExtrasEnabled()) return error('Reviews unavailable.', 404);
+  if (publicBuild() || (await context.params).action !== 'submit' || !storefrontExtrasEnabled()) return error('Reviews unavailable.', 404);
   if (!sameOriginRequest(req)) return error('Origin denied.', 403);
   const type = req.headers.get('content-type');
   const length = Number(req.headers.get('content-length'));

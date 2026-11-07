@@ -45,8 +45,8 @@ function PanelDialog({ title, close, children }: { title: string; close: () => v
   );
 }
 
-function Chrome({ pathname, markets, categories, signedIn, announcement, children }: {
-  pathname: string; markets: Market[]; categories: Category[]; signedIn: boolean; announcement?: string; children: ReactNode;
+function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, announcement, children }: {
+  pathname: string; markets: Market[]; categories: Category[]; signedIn: boolean; accountsEnabled: boolean; announcement?: string; children: ReactNode;
 }) {
   const [segment, ...rest] = pathname.split('/').filter(Boolean);
   const explicitMarket = marketForSegment(markets, segment);
@@ -125,7 +125,7 @@ function Chrome({ pathname, markets, categories, signedIn, announcement, childre
           <div className="header-utilities">
             <button type="button" className="market-trigger" aria-label={'Choose country, current market ' + market.name}
               onClick={(event) => open('market', event.currentTarget)}><Globe size={16} aria-hidden /><span>{market.code}<span className="market-currency"> / {market.currency}</span></span><ChevronDown size={11} aria-hidden /></button>
-            <Link className="icon-button header-account" aria-label="Account" href={marketHref(market, signedIn ? '/account' : '/login')} onClick={() => setMega(null)}><UserRound aria-hidden /></Link>
+            {accountsEnabled && <Link className="icon-button header-account" aria-label="Account" href={marketHref(market, signedIn ? '/account' : '/login')} onClick={() => setMega(null)}><UserRound aria-hidden /></Link>}
             <Link className="icon-button desktop-utility" aria-label="Wishlist" href={marketHref(market, '/wishlist')} onClick={() => setMega(null)}><Heart aria-hidden /></Link>
             <button type="button" className="icon-button desktop-utility bag-trigger"
               aria-label={count ? 'Shopping bag, ' + countLabel : 'Shopping bag'}
@@ -215,7 +215,7 @@ function Chrome({ pathname, markets, categories, signedIn, announcement, childre
             {collections.map((collection) => (
               <Link key={collection.id} href={marketHref(market, '/collections/' + collection.id)} onClick={close}>{collection.label}<ArrowUpRight size={17} aria-hidden /></Link>
             ))}
-            <Link href={marketHref(market, signedIn ? '/account' : '/login')} onClick={close}>Account<UserRound size={17} aria-hidden /></Link>
+            {accountsEnabled && <Link href={marketHref(market, signedIn ? '/account' : '/login')} onClick={close}>Account<UserRound size={17} aria-hidden /></Link>}
           </div>
         </PanelDialog>
       )}
@@ -223,7 +223,7 @@ function Chrome({ pathname, markets, categories, signedIn, announcement, childre
   );
 }
 
-export function StorefrontShell({ children, markets, categories, signedIn, announcement }: { children: ReactNode; markets: Market[]; categories: Category[]; signedIn: boolean; announcement?: string }) {
+export function StorefrontShell({ children, markets, categories, signedIn, accountsEnabled, announcement }: { children: ReactNode; markets: Market[]; categories: Category[]; signedIn: boolean; accountsEnabled: boolean; announcement?: string }) {
   const pathname = usePathname();
-  return <Chrome key={pathname} pathname={pathname} markets={markets} categories={categories} signedIn={signedIn} announcement={announcement}>{children}</Chrome>;
+  return <Chrome key={pathname} pathname={pathname} markets={markets} categories={categories} signedIn={signedIn} accountsEnabled={accountsEnabled} announcement={announcement}>{children}</Chrome>;
 }

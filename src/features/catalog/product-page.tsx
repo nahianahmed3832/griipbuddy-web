@@ -1,3 +1,4 @@
+import { publicBuild } from '@/features/public-build';
 import { categoryAt, type CatalogProduct, type Category, type Market } from './catalog';
 import { compareProducts, inCategory } from './browse';
 import { catalogProducts, variantStock, withAvailability } from './data';
@@ -31,7 +32,7 @@ export async function ProductPage({ product, market, categories, requestedVarian
     <div className="container catalog-page product-page">
       <Breadcrumbs market={market} categories={categories} path={category?.path ?? []} current={product.name} />
       <ProductExperience key={market.code + ':' + product.id + ':' + (initial?.id ?? '')}
-        product={product} market={market} initialId={initial?.id} initialStock={stock} extras={extras} reviews={reviews} reviewsEnabled={storefrontExtrasEnabled()} />
+        product={product} market={market} initialId={initial?.id} initialStock={stock} extras={extras} reviews={reviews} reviewsEnabled={storefrontExtrasEnabled()} reviewsWritable={!publicBuild()} />
       {related.length > 0 && <section className="product-shelf" aria-label="Related products">
         <h2>Related products</h2><CatalogGrid products={shelves.slice(0, related.length)} market={market} />
       </section>}

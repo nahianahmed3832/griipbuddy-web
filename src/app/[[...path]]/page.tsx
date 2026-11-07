@@ -1,3 +1,4 @@
+import { publicBuild } from '@/features/public-build';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
@@ -126,12 +127,16 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
     notFound();
   }
   if (section === 'account' || section === 'login') {
+    if (publicBuild()) redirect(marketHref(market, '/products'));
     if (section === 'login' && rest.length) notFound();
     return <CustomerPage market={market} path={rest} login={section === 'login'}
       requestedOrder={typeof query.order === 'string' ? query.order : undefined}
       returnTo={typeof query.next === 'string' ? query.next : undefined} />;
   }
-  if (section === 'order' && rest.length === 1) return <OrderPage id={rest[0]} market={market} />;
+  if (section === 'order' && rest.length === 1) {
+    if (publicBuild()) notFound();
+    return <OrderPage id={rest[0]} market={market} />;
+  }
   if (rest.length) notFound();
 
   if (section === 'products' || section === 'search') {
@@ -141,9 +146,9 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
   if (section === 'wishlist') return <PageFrame market={market} title="Wishlist"><WishlistPage market={market} /></PageFrame>;
   if (section === 'cart' || section === 'checkout') {
     const checkout = section === 'checkout';
-    const integrated = checkout && integratedCheckout();
+    const integrated = checkout && !publicBuild() && integratedCheckout();
     const signIn = integrated && !await currentAccount();
-    const methods = checkout && !signIn ? integrated ? await integratedMethods(market.code) : methodsFor(market.code) : undefined;
+    const methods = checkout && !signIn && !publicBuild() ? integrated ? await integratedMethods(market.code) : methodsFor(market.code) : undefined;
     return <PageFrame market={market} title={checkout ? 'Review checkout' : 'Shopping bag'}
       subtitle={checkout ? (methods?.length ? 'Confirm delivery and payment for your test order.' : 'Review the current prices, availability and delivery estimate before running a simulation.') : undefined}>
       {signIn && <Link className="button button-primary" href={marketHref(market, '/login?next=%2Fcheckout')}>Sign in to check out</Link>}

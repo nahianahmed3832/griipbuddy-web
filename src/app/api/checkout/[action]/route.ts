@@ -1,3 +1,4 @@
+import { publicBuild } from '@/features/public-build';
 import { sameOriginRequest } from '@/app/api/request-origin';
 import { checkoutEnabled, checkoutPaused } from '@/features/checkout/config';
 import { CheckoutError } from '@/features/checkout/contracts';
@@ -15,6 +16,7 @@ export async function POST(request: Request, { params }: Params) {
   try {
     if (!checkoutEnabled() && !integratedCheckout()) throw new CheckoutError(404, 'Checkout is not available for this catalog.');
     if (!sameOriginRequest(request)) throw new CheckoutError(403, 'Use the storefront to continue.');
+    if (publicBuild()) throw new CheckoutError(404, 'Use the checkout simulator in the sample storefront.');
     const { action } = await params;
     const integrated = integratedCheckout();
     if (action === 'place' && (checkoutPaused() || (integrated && process.env.GRIIPBUDDY_CHECKOUT_PAUSED === '1'))) throw new CheckoutError(503, 'Test checkout is temporarily paused.');
@@ -71,6 +73,7 @@ export async function POST(request: Request, { params }: Params) {
 
 export async function GET(request: Request, { params }: Params) {
   try {
+    if (publicBuild()) throw new CheckoutError(404, 'Use the checkout simulator in the sample storefront.');
     const { action } = await params;
     if (integratedCheckout() && action === 'order') return reply({ order:await integratedOrder(new URL(request.url).searchParams.get('id')) });
     if (!checkoutEnabled()) throw new CheckoutError(404, 'Checkout is not available for this catalog.');

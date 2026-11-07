@@ -1,3 +1,4 @@
+import { publicBuild } from '@/features/public-build';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import '@fontsource-variable/manrope';
@@ -21,8 +22,9 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const [navigation, account, content] = await Promise.all([catalogNavigation().catch(() => null), currentAccount().catch(() => null), siteContent()]);
-  const announcement = text(contentRows(content.top_bar_messages).sort((a,b) => Number(a.position) - Number(b.position))[0]?.message);
-  const shop = navigation ? <StorefrontShell {...navigation} signedIn={Boolean(account)} announcement={announcement}>{children}</StorefrontShell> : children;
+  const preview = publicBuild();
+  const announcement = preview ? 'Sample storefront · Explore the catalog' : text(contentRows(content.top_bar_messages).sort((a,b) => Number(a.position) - Number(b.position))[0]?.message);
+  const shop = navigation ? <StorefrontShell {...navigation} signedIn={Boolean(account)} accountsEnabled={!preview} announcement={announcement}>{children}</StorefrontShell> : children;
   return <html lang="en"><body>
     {account ? <AccountShoppingProvider key={account.profile.id}
       scope={{ mode: account.mode, saved: account.profile.saved, cart: account.fixture?.cart }}>{shop}</AccountShoppingProvider> : shop}

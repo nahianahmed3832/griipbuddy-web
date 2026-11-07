@@ -1,3 +1,4 @@
+import { publicBuild } from '@/features/public-build';
 import 'server-only';
 
 import { cookies } from 'next/headers';
@@ -16,6 +17,7 @@ export const sessionCookie = 'griipbuddy-customer';
 export const challengeCookie = 'griipbuddy-verification';
 
 export const currentAccount = cache(async () => {
+  if (publicBuild()) return null;
   const handle = (await cookies()).get(sessionCookie)?.value;
   const session = readSession(handle);
   if (!session || (session.mode === 'recovered') !== apiConfigured()) return null;
