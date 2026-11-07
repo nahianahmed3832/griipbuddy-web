@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  experimental: { cpus: 1 },
   images: {
     remotePatterns: [{ protocol: 'https', hostname: 'd11ml80zmgyrxk.cloudfront.net', pathname: '/uploads/*', search: '' }],
   },
