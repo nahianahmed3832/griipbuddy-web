@@ -69,18 +69,18 @@ function PreviewCode({ code, channel = 'SMS' }: { code: string; channel?: string
   return <div className="account-preview-code">Preview {channel} code <output aria-label={'Preview ' + channel + ' code'}>{code}</output></div>;
 }
 
-export function AuthForm({ initial, market, fixture, integrated, preview, destination, returnQuery }: {
-  initial: 'login' | 'register' | 'recover'; market: Market; fixture: boolean; integrated?: boolean; preview?: boolean; destination?: string; returnQuery: string;
+export function AuthForm({ initial, market, fixture, integrated, preview, googleEnabled, googleFailed, destination, returnQuery }: {
+  initial: 'login' | 'register' | 'recover'; market: Market; fixture: boolean; integrated?: boolean; preview?: boolean; googleEnabled?: boolean; googleFailed?: boolean; destination?: string; returnQuery: string;
 }) {
   const [step, setStep] = useState<AuthStep>(initial);
   const [method, setMethod] = useState<'phone' | 'email'>('phone');
   const [code, setCode] = useState('');
   const [notice, setNotice] = useState('');
   const action = useAction();
-  const titles = { login: 'Sign in', register: 'Create an account', verify: 'Verify your phone', recover: 'Forgot password', reset: 'Reset password' };
+  const titles = { login: 'Sign in', register: 'Create an account', verify: preview ? 'Verify your test account' : 'Verify your phone', recover: 'Forgot password', reset: 'Reset password' };
   const submits = { login: 'Sign in', register: 'Send verification code', verify: 'Verify and continue', recover: 'Send reset code', reset: 'Reset password' };
   const descriptions = {
-    login: preview ? 'Sign in with the test details you registered on dev.' : fixture ? 'Use your phone number or verified email.' : 'Use the verified phone number on your GriipBuddy account.',
+    login: preview ? 'Use the test email or phone you registered on dev.' : fixture ? 'Use your phone number or verified email.' : 'Use the verified phone number on your GriipBuddy account.',
     register: preview ? 'Register a test account to try the sign-in flow.' : 'Create an account to keep your bag, saved products and orders together.',
     recover: 'Enter the phone number on your account.',
     verify: 'Enter the code issued for this request. Codes expire after five minutes.',
@@ -122,21 +122,27 @@ export function AuthForm({ initial, market, fixture, integrated, preview, destin
     {!fixture && step !== 'login' && !(integrated && ['register','verify'].includes(step)) ? <div className="account-feedback">
       This service is unavailable for recovered accounts. <Link className="text-link" href={marketHref(market, '/contact-and-support')}>Contact support</Link>
     </div> : <form key={step} method="post" className="account-form" onSubmit={(event) => void submit(event)}>
-      {step === 'login' && !preview && <div className="account-methods" aria-label="Sign-in method">
+      {(step === 'login' || (preview && step === 'register')) && <div className="account-methods" aria-label={step === 'login' ? 'Sign-in method' : 'Registration method'}>
         <button type="button" aria-pressed={method === 'phone'} onClick={() => setMethod('phone')}>Phone</button>
         <button type="button" aria-pressed={method === 'email'} disabled={!fixture} onClick={() => setMethod('email')}>Email</button>
       </div>}
       {step === 'register' && <>
         <Field label={preview ? 'Test name' : 'Full name'}><input name="name" autoComplete={preview ? 'off' : 'name'} maxLength={120} required /></Field>
-        {fixture && !preview && <Field label="Email address (optional)"><input name="email" type="email" autoComplete="email" maxLength={254} /></Field>}
+        {fixture && (!preview || method === 'phone') && <Field label={preview ? 'Test email (optional)' : 'Email address (optional)'}>
+          <input name="email" type="email" autoComplete={preview ? 'off' : 'email'} maxLength={254} />
+          {preview && <small>Use an address ending in @preview.invalid to also sign in with email.</small>}
+        </Field>}
       </>}
-      {((step === 'login' && method === 'phone') || step === 'register' || step === 'recover' || (integrated && step === 'verify')) &&
+      {((step === 'login' && method === 'phone') || (step === 'register' && (!preview || method === 'phone')) || step === 'recover' || (integrated && step === 'verify')) &&
         <Field key="phone" label={preview ? 'Test phone number' : 'Phone number'}><input name="phone" type="tel"
           autoComplete={preview ? 'off' : 'tel'} pattern={preview ? '0000000[0-9]{4}' : undefined} maxLength={preview ? 11 : 30}
           aria-describedby={preview ? 'test-phone-format' : undefined} required />
           {preview && <small id="test-phone-format">Enter 0000000 followed by any four digits.</small>}</Field>}
-      {step === 'login' && method === 'email' &&
-        <Field key="email" label="Email address"><input name="email" type="email" autoComplete="email" maxLength={254} required /></Field>}
+      {(step === 'login' || (preview && step === 'register')) && method === 'email' &&
+        <Field key="email" label={preview ? 'Test email address' : 'Email address'}>
+          <input name="email" type="email" autoComplete={preview ? 'off' : 'email'} maxLength={254} required />
+          {preview && <small>Use an address ending in @preview.invalid.</small>}
+        </Field>}
       {step === 'login' && <Field label="Password"><input name="password" type="password" autoComplete="current-password" maxLength={128} required /></Field>}
       {(step === 'verify' || step === 'reset') && <CodeField length={integrated && step === 'verify' ? 5 : 6} />}
       {(step === 'register' || step === 'reset') && <NewPasswordFields />}
@@ -147,11 +153,14 @@ export function AuthForm({ initial, market, fixture, integrated, preview, destin
       </button>
     </form>}
     {step === 'login' ? <>
-      {!preview && <div className="account-google">
-        <button type="button" className="button button-outline" disabled aria-describedby="google-design-note">
+      {(preview || fixture) && <div className="account-google">
+        {googleEnabled ? <a className="button button-outline" href={'/api/sign-in/google?market=' + encodeURIComponent(market.prefix)}>
           <span className="account-google-mark" aria-hidden>G</span> Continue with Google
-        </button>
-        <p id="google-design-note">Design preview</p>
+        </a> : <button type="button" className="button button-outline" disabled aria-describedby="google-sign-in-note">
+          <span className="account-google-mark" aria-hidden>G</span> Continue with Google
+        </button>}
+        {!googleEnabled && <p id="google-sign-in-note">Google sign-in is not configured for this storefront.</p>}
+        {googleFailed && <Feedback error="Google sign-in didn’t finish. Please try again." />}
       </div>}
       <div className="account-auth-links">
         {!preview && <Link className="text-link" href={marketHref(market, '/account/recover') + returnQuery}>Forgot password</Link>}

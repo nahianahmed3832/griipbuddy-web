@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { hostedCatalogPreview } from '@/features/public-build';
 import { AccountError, phoneKey, type Customer, type CustomerOrder } from './contracts';
 import { accountState, hashPassword, type FixtureAccount } from './state';
@@ -43,7 +43,7 @@ export async function seedAccounts() {
 
 export async function findFixturePhone(phone: string) {
   await seedAccounts();
-  return [...accountState.accounts.values()].find((account) => account.profile.phone === phoneKey(phone));
+  return phone ? [...accountState.accounts.values()].find((account) => account.profile.phone === phoneKey(phone)) : undefined;
 }
 
 export async function findVerifiedFixtureEmail(email: string) {
@@ -51,11 +51,29 @@ export async function findVerifiedFixtureEmail(email: string) {
   return [...accountState.accounts.values()].find((account) => account.profile.emailVerified && account.profile.email === email);
 }
 
-export async function addFixtureAccount(name: string, phone: string, email: string, secret: FixtureAccount['password']) {
+export async function addFixtureAccount(name: string, phone: string, email: string, secret: FixtureAccount['password'], verifyTestEmail = false) {
   await seedAccounts();
-  if ([...accountState.accounts.values()].some((account) => account.profile.phone === phoneKey(phone))) throw new AccountError(409, 'This phone is already registered. Sign in or request help.');
+  if (phone && [...accountState.accounts.values()].some((account) => account.profile.phone === phoneKey(phone))) throw new AccountError(409, 'This phone is already registered. Sign in or request help.');
+  if (verifyTestEmail && email && [...accountState.accounts.values()].some((account) => account.profile.emailVerified && account.profile.email === email)) {
+    throw new AccountError(409, 'This email is already registered. Sign in instead.');
+  }
   if (accountState.accounts.size >= 300) throw new AccountError(503, 'Registration is temporarily unavailable.');
   const account = fixtureAccount(name, phone, email, secret);
+  account.profile.emailVerified = verifyTestEmail && Boolean(email);
   accountState.accounts.set(account.profile.id, account);
+  return account;
+}
+
+export async function googleFixtureAccount(subject: string, name: string) {
+  // The Google subject, not an email address, identifies the provider account.
+  const id = 'google-' + createHash('sha256').update(subject).digest('hex');
+  const existing = accountState.accounts.get(id);
+  if (existing) return existing;
+  const secret = await hashPassword(randomBytes(32).toString('base64url'));
+  const raced = accountState.accounts.get(id);
+  if (raced) return raced;
+  if (accountState.accounts.size >= 300) throw new AccountError(503, 'Registration is temporarily unavailable.');
+  const account = fixtureAccount(name || 'Google shopper', '', '', secret, id);
+  accountState.accounts.set(id, account);
   return account;
 }

@@ -1,3 +1,4 @@
+import { googleSignInEnabled } from './google';
 import { ArrowLeft, ArrowRight, Bell, ClipboardList, Gift, Heart, MapPin, Package, RotateCcw, ShieldCheck, ShoppingBag, UserRound } from 'lucide-react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
@@ -100,8 +101,8 @@ function OrderDetail({ order, market, fixture }: { order: CustomerOrder; market:
   </>;
 }
 
-export async function CustomerPage({ market, path, login = false, requestedOrder, returnTo }: {
-  market: Market; path: string[]; login?: boolean; requestedOrder?: string; returnTo?: string;
+export async function CustomerPage({ market, path, login = false, requestedOrder, returnTo, googleFailed }: {
+  market: Market; path: string[]; login?: boolean; requestedOrder?: string; returnTo?: string; googleFailed?: boolean;
 }) {
   const account = await currentAccount();
   const tab = path[0] ?? '';
@@ -119,11 +120,11 @@ export async function CustomerPage({ market, path, login = false, requestedOrder
       <div className="account-auth-aside">
         <p className="eyebrow">{preview ? 'DEVELOPMENT PREVIEW' : 'THE GRIIPBUDDY ACCOUNT'}</p>
         <h2>{preview ? 'Try a GriipBuddy account.' : 'Everything you carry, together.'}</h2>
-        <p>{preview ? 'Use a test name, test phone number and a new test password. The verification code appears on this page. Test accounts reset when the dev server restarts.' : 'Keep track of orders, save your favourites and pick up where you left off.'}</p>
+        <p>{preview ? 'Use a test email or phone number and a new password. Verification codes appear here for testing. Test accounts reset when the dev server restarts.' : 'Keep track of orders, save your favourites and pick up where you left off.'}</p>
         {!preview && <div><ShoppingBag size={19} aria-hidden /> Shopping bag <Heart size={19} aria-hidden /> Wishlist <Package size={19} aria-hidden /> Orders</div>}
       </div>
       <AuthForm key={initial} initial={initial} market={market} destination={destination} returnQuery={returnQuery}
-        preview={preview} fixture={accountMode() === 'fixture'} integrated={accountMode() === 'recovered' && process.env.GRIIPBUDDY_CHECKOUT === 'integrated'} />
+        preview={preview} googleEnabled={googleSignInEnabled()} googleFailed={googleFailed} fixture={accountMode() === 'fixture'} integrated={accountMode() === 'recovered' && process.env.GRIIPBUDDY_CHECKOUT === 'integrated'} />
     </div>;
   }
   if (!navigation.some((item) => item.id === tab) || path.length > 2 || (path.length === 2 && tab !== 'orders')) notFound();

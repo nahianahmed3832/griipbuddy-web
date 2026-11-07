@@ -150,7 +150,7 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
     if (!accountMode()) redirect(marketHref(market, '/products'));
     if (section === 'login' && rest.length) notFound();
     return <CustomerPage market={market} path={rest} login={section === 'login'}
-      requestedOrder={typeof query.order === 'string' ? query.order : undefined}
+      googleFailed={query.google === 'failed'} requestedOrder={typeof query.order === 'string' ? query.order : undefined}
       returnTo={typeof query.next === 'string' ? query.next : undefined} />;
   }
   if (section === 'order' && rest.length === 1) {

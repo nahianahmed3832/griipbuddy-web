@@ -22,7 +22,7 @@ type Challenge = {
   purpose: Purpose;
   id?: string;
   destination: string;
-  registration?: { name: string; email: string; password: Secret };
+  registration?: { name: string; phone: string; email: string; password: Secret };
   digest: Buffer;
   expires: number;
   remaining: number;

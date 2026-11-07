@@ -22,13 +22,22 @@ function requireTestPhone(phone: string) {
   }
 }
 
+function requireTestEmail(email: string) {
+  if (!email.endsWith('@preview.invalid')) {
+    throw new AccountError(400, 'Use a test email ending in @preview.invalid.');
+  }
+}
+
 async function login(request: Request, body: Record<string, unknown>) {
   const phone = phoneNumber(body.phone);
   const email = emailAddress(body.email);
   const password = passwordValue(body.password, 1);
   if ((!phone && !email) || (phone && email) || !password) throw new AccountError(400, 'Enter your phone number or email and your password.');
   const preview = hostedCatalogPreview();
-  if (preview) requireTestPhone(phone);
+  if (preview) {
+    if (email) requireTestEmail(email);
+    else requireTestPhone(phone);
+  }
   const recoveredAccount = accountMode() === 'recovered';
   if (email && recoveredAccount) throw new AccountError(409, 'Use your verified phone to sign in to a recovered account.');
   limitAttempt('login:' + (email || phoneKey(phone)), 8);
@@ -145,22 +154,27 @@ export async function accountAction(request: Request, action: string, body: Reco
       const phone = phoneNumber(body.phone);
       const name = text(body.name, 120);
       const preview = hostedCatalogPreview();
-      if (preview) requireTestPhone(phone);
-      const email = preview ? '' : emailAddress(body.email);
+      const email = emailAddress(body.email);
       const password = validateNewPassword(body);
-      if (!phone || !name || (body.email !== undefined && body.email !== '' && !email)) {
-        throw new AccountError(400, 'Enter a name, phone number and a valid email address if supplied.');
+      if ((!phone && (!preview || !email)) || !name || (body.email !== undefined && body.email !== '' && !email)) {
+        throw new AccountError(400, preview ? 'Enter a test name and either a test phone or test email.'
+          : 'Enter a name, phone number and a valid email address if supplied.');
       }
-      limitAttempt('register:' + phoneKey(phone), 4);
+      if (preview) {
+        if (phone || body.phone) requireTestPhone(phone);
+        if (email) requireTestEmail(email);
+      }
+      limitAttempt('register:' + (phoneKey(phone) || email), 4);
       limitAttempt('register:all', 80);
-      if (await findFixturePhone(phone)) throw new AccountError(409, 'This phone is already registered. Sign in or request help.');
-      return fixtureChallenge(request, 'register', phone, undefined, { name, email, password: await hashPassword(password) });
+      if (phone && await findFixturePhone(phone)) throw new AccountError(409, 'This phone is already registered. Sign in or request help.');
+      if (preview && email && await findVerifiedFixtureEmail(email)) throw new AccountError(409, 'This email is already registered. Sign in instead.');
+      return fixtureChallenge(request, 'register', phone || email, undefined, { name, phone, email, password: await hashPassword(password) });
     }
     if (action === 'verify') {
       const challenge = await verifyChallenge('register', body.code);
       if (!challenge.registration) throw new AccountError(400, 'Start registration again.');
-      const { name, email, password } = challenge.registration;
-      const account = await addFixtureAccount(name, challenge.destination, email, password);
+      const { name, phone, email, password } = challenge.registration;
+      const account = await addFixtureAccount(name, phone, email, password, hostedCatalogPreview());
       await setSession(request, { mode: 'fixture', id: account.profile.id });
       return { signedIn: true, ...(hostedCatalogPreview() ? { transferred: false } : transferGuestCart(account, body.guest)) };
     }
