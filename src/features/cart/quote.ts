@@ -1,5 +1,6 @@
 import 'server-only';
 import { apiConfigured } from '@/features/catalog/api';
+import { fixturesEnabled } from '@/features/public-build';
 import { currentPrice, type Market } from '@/features/catalog/catalog';
 import { catalogProduct, mapLimited, variantStock } from '@/features/catalog/data';
 import { currencyScale, type CartLine, type CartQuote, type QuotedLine } from './cart';
@@ -35,7 +36,7 @@ async function quoteLine(market: Market, line: CartLine): Promise<QuotedLine> {
 
 function quoteCoupon(code: string | undefined, market: Market, ready: boolean, net: number) {
   if (!code) return { discount: 0 };
-  if (apiConfigured()) return { discount: 0, coupon: { code, status: 'unavailable' as const } };
+  if (apiConfigured() || !fixturesEnabled()) return { discount: 0, coupon: { code, status: 'unavailable' as const } };
   if (!ready) return { discount: 0, coupon: { code, status: 'needs-items' as const } };
   if (code !== 'PREVIEW10' || !['US', 'BD'].includes(market.code)) {
     return { discount: 0, coupon: { code, status: 'invalid' as const } };

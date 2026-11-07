@@ -1,4 +1,5 @@
-import { publicBuild } from '@/features/public-build';
+import { fixturesEnabled, publicBuild } from '@/features/public-build';
+import { apiConfigured } from '@/features/catalog/api';
 import { sameOriginRequest } from '@/app/api/request-origin';
 import { accountAction } from '@/features/account/actions-server';
 import { AccountError, fields } from '@/features/account/contracts';
@@ -17,7 +18,7 @@ function failure(error: unknown) {
 }
 
 export async function GET(_request: Request, { params }: { params: Promise<{ action: string }> }) {
-  if (publicBuild()) return json({ error: 'Customer accounts are disabled in the sample storefront.' }, 404);
+  if (publicBuild() || (!apiConfigured() && !fixturesEnabled())) return json({ error: 'Customer accounts are unavailable in this storefront.' }, 404);
   const { action } = await params;
   if (action !== 'me' && action !== 'orders') return json({ error: 'Account action not found.' }, 404);
   try {
@@ -29,7 +30,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ act
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ action: string }> }) {
-  if (publicBuild()) return json({ error: 'Customer accounts are disabled in the sample storefront.' }, 404);
+  if (publicBuild() || (!apiConfigured() && !fixturesEnabled())) return json({ error: 'Customer accounts are unavailable in this storefront.' }, 404);
   const { action } = await params;
   if (!actions.has(action)) return json({ error: 'Account action not found.' }, 404);
   if (!sameOriginRequest(request)) return json({ error: 'Use the storefront to manage your account.' }, 403);

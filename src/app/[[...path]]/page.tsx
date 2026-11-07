@@ -1,4 +1,4 @@
-import { publicBuild } from '@/features/public-build';
+import { fixturesEnabled, publicBuild } from '@/features/public-build';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
@@ -6,6 +6,9 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { categoryAt, categoryHref, collections, flattenCategories, marketHref, productHref, type Market } from '@/features/catalog/catalog';
 import { canonicalFor, canonicalOrigin } from '@/features/catalog/seo';
+import { apiConfigured } from '@/features/catalog/api';
+import { Comparison } from '@/features/catalog/compare';
+import { DiscoveryPage, discoveryPages, type DiscoveryPageKey } from '@/features/discovery/discovery-page';
 import { catalogNavigation, catalogProduct } from '@/features/catalog/data';
 import { CatalogListing } from '@/features/catalog/listing';
 import { ProductPage } from '@/features/catalog/product-page';
@@ -53,7 +56,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const resolved = await resolvePath((await params).path ?? []);
   const defaults = await defaultMetadata(resolved);
   const { market, section, rest } = resolved;
-  if (section && !['product','category','collections','products', ...Object.keys(information)].includes(section)) return defaults;
+  if (section && !['product','category','collections','products', ...Object.keys(discoveryPages), ...Object.keys(information)].includes(section)) return defaults;
   const path = '/' + (section ? [section, ...rest].join('/') : '');
   const canonicalPath = marketHref(market, path);
   const entries = contentRows((await siteContent()).seo);
@@ -86,6 +89,11 @@ async function defaultMetadata({ market, categories, section, rest }: Awaited<Re
     const collection = collections.find((entry) => entry.id === rest[0]);
     if (collection) return { title: collection.label, description: collection.description, ...canonicalFor(marketHref(market, '/collections/' + collection.id)) };
   }
+  if (section && !rest.length && Object.hasOwn(discoveryPages, section)) {
+    const { title, description } = discoveryPages[section as DiscoveryPageKey];
+    return { title, description, ...canonicalFor(marketHref(market, '/' + section)) };
+  }
+  if (section === 'compare') return { title: 'Compare products' };
   if (section === 'search') return { title: 'Search' };
   if (section === 'products') return { title: 'Shop all', ...canonicalFor(marketHref(market, '/products')) };
   if (section === 'account' || section === 'login') return { title: 'My account' };
@@ -136,7 +144,7 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
     notFound();
   }
   if (section === 'account' || section === 'login') {
-    if (publicBuild()) redirect(marketHref(market, '/products'));
+    if (publicBuild() || (!apiConfigured() && !fixturesEnabled())) redirect(marketHref(market, '/products'));
     if (section === 'login' && rest.length) notFound();
     return <CustomerPage market={market} path={rest} login={section === 'login'}
       requestedOrder={typeof query.order === 'string' ? query.order : undefined}
@@ -152,6 +160,9 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
     return <CatalogListing market={market} categories={categories} title={section === 'search' ? 'Search' : 'Shop all'}
       path={'/' + section} params={query} search={section === 'search'} />;
   }
+  if (Object.hasOwn(discoveryPages, section)) return <DiscoveryPage market={market} page={section as DiscoveryPageKey} />;
+  if (section === 'compare') return <PageFrame market={market} title="Compare products"
+    subtitle="Review prices and product details side by side. Your selection stays on this device."><Comparison market={market} /></PageFrame>;
   if (section === 'wishlist') return <PageFrame market={market} title="Wishlist"><WishlistPage market={market} /></PageFrame>;
   if (section === 'cart' || section === 'checkout') {
     const checkout = section === 'checkout';

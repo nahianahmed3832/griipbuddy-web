@@ -1,5 +1,6 @@
 import 'server-only';
 import { cache } from 'react';
+import { fixturesEnabled } from '@/features/public-build';
 import { withInternational } from '@/features/markets/resolve';
 import { apiBrands, apiCategory, apiConfigured, apiMarkets, apiProduct, CatalogError, catalogGet, objectId, record, rows } from './api';
 import { flattenCategories, validSlug, type Availability, type CatalogProduct, type CatalogVariant, type Market } from './catalog';
@@ -11,7 +12,7 @@ const maxProducts = 1500;
 const references = { reference: true };
 
 export const catalogNavigation = cache(async () => {
-  if (!apiConfigured()) return { markets: withInternational(fixtureMarkets), categories: fixtureCategories };
+  if (!apiConfigured()) return { markets: withInternational(fixturesEnabled() ? fixtureMarkets : []), categories: fixturesEnabled() ? fixtureCategories : [] };
 
   const [countries, taxonomy] = await Promise.all([
     catalogGet('/country/all', undefined, references),
@@ -40,9 +41,11 @@ const catalogReferences = cache(async () => {
   };
 });
 
-async function productPage(region: Market['region'], page: number, popularity: boolean, root?: string) {
+async function productPage(region: Market['region'], page: number, popularity: boolean, root?: string, query?: string) {
   const params = new URLSearchParams({ region, page: String(page), limit: String(pageSize) });
   if (root && !popularity) params.set('category', root);
+  // The recovered API interprets q as a regular expression. Send a literal.
+  if (query && !popularity) params.set('q', query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const payload = record(await catalogGet(popularity ? '/product/top-sale' : '/product', params));
   const total = record(payload.meta).total;
   if (typeof total !== 'number' || !Number.isInteger(total) || total < 0 || !Array.isArray(payload.products)) {
@@ -51,27 +54,46 @@ async function productPage(region: Market['region'], page: number, popularity: b
   return { total, products: payload.products as unknown[] };
 }
 
-const regionalProducts = cache(async (region: Market['region'], popularity: boolean, root?: string) => {
-  const first = await productPage(region, 1, popularity, root);
-  if (first.total > maxProducts) throw new CatalogError('This regional catalog exceeds the preview scan limit.');
+const initialPage = cache((region: Market['region'], popularity: boolean, root?: string) =>
+  productPage(region, 1, popularity, root));
+
+async function normalizeProducts(products: unknown[], market: Market) {
+  const { taxonomy, brands } = await catalogReferences();
+  const normalized = products.flatMap((row) => apiProduct(row, record(row).variants, market, taxonomy, brands) ?? []);
+  return [...new Map(normalized.filter(hasPrice).map((product) => [product.id, product])).values()];
+}
+
+export async function catalogSample(market: Market, popularity = false, root?: string) {
+  if (!market.id || !apiConfigured()) return catalogProducts(market, popularity, root);
+  const list = await initialPage(market.region, popularity, popularity ? undefined : root);
+  return normalizeProducts(list.products, market);
+}
+
+export const catalogBrowse = cache(async (market: Market, popularity = false, root?: string, requestedBatch = 1, query?: string) => {
+  if (!market.id) return { products: [] as CatalogProduct[] };
+  if (!apiConfigured()) return { products: fixturesEnabled() ? fixtureProducts(market).filter(hasPrice) : [] };
+
+  const category = popularity ? undefined : root;
+  const first = await initialPage(market.region, popularity, category);
+  if (first.total > maxProducts) {
+    const firstMatch = query && !popularity ? await productPage(market.region, 1, false, category, query) : first;
+    const batches = Math.max(1, Math.ceil(firstMatch.total / pageSize));
+    const batch = Math.min(requestedBatch, batches);
+    const window = batch === 1 ? firstMatch : await productPage(market.region, batch, popularity, category, query);
+    return { products: await normalizeProducts(window.products, market), batch, batches };
+  }
+
   const pages = Array.from({ length: Math.max(0, Math.ceil(first.total / pageSize) - 1) }, (_, i) => i + 2);
-  const rest = await mapLimited(pages, 3, (page) => productPage(region, page, popularity, root));
-  return first.products.concat(...rest.map((page) => page.products));
+  const rest = await mapLimited(pages, 3, (page) => productPage(market.region, page, popularity, category));
+  return { products: await normalizeProducts(first.products.concat(...rest.map((page) => page.products)), market) };
 });
 
-export const catalogProducts = cache(async (market: Market, popularity = false, root?: string) => {
-  if (!market.id) return [];
-  if (!apiConfigured()) return fixtureProducts(market).filter(hasPrice);
-  const [list, { taxonomy, brands }] = await Promise.all([
-    regionalProducts(market.region, popularity, popularity ? undefined : root), catalogReferences(),
-  ]);
-  const products = list.flatMap((row) => apiProduct(row, record(row).variants, market, taxonomy, brands) ?? []).filter(hasPrice);
-  return [...new Map(products.map((product) => [product.id, product])).values()];
-});
+export const catalogProducts = cache(async (market: Market, popularity = false, root?: string) =>
+  (await catalogBrowse(market, popularity, root)).products);
 
 export const catalogProduct = cache(async (market: Market, slug: string) => {
   if (!market.id || !validSlug(slug)) return undefined;
-  if (!apiConfigured()) return fixtureProducts(market).find((product) => product.slug === slug);
+  if (!apiConfigured()) return fixturesEnabled() ? fixtureProducts(market).find((product) => product.slug === slug) : undefined;
   const payload = record(await catalogGet('/product/slug/' + encodeURIComponent(slug), undefined, { missing: true }));
   if (!payload.product) return undefined;
   const { taxonomy, brands } = await catalogReferences();
@@ -84,7 +106,7 @@ function hasPrice(product: CatalogProduct) {
 
 export const variantStock = cache(async (product: CatalogProduct, variant: CatalogVariant) => {
   if (!variant.price) return null;
-  if (!apiConfigured()) return syntheticStock(product.id, variant.id, fixtureStock(product, variant.id));
+  if (!apiConfigured()) return fixturesEnabled() ? syntheticStock(product.id, variant.id, fixtureStock(product, variant.id)) : null;
   if (!objectId(product.id) || !objectId(variant.id)) return null;
 
   try {

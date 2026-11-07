@@ -2,7 +2,7 @@ import { publicBuild } from '@/features/public-build';
 import { Suspense } from 'react';
 import { categoryAt, type CatalogProduct, type Category, type Market } from './catalog';
 import { compareProducts, inCategory } from './browse';
-import { catalogProducts, variantStock, withAvailability } from './data';
+import { catalogSample, variantStock, withAvailability } from './data';
 import { Breadcrumbs, CatalogGrid } from './listing';
 import { ProductExperience } from './product-experience';
 import { merchandising, storefrontExtrasEnabled } from './merchandising';
@@ -34,7 +34,7 @@ export async function ProductPage({ product, market, categories, requestedVarian
 }
 
 async function Recommendations({ product, market }: { product: CatalogProduct; market: Market }) {
-  const others = await catalogProducts(market).catch(() => []);
+  const others = await catalogSample(market, false, product.category[0]).catch(() => []);
   const candidates = others.filter((other) => other.id !== product.id);
   const related = candidates.filter((other) => product.category.length && inCategory(other, product.category.slice(0, 1)))
     .sort((a, b) => Number(inCategory(b, product.category)) - Number(inCategory(a, product.category)) || compareProducts(a, b, 'popular'))

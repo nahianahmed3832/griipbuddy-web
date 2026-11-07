@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, ArrowUpRight, Check, ChevronDown, Compass, Globe, Heart, House, Menu, Search, ShoppingBag, UserRound, X } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Check, ChevronDown, Compass, Globe, Heart, House, Menu, Search, ShoppingBag, UserRound, X, Zap } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -10,6 +10,7 @@ import { SearchBox } from '@/features/catalog/search-box';
 import { CartActions } from '@/features/cart/actions';
 import { CartView } from '@/features/cart/cart-view';
 import { useCart } from '@/features/cart/store';
+import { discoveryLinks } from '@/features/discovery/contracts';
 import { Footer } from './footer';
 
 type Panel = 'search' | 'market' | 'browse' | 'bag';
@@ -90,6 +91,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
         query.delete('max');
         query.delete('page');
       }
+      query.delete('batch');
       const path = marketHref(next, localPath) + (query.size ? '?' + query : '');
       close();
       router.push(path);
@@ -135,7 +137,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
           </div>
         </div>
         <nav className="container desktop-nav" aria-label="Main navigation">
-          <Link href={marketHref(market, '/products')} onClick={() => setMega(null)}>Shop all</Link>
+          <Link className="nav-shop-all" href={marketHref(market, '/products')} onClick={() => setMega(null)}>Shop all</Link>
           <Link className="nav-featured" href={marketHref(market, '/collections/new-arrivals')} onClick={() => setMega(null)}>New Arrivals</Link>
           {categories.map((category) => (
             <button type="button" key={category.id} id={'nav-' + category.id} aria-expanded={mega === category.id}
@@ -144,7 +146,10 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
               {category.label}<ChevronDown size={12} aria-hidden />
             </button>
           ))}
-          <Link href={marketHref(market, '/collections/best-sellers')} onClick={() => setMega(null)}>Best Sellers</Link>
+          {discoveryLinks.map(({ path, label }) => <Link key={path} className={path === '/deals' ? 'nav-deals' : undefined}
+            aria-current={localPath === path ? 'page' : undefined} href={marketHref(market, path)} onClick={() => setMega(null)}>
+            {path === '/deals' && <Zap size={14} aria-hidden />}{label}
+          </Link>)}
         </nav>
         {activeCategory && (
           <>
@@ -212,6 +217,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
           </div>
           <div className="drawer-links">
             <p className="eyebrow">DISCOVER</p>
+            {discoveryLinks.map(({ path, label }) => <Link key={path} href={marketHref(market, path)} onClick={close}>{label}<ArrowUpRight size={17} aria-hidden /></Link>)}
             {collections.map((collection) => (
               <Link key={collection.id} href={marketHref(market, '/collections/' + collection.id)} onClick={close}>{collection.label}<ArrowUpRight size={17} aria-hidden /></Link>
             ))}

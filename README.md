@@ -10,7 +10,7 @@ npx playwright install chromium
 npm run lint
 npm run build
 npm test
-npm run start -- --port 4315
+GRIIPBUDDY_FIXTURES=1 npm run start -- --port 4315
 ```
 
 Use Node 20.20.2 or newer and open [the local storefront](http://127.0.0.1:4315/). This mode uses synthetic fixtures. The root URL resolves to the current country or International. Open the [US storefront](http://127.0.0.1:4315/us) to try the synthetic delivery rate and coupon `PREVIEW10`. Open [customer sign-in](http://127.0.0.1:4315/us/login) and use the synthetic phone `01000000021` or email `maya@preview.invalid` with password `Preview-only-2026`.
@@ -51,7 +51,7 @@ The [Step 2 screenshots](review/) document the previous homepage.
 
 ## Artwork
 
-The existing placeholder hero and contact sheets were generated with built-in imagegen and retained for this layout review. WebP assets are under [editorial](public/editorial) and [catalog](public/catalog). The supplied wordmark was adapted for the [header and footer](public/brand/griipbuddy-wordmark.webp), and the supplied square mark was resized for the [browser icon](src/app/icon.png). The tagline appears as the homepage headline. The product art represents the synthetic fixture catalog.
+The existing placeholder hero and contact sheets were generated with built-in imagegen and retained for this layout review. WebP assets are under [editorial](public/editorial) and [catalog](public/catalog). The supplied wordmark was adapted for the [header and footer](public/brand/griipbuddy-wordmark.webp), and the supplied square mark was resized for the [browser icon](src/app/icon.png). The orange marketplace hero is editorial artwork. Product art in the sample catalog appears only when the explicit fixture switch is set.
 
 1. Use case: photorealistic-natural. Asset type: wide editorial photo for the right half of a premium contemporary fashion and accessories e-commerce homepage. Landscape approximately 3:2. Fashion editorial photograph of a stylish young adult South Asian woman with dark slicked-back hair and dark narrow sunglasses in an oversized deep espresso tailored coat, outdoors against large warm pale limestone walls in late-afternoon sun. She carries a small cobalt blue leather crossbody with sleek silver hardware in front of her, bag clearly visible, and looks over her shoulder. Shoot knees-up, body mostly in center-right, empty luminous concrete on the left, poised but candid. Slight flash texture, long shadows, modern minimalist art direction, dark chocolate, warm stone, strong cobalt pop. The image should feel like a real understated independent fashion magazine photograph. No copy, logo, graphics, lettering, watermark, frame or layout. Do not crop out the head or bag.
 
@@ -69,6 +69,7 @@ With Node 20.20.2 or newer, run `npm ci` and `npm run build` in this directory. 
 
 ```sh
 unset GRIIPBUDDY_CATALOG_API
+export GRIIPBUDDY_FIXTURES=1
 export GRIIPBUDDY_CHECKOUT=synthetic
 export GRIIPBUDDY_CHECKOUT_DIR="$(mktemp -d /tmp/griipbuddy-checkout.XXXXXX)"
 export GRIIPBUDDY_CHECKOUT_OPERATOR_SECRET="$(openssl rand -hex 32)"
@@ -104,3 +105,5 @@ GRIIPBUDDY_TEST_SOURCE=integrated npm test -- --workers=1
 ```
 
 The integrated suite uses the recovered order ledger, simulated payments and the local media processor. `GRIIPBUDDY_SCREENSHOTS` can point to a local evidence directory. `GRIIPBUDDY_RECOVERED_WISHLIST=1` enables saving to existing customer favorites when the matching backend version is available. The public sample storefront continues to use guest storage.
+
+See [global storefront acceptance](GLOBAL_STOREFRONT_REPORT.md) for the feature matrix and screenshots.

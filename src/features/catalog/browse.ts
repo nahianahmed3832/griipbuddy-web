@@ -26,6 +26,7 @@ export function parseFilters(params: CatalogParams, fallback: Sort) {
     min: amount(params.min), max: amount(params.max),
     availability: availability === 'in' || availability === 'out' ? availability : undefined,
     sort: (Object.hasOwn(sortLabels, sort) ? sort : fallback) as Sort,
+    batch: Math.min(100000, Math.max(1, Number.parseInt(text(params.batch, 8), 10) || 1)),
     page: Math.min(1000, Math.max(1, Number.parseInt(text(params.page, 8), 10) || 1)),
   };
 }

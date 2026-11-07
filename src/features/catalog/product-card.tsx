@@ -1,9 +1,11 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { ArrowUpRight, ImageIcon } from 'lucide-react';
+import { ImageIcon } from 'lucide-react';
 import { lowestPricedVariant } from './browse';
 import { attribute, currentPrice, formatMoney, productBadges, productHref, type CatalogProduct, type Market } from './catalog';
 import { WishlistButton } from './wishlist';
+import { QuickView } from './quick-view';
+import { CompareButton } from './compare';
 
 export function ProductCard({ product, market, priority = false, linkVariant = false }: {
   product: CatalogProduct; market: Market; priority?: boolean; linkVariant?: boolean;
@@ -39,8 +41,9 @@ export function ProductCard({ product, market, priority = false, linkVariant = f
             {hasRange && <span className="price-from">From</span>}{formatMoney(currentPrice(price), market)}
             {price.sale !== undefined && <del aria-label={'Regular price ' + formatMoney(price.regular, market)}>{formatMoney(price.regular, market)}</del>}
           </p> : <p className="product-color">Price unavailable</p>}
-          <span className="product-card-action" aria-hidden="true"><ArrowUpRight size={17} /></span>
+          <QuickView name={product.name} slug={product.slug} market={market} />
         </div>
+        <CompareButton market={market} slug={product.slug} name={product.name} />
       </div>
     </article>
   );

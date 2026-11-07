@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { withFixtureMongo } from './recovery-fixture';
 
 test('recovered API keeps product and SKU identity through nested taxonomy and authoritative stock', async ({ page, request }) => {
   const path = '/bd/category/fixture-category/fixture-subcategory/fixture-cases/fixture-blue-cases';
@@ -79,4 +80,46 @@ test('API browsing denies unpublished, POS-only and out-of-region products', asy
   expect((await suggestions.json()).suggestions).toContainEqual({
     href: '/bd/product/fixture-bd', title: 'Fixture domestic case', kind: 'Product',
   });
+});
+
+test('coupon center presents active Bangladesh offers without exposing restricted or expired codes', async ({ page }) => {
+  const now = Date.now();
+  const expires = new Date(now + 3_600_000);
+  const starts = new Date(now - 3_600_000);
+  const code = 'FIXTURE-SAVE';
+  const restricted = 'FIXTURE-PRIVATE';
+  const expired = 'FIXTURE-EXPIRED';
+  const identifiers = ['000000000000000000000170', '000000000000000000000171', '000000000000000000000172'];
+  await withFixtureMongo(async (db, id) => {
+    const sample = { isActive: true, discountType: 'FLAT', discountValue: 120, minOrderAmount: 1000, firstOrderOnly: true,
+      categoryIds: [id('000000000000000000000001')], startAt: starts, expireAt: expires };
+    const entries = [
+      { ...sample, code },
+      { ...sample, code: restricted, userIds: [id('00000000000000000000000f')] },
+      { ...sample, code: expired, expireAt: new Date(now - 1_000) },
+    ];
+    for (const [index, offer] of entries.entries()) {
+      await db.collection('coupons').updateOne({ _id: id(identifiers[index]) }, { $set: offer }, { upsert: true });
+    }
+  });
+
+  try {
+    await page.goto('/bd/coupons');
+    const ticket = page.getByRole('article').filter({ has: page.getByRole('heading', { name: /120 off/ }) });
+    await expect(ticket.getByRole('code')).toHaveText(code);
+    await expect(page.getByRole('heading', { name: /(?:BDT|৳)\s*120 off/ })).toBeVisible();
+    await expect(ticket.getByText('Selected items only')).toBeVisible();
+    await expect(page.getByText(restricted, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(expired, { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Use in bag' })).toHaveCount(0);
+    await page.goto('/us/coupons');
+    await expect(page.getByRole('heading', { name: 'No active coupons' })).toBeVisible();
+    await expect(page.getByText(code, { exact: true })).toHaveCount(0);
+  } finally {
+    await withFixtureMongo(async (db, id) => {
+      for (const identifier of identifiers) {
+        await db.collection('coupons').updateOne({ _id: id(identifier) }, { $set: { isActive: false } });
+      }
+    });
+  }
 });

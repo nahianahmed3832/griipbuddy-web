@@ -6,11 +6,11 @@ export const fixtureMarkets: Market[] = [
   { id: 'fixture-bd', code: 'BD', name: 'Bangladesh', currency: 'BDT', locale: 'en-BD', region: 'BD', prefix: '/bd' },
 ];
 
-function category(slug: string, label: string, description: string, child?: [string, string]): Category {
+function category(slug: string, label: string, description: string, child: [string, string], image = '/editorial/' + slug + '.webp'): Category {
   const path = [slug];
   return {
-    id: slug, slug, label, description, image: '/editorial/' + slug + '.webp', path,
-    children: child ? [{ id: child[0], slug: child[0], label: child[1], path: [...path, child[0]], children: [] }] : [],
+    id: slug, slug, label, description, image, path,
+    children: [{ id: child[0], slug: child[0], label: child[1], path: [...path, child[0]], children: [] }],
   };
 }
 
@@ -19,6 +19,8 @@ export const fixtureCategories = [
   category('fashion', 'Fashion', 'Finishing touches with a point of view.', ['sunglasses', 'Sunglasses']),
   category('clothing', 'Clothing', 'Easy pieces for the way you actually get dressed.', ['tees', 'Tees']),
   category('bags', 'Bags', 'Handy shapes for whatever the day holds.', ['everyday-bags', 'Everyday bags']),
+  category('home', 'Home', 'Lighting and small accents for the spaces you live in.', ['lighting', 'Lighting'], '/catalog/dune-lamp.webp'),
+  category('beauty', 'Beauty', 'Useful accessories for your daily routine.', ['vanity', 'Vanity accessories'], '/catalog/vanity-pouch.webp'),
   category('lifestyle', 'Lifestyle', 'Good company for your everyday routines.', ['drinkware', 'Drinkware']),
 ];
 
@@ -76,6 +78,16 @@ const fixtures: {
       { suffix: 'S', attributes: { Size: 'S', Color: 'Bone', Material: 'Cotton' }, prices: price(38, 32, 1950), stock: 6 },
       { suffix: 'M', attributes: { Size: 'M', Color: 'Bone', Material: 'Cotton' }, prices: price(38, null, 1950), stock: 3 },
     ],
+  },
+  {
+    slug: 'dune-lamp', name: 'Dune Table Lamp', category: ['home', 'lighting'], description: 'A compact dome lamp with an ivory ribbed base.',
+    brand: 'Field Sample', createdAt: '2026-10-22', labels: ['New'], sold: 0,
+    variants: [{ suffix: 'IVORY', attributes: { Color: 'Ivory', Material: 'Ceramic' }, prices: price(62, 49, 3250), stock: 7 }],
+  },
+  {
+    slug: 'vanity-pouch', name: 'Soft Zip Vanity Pouch', category: ['beauty', 'vanity'], description: 'A padded zip pouch with room for everyday essentials.',
+    brand: 'Studio Sample', createdAt: '2026-10-20', labels: ['New'], sold: 0,
+    variants: [{ suffix: 'ROSE', attributes: { Color: 'Rose', Material: 'Nylon' }, prices: price(22, 18, 1150), stock: 7 }],
   },
   {
     slug: 'day-bottle', name: 'Day Bottle', category: ['lifestyle', 'drinkware'], description: 'An everyday bottle in a soft terracotta finish.',

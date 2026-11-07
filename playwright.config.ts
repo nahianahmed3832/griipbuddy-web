@@ -26,6 +26,7 @@ if (release || api) {
 const server = (number: number) => ({
   command: 'npm run start -- --port ' + number,
   env: {
+    GRIIPBUDDY_FIXTURES: api || integrated || publicPreview ? '' : '1',
     GRIIPBUDDY_CATALOG_API: api || integrated || publicPreview ? 'http://127.0.0.1:38100/api/v1' : '',
     GRIIPBUDDY_DEV_CATALOG: integrated || publicPreview ? '1' : '',
     GRIIPBUDDY_RECOVERED_WISHLIST: api || integrated ? '1' : '',
@@ -51,7 +52,7 @@ export default defineConfig({
   testDir: './tests',
   outputDir: './test-results/' + (publicPreview ? 'public' : integrated ? 'integrated' : api ? 'api' : release ? 'release' : 'fixture'),
   testMatch: publicPreview ? ['public-preview.spec.ts'] : integrated ? ['integrated-flow.spec.ts'] : release ? ['release-checkout.spec.ts', 'release-quality.spec.ts'] : api
-    ? ['catalog-api.spec.ts', 'cart-api.spec.ts', 'account-api.spec.ts'] : ['storefront.spec.ts', 'catalog.spec.ts', 'cart.spec.ts', 'account.spec.ts', 'route-audit.spec.ts'],
+    ? ['catalog-api.spec.ts', 'cart-api.spec.ts', 'account-api.spec.ts'] : ['storefront.spec.ts', 'global-storefront.spec.ts', 'catalog.spec.ts', 'cart.spec.ts', 'account.spec.ts', 'route-audit.spec.ts'],
   reporter: 'list',
   use: { baseURL, browserName: 'chromium', trace: 'retain-on-failure' },
   webServer: release ? [server(port), server(peer), server(paused)] : server(port),

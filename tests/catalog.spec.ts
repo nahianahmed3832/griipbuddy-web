@@ -29,7 +29,7 @@ test('catalog filters and sorts matching variants by the selected market price',
   await page.getByRole('combobox', { name: 'Sort by' }).selectOption('price-desc');
   await page.getByRole('button', { name: 'Sort', exact: true }).click();
   await expect(results.getByRole('heading', { level: 3 }).first()).toHaveText('The Arc Shoulder Bag');
-  await expect(results.getByRole('heading', { level: 3 }).last()).toHaveText('The Form Case');
+  await expect(results.getByRole('heading', { level: 3 }).last()).toHaveText('Soft Zip Vanity Pouch');
 
   await page.goto('/gb/products?min=35&sort=price-desc');
   await page.getByRole('button', { name: /Choose country, current market/ }).click();

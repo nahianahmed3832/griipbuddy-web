@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test('desktop category menu opens, closes with Escape and navigates', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/us');
-  await expect(page.getByRole('heading', { level: 1, name: /Grip your.*day/ })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: /Good finds.*Great grip/ })).toBeVisible();
   await expect(page.getByRole('link', { name: 'GriipBuddy home', exact: true }).first()).toBeVisible();
   const category = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Technology' });
   await category.click();
@@ -93,8 +93,8 @@ test('tablet homepage loads local images and presents all sections without overf
   for (const name of ['Shop by category', 'New Arrivals', 'Best Sellers', 'Trending Now', 'Bags for every day.']) {
     await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
   }
-  await expect(page.getByRole('img', { name: /woman carrying a cobalt crossbody bag/i })).toBeVisible();
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(247, 246, 242)');
+  await expect(page.getByRole('img', { name: /cream headphones, a cobalt bag/i })).toBeVisible();
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(250, 248, 244)');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(834);
   expect(offOrigin).toEqual([]);
 });

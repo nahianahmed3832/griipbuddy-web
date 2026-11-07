@@ -5,7 +5,9 @@ import { collections, flattenCategories } from '../src/features/catalog/catalog'
 import { fixtureCategories, fixtureMarkets, fixtureProducts } from '../src/features/catalog/fixtures';
 
 const bd = fixtureMarkets.find(market => market.code === 'BD')!;
+const marketplace = ['/bd/discover', '/bd/deals', '/bd/group-buy', '/bd/coupons', '/bd/rewards', '/bd/compare'];
 const browse = [
+  ...marketplace,
   '/bd', '/bd/products', '/bd/search?q=case', '/bd/search?q=not-a-product',
   ...collections.map(collection => '/bd/collections/' + collection.id),
   ...flattenCategories(fixtureCategories).map(category => '/bd/category/' + category.path.join('/')),
@@ -16,7 +18,7 @@ const browse = [
   '/us', '/us/products', '/gb', '/gb/products', '/international', '/international/products',
 ];
 
-const representative = ['/bd', '/bd/products', '/bd/category/technology/phone-cases', '/bd/product/form-case',
+const representative = [...marketplace, '/bd', '/bd/products', '/bd/category/technology/phone-cases', '/bd/product/form-case',
   '/bd/search?q=case', '/bd/wishlist', '/bd/cart', '/bd/checkout', '/bd/login', '/us/products', '/gb/products'];
 
 test('all browse and information routes render, with commerce entry points fitting phone and tablet widths', async ({ page }) => {

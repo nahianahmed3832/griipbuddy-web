@@ -2,6 +2,7 @@ export const collections = [
   { id: 'new-arrivals', label: 'New Arrivals', description: 'The latest additions to the edit.' },
   { id: 'best-sellers', label: 'Best Sellers', description: 'The pieces shoppers come back to.' },
   { id: 'trending', label: 'Trending Now', description: 'A closer look at what’s in the spotlight.' },
+  { id: 'sale', label: 'Sale', description: 'Products with a current sale price in your market.' },
 ] as const;
 
 export type CollectionId = typeof collections[number]['id'];
@@ -53,6 +54,7 @@ export type CatalogProduct = {
   brand?: { id: string; name: string };
   description: string;
   deliveryEstimate?: string;
+  delivery?: { origin?: string; customs?: string; consolidation?: string };
   images: string[];
   variants: CatalogVariant[];
   specifications: { title: string; values: string[] }[];

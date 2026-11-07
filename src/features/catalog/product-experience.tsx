@@ -5,6 +5,11 @@ import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
 import { currentPrice, formatMoney, productBadges, type CatalogProduct, type CatalogVariant, type Market } from './catalog';
 import { WishlistButton } from './wishlist';
+import { productHref } from './catalog';
+import { ShareLink } from '@/features/discovery/interactions';
+import { DeliveryDetails } from './delivery-details';
+import { WatchButton } from './product-watch';
+import { SaveToCollection } from './collections-local';
 import { AddToBag } from '@/features/cart/actions';
 import { FamilySelector, ProductAddons, SizeChart } from './product-options';
 import { ProductReviews } from './product-reviews';
@@ -208,14 +213,15 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
         {extras.guide?.note && <p className="detail-fit-note"><strong>Fit note</strong> {extras.guide.note}</p>}
         <AddToBag key={selectedId ?? product.id} product={product} variant={selected} stock={knownStock} />
         {price && <WishlistButton slug={product.slug} name={product.name} className="button button-outline detail-wish" showLabel />}
+        <div className="product-utility"><WatchButton slug={product.slug} market={market} />
+          <ShareLink path={productHref(market, product.slug)} label="Share product" /></div>
         <ProductAddons addons={extras.addons} market={market} />
         <div className="product-information">
           {product.description && <details className="detail-accordion" open><summary>Description</summary>
             <p className="detail-description">{product.description}</p></details>}
           <ProductReviews product={product} market={market} initial={reviews} enabled={reviewsEnabled} writable={reviewsWritable} />
-          {product.deliveryEstimate && <details className="detail-accordion"><summary>Delivery</summary>
-            <p className="detail-description">Estimated delivery · {product.deliveryEstimate}. Shipping charges are shown in your bag.</p>
-          </details>}
+          <DeliveryDetails product={product} market={market} />
+          <SaveToCollection slug={product.slug} />
           {product.specifications.length > 0 && <details className="detail-accordion product-specifications">
             <summary>Specifications</summary>
             <dl>{product.specifications.map(({ title, values }, index) => <div key={title + index}><dt>{title}</dt><dd>{values.join(' · ')}</dd></div>)}</dl>

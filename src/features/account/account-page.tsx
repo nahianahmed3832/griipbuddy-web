@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Bell, ClipboardList, Heart, MapPin, Package, RotateCcw, ShieldCheck, ShoppingBag, UserRound } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bell, ClipboardList, Gift, Heart, MapPin, Package, RotateCcw, ShieldCheck, ShoppingBag, UserRound } from 'lucide-react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -49,6 +49,7 @@ function AccountFrame({ market, customer, tab, children }: { market: Market; cus
           {navigation.map(({ id, label, icon: Icon }) => <Link key={id} href={href(market, id)} aria-current={tab === id ? 'page' : undefined}>
             <Icon size={16} aria-hidden />{label}
           </Link>)}
+          <Link href={marketHref(market, '/rewards')}><Gift size={16} aria-hidden /> Rewards</Link>
         </nav>
         <SignOut market={market} />
       </aside>

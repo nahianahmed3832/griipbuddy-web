@@ -2,9 +2,10 @@ import Link from 'next/link';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { attribute, categoryAt, categoryHref, formatMoney, marketHref, type CatalogProduct, type Category, type CollectionId, type Market } from './catalog';
 import { compareProducts, inCategory, inCollection, matchingVariants, parseFilters, relevance, sortLabels, type CatalogParams, type Filters } from './browse';
-import { catalogProducts, mapLimited, variantStock, withAvailability } from './data';
+import { catalogBrowse, mapLimited, variantStock, withAvailability } from './data';
 import { ProductCard } from './product-card';
 import { SearchBox } from './search-box';
+import { CompareLink } from './compare';
 import { FilterDisclosure } from './filter-disclosure';
 
 const perPage = 20;
@@ -161,7 +162,8 @@ export async function CatalogListing({ market, categories, category, collection,
   const filters = parseFilters(params, search ? 'relevance' : collection === 'best-sellers' ? 'popular' : 'newest');
   const action = marketHref(market, path);
   const scope = category ?? categories.find((entry) => entry.slug === filters.category);
-  const products = await catalogProducts(market, filters.sort === 'popular' || collection === 'best-sellers', scope?.path[0]);
+  const { products, batch, batches } = await catalogBrowse(market,
+    filters.sort === 'popular' || collection === 'best-sellers', scope?.path[0], filters.batch, filters.query);
   const scores = new Map<string, number>();
   const scopeProducts = products.filter((product) => {
     if (!inCollection(product, collection) || (scope && !inCategory(product, scope.path))) return false;
@@ -171,7 +173,7 @@ export async function CatalogListing({ market, categories, category, collection,
   });
 
   let matching = scopeProducts.flatMap((product) => {
-    const variants = matchingVariants(product, filters);
+    const variants = matchingVariants(product, filters).filter((variant) => collection !== 'sale' || variant.price?.sale !== undefined);
     return variants.length && (!filters.brand || product.brand?.id === filters.brand) ? [{ ...product, variants }] : [];
   });
   let notice = '';
@@ -190,7 +192,9 @@ export async function CatalogListing({ market, categories, category, collection,
   const window = matching.slice((page - 1) * perPage, page * perPage);
   const visible = notice ? [] : filters.availability ? window : await withAvailability(window);
   const query = queryFor(filters);
-  const pageHref = (index: number) => action + '?' + new URLSearchParams([...query, ['page', String(index)]]);
+  const pageHref = (index: number) => action + '?' + new URLSearchParams([...query,
+    ...(batch ? [['batch', String(batch)]] : []), ['page', String(index)]]);
+  const batchHref = (index: number) => action + '?' + new URLSearchParams([...query, ['batch', String(index)]]);
   const ancestors = category?.path.slice(0, -1) ?? [];
 
   return (
@@ -211,23 +215,29 @@ export async function CatalogListing({ market, categories, category, collection,
         </aside>
         <section aria-label="Catalog results" className="catalog-results">
           <div className="results-toolbar">
-            <p>{notice ? 'Update filters' : total + (total === 1 ? ' product' : ' products')}{filters.query && ' for “' + filters.query + '”'}</p>
+            <p>{notice ? 'Update filters' : total + (total === 1 ? ' product' : ' products') + (batch ? ' in this batch' : '')}{filters.query && ' for “' + filters.query + '”'}</p>
+            <div className="results-actions"><CompareLink market={market} />
             <form className="sort-form" action={action} method="get">
               {[...query].filter(([name]) => name !== 'sort').map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
               <label>Sort by <select name="sort" defaultValue={filters.sort} aria-label="Sort by">
                 {Object.entries(sortLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
               </select></label>
               <button className="button button-outline" type="submit">Sort</button>
-            </form>
+            </form></div>
           </div>
           <AppliedFilters filters={filters} scope={scope} scoped={Boolean(category)} products={scopeProducts} market={market} action={action} />
+          {batch && <p className="catalog-notice">Browse batch {batch} of {batches}. Prices, filters and availability reflect this batch in your market.</p>}
           {notice ? <p className="catalog-notice" role="status">{notice}</p>
-            : visible.length ? <CatalogGrid products={visible} market={market} linkVariant={Boolean(filters.size || filters.color || filters.min !== undefined || filters.max !== undefined || filters.availability)} />
+            : visible.length ? <CatalogGrid products={visible} market={market} linkVariant={Boolean(collection === 'sale' || filters.size || filters.color || filters.min !== undefined || filters.max !== undefined || filters.availability)} />
               : <div className="empty-state"><Search aria-hidden /><h2>No products found</h2><p>Try another search or clear your filters.</p></div>}
           {!notice && pages > 1 && <nav className="catalog-pagination" aria-label="Product pages">
             {page > 1 && <Link className="button button-outline" href={pageHref(page - 1)}>Previous</Link>}
             <span>Page {page} of {pages}</span>
             {page < pages && <Link className="button button-outline" href={pageHref(page + 1)}>Next</Link>}
+          </nav>}
+          {batch && batches && batches > 1 && <nav className="catalog-pagination" aria-label="Catalog batches">
+            {batch > 1 && <Link className="button button-outline" href={batchHref(batch - 1)}>Previous batch</Link>}
+            {batch < batches && <Link className="button button-primary" href={batchHref(batch + 1)}>Next batch</Link>}
           </nav>}
         </section>
       </div>

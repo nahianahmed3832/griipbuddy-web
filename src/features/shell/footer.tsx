@@ -1,6 +1,7 @@
 import { ArrowUpRight, Globe, Headphones, PackageOpen } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { discoveryLinks } from '@/features/discovery/contracts';
 import { categoryHref, marketHref, type Category, type Market } from '@/features/catalog/catalog';
 
 const support = [
@@ -31,7 +32,10 @@ export function Footer({ market, categories, onMarket }: { market: Market; categ
             <Link href={marketHref(market)} aria-label="GriipBuddy home"><Image src="/brand/griipbuddy-wordmark.webp" width={172} height={43} alt="GriipBuddy" /></Link>
             <p>Considered accessories and everyday favorites, all in one place.</p>
           </div>
-          <nav aria-label="Shop"><h2>Explore</h2>{categories.map((category) => (
+          <nav aria-label="Shop"><h2>Explore</h2>{discoveryLinks.map(({ path, label }) => <Link key={path} href={marketHref(market, path)}>{label}</Link>)}
+            <Link href={marketHref(market, '/rewards')}>Rewards</Link>
+          </nav>
+          <nav aria-label="Departments"><h2>Departments</h2>{categories.map((category) => (
             <Link key={category.id} href={categoryHref(market, category.path)}>{category.label}</Link>
           ))}</nav>
           <nav aria-label="Help"><h2>Help</h2>{support.map(([path, label]) => <Link key={path} href={marketHref(market, path)}>{label}</Link>)}</nav>

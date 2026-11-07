@@ -1,6 +1,6 @@
 import { compareProducts, inCategory, relevance } from '@/features/catalog/browse';
 import { categoryHref, flattenCategories, marketForSegment, productHref, validSlug, type Suggestion } from '@/features/catalog/catalog';
-import { catalogNavigation, catalogProduct, catalogProducts, variantStock } from '@/features/catalog/data';
+import { catalogNavigation, catalogProduct, catalogBrowse, mapLimited, variantStock } from '@/features/catalog/data';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,8 +28,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ acti
     if (action === 'items') {
       const slugs = [...new Set(query.getAll('slug').filter(validSlug))].slice(0, 30);
       if (!slugs.length) return json({ products: [] });
-      const products = new Map((await catalogProducts(market)).filter((product) => slugs.includes(product.slug)).map((product) => [product.slug, product]));
-      return json({ products: slugs.flatMap((slug) => products.get(slug) ?? []) });
+      const products = await mapLimited(slugs, 6, (slug) => catalogProduct(market, slug));
+      return json({ products: products.flatMap((product) => product?.variants.some((variant) => variant.price) ? [product] : []) });
     }
 
     const text = (query.get('q') ?? '').trim().slice(0, 100);
@@ -41,7 +41,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ acti
       .slice(0, 2)
       .map((category) => ({ title: category.label, href: categoryHref(market, category.path), kind: 'Category' }));
 
-    const products = (await catalogProducts(market, false, scope?.slug))
+    const products = (await catalogBrowse(market, false, scope?.slug, 1, text)).products
       .filter((product) => !scope || inCategory(product, scope.path))
       .map((product) => ({ product, score: relevance(product, text) }))
       .filter(({ score }) => score > 0)

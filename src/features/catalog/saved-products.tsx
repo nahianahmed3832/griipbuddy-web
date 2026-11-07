@@ -3,39 +3,14 @@
 import Link from 'next/link';
 import { Heart } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { marketHref, type CatalogProduct, type Market } from './catalog';
+import { marketHref, type Market } from './catalog';
 import { updateBrowserList, useBrowserList } from './browser-lists';
 import { ProductCard } from './product-card';
 import { useWishlist } from './wishlist';
+import { SavedCollections } from './collections-local';
+import { useCatalogItems } from './use-catalog-items';
 
 const recentKey = 'griipbuddy-storefront-recently-viewed';
-
-function useCatalogItems(market: Market, slugs: string[]) {
-  const key = JSON.stringify(slugs);
-  const [reply, setReply] = useState<{ key: string; products: CatalogProduct[]; failed?: boolean }>();
-  const requestKey = market.code + key;
-
-  useEffect(() => {
-    const requested = JSON.parse(key) as string[];
-    if (!requested.length) return;
-    const controller = new AbortController();
-    const chunks = Array.from({ length: Math.ceil(requested.length / 30) }, (_, index) => requested.slice(index * 30, (index + 1) * 30));
-    Promise.all(chunks.map(async (chunk) => {
-      const params = new URLSearchParams([['market', market.code], ...chunk.map((slug) => ['slug', slug])]);
-      const response = await fetch('/api/catalog/items?' + params, { signal: controller.signal });
-      if (!response.ok) throw new Error('Catalog items unavailable');
-      return (await response.json() as { products: CatalogProduct[] }).products;
-    })).then((results) => {
-      if (!controller.signal.aborted) setReply({ key: requestKey, products: results.flat() });
-    }).catch(() => {
-      if (!controller.signal.aborted) setReply({ key: requestKey, products: [], failed: true });
-    });
-    return () => controller.abort();
-  }, [key, market.code, requestKey]);
-
-  if (!slugs.length) return { products: [], loading: false, failed: false };
-  return { products: reply?.key === requestKey ? reply.products : [], loading: reply?.key !== requestKey, failed: reply?.key === requestKey && reply.failed };
-}
 
 export function WishlistPage({ market }: { market: Market }) {
   const { saved, hydrated, readOnly, error } = useWishlist();
@@ -56,6 +31,7 @@ export function WishlistPage({ market }: { market: Market }) {
           <p>Tap the heart on something you love to find it here later.</p>
           <Link className="button button-primary" href={marketHref(market, '/collections/new-arrivals')}>Explore new arrivals</Link>
         </div>}
+      <SavedCollections market={market} />
       {pages > 1 && <div className="catalog-pagination">
         <button type="button" className="button button-outline" disabled={current === 1} onClick={() => setPage(current - 1)}>Previous</button>
         <span>Page {current} of {pages}</span>
@@ -76,6 +52,19 @@ export function RecentlyViewed({ market, slug }: { market: Market; slug: string 
   if (!products.length) return null;
   return <section className="product-shelf" aria-label="Recently viewed">
     <h2>Recently viewed</h2>
+    <div className="product-grid">{products.map((product) => <ProductCard key={product.id} product={product} market={market} />)}</div>
+  </section>;
+}
+
+export function ShoppingHistory({ market }: { market: Market }) {
+  const { items } = useBrowserList(recentKey);
+  const { products } = useCatalogItems(market, items.slice(0, 4));
+  if (!products.length) return null;
+  return <section className="home-panel home-product-shelf" aria-label="Pick up where you left off">
+    <div className="market-section-heading">
+      <div><p className="eyebrow">YOUR BROWSING HISTORY</p><h2>Pick up where you left off</h2></div>
+      <button type="button" className="text-link" onClick={() => updateBrowserList(recentKey, () => [])}>Clear history</button>
+    </div>
     <div className="product-grid">{products.map((product) => <ProductCard key={product.id} product={product} market={market} />)}</div>
   </section>;
 }

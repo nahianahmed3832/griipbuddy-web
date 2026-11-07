@@ -138,6 +138,7 @@ test('representative desktop, tablet and phone pages have no serious axe finding
     if (route === '/us') await screenshot(page, 'home-desktop');
   }
   await bagToCheckout(page, 'us');
+  await expect(page).toHaveTitle(/Review checkout · GriipBuddy/);
   const checkout = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   expect(checkout.violations.map((violation) => ({ id: violation.id, impact: violation.impact, nodes: violation.nodes.map((node) => node.target) }))
     .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')).toEqual([]);
