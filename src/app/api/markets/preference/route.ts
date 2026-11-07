@@ -9,7 +9,12 @@ export async function POST(request: Request) {
     return new Response(null, { status: 403 });
   }
   const body: unknown = await request.json().catch(() => null);
-  const code = body && typeof body === 'object' && 'market' in body ? body.market : null;
+  const code = body && typeof body === 'object' && 'market' in body ? body.market : undefined;
+  if (code === null) {
+    (await cookies()).set(marketCookie, '', { path: '/', maxAge: 0, httpOnly: true, sameSite: 'lax',
+      secure: new URL(request.url).protocol === 'https:' });
+    return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+  }
   if (typeof code !== 'string' || !/^(?:[a-z]{2}|intl)$/i.test(code)) return new Response(null, { status: 400 });
 
   try {

@@ -73,7 +73,7 @@ function Departments({ categories, market }: { categories: Category[]; market: M
               {category.image ? <CatalogImage src={category.image} alt="" fill sizes="(max-width: 700px) 40vw, 25vw" />
                 : <Grid2X2 size={32} aria-hidden />}
             </span>
-            <span>{category.label}<ArrowUpRight size={16} aria-hidden /></span>
+            <span>{category.label === category.label.toUpperCase() ? category.label.toLowerCase() : category.label}<ArrowUpRight size={16} aria-hidden /></span>
           </Link>
         ))}
       </nav> : <p className="catalog-notice">Category browsing opens when the catalog is available for this storefront.</p>}
@@ -86,14 +86,14 @@ function ProductShelf({ collection, market, products, rail = false, linkVariant 
 }) {
   if (!products.length) return null;
   const grid = <CatalogGrid market={market} products={products} linkVariant={linkVariant} />;
+  const heading = <div className="market-section-heading">
+    <div><p className="eyebrow">THE CATALOG EDIT</p><h2>{collection.label}</h2></div>
+    <Link className="text-link" href={marketHref(market, collection.href ?? '/collections/' + collection.id)}
+      aria-label={'View all ' + collection.label.toLowerCase()}>View all <ArrowRight size={15} aria-hidden /></Link>
+  </div>;
   return (
     <section className="home-panel home-product-shelf" aria-label={collection.label}>
-      <div className="market-section-heading">
-        <div><p className="eyebrow">THE CATALOG EDIT</p><h2>{collection.label}</h2></div>
-        <Link className="text-link" href={marketHref(market, collection.href ?? '/collections/' + collection.id)}
-          aria-label={'View all ' + collection.label.toLowerCase()}>View all <ArrowRight size={15} aria-hidden /></Link>
-      </div>
-      {rail ? <ShelfRail label={collection.label.toLowerCase()}>{grid}</ShelfRail> : grid}
+      {rail ? <ShelfRail label={collection.label.toLowerCase()} heading={heading}>{grid}</ShelfRail> : <>{heading}{grid}</>}
     </section>
   );
 }
@@ -174,13 +174,13 @@ function RetailHomepage({ market, categories }: { market: Market; categories: Ca
   const best = retailEdit(market, true).catch(() => []);
   const selections = retailSelections(retailEdit(market).catch(() => []), best);
   return <>
-    <section className="retail-hero" aria-labelledby="hero-title">
+    <section className="container retail-hero" aria-labelledby="hero-title">
       <div className="retail-hero-copy">
         <p className="eyebrow"><span aria-hidden /> THE DEVICE EDIT</p>
         <h1 id="hero-title">Good gear.<br /> Better grip.</h1>
-        <p>Explore phone cases, screen and camera protectors, and accessories for the tech you carry every day.</p>
+        <p>Cases, protectors and accessories for the tech you carry every day.</p>
         <div className="market-hero-actions">
-          <Link className="button button-primary" href={marketHref(market, '/products')}>Shop the catalog <ArrowRight size={17} aria-hidden /></Link>
+          <Link className="button button-primary" href={marketHref(market, '/products')}>Shop all <ArrowRight size={17} aria-hidden /></Link>
           <Link className="text-link" href={marketHref(market, '/collections/new-arrivals')}>New arrivals</Link>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { publicBuild } from '@/features/public-build';
+import { hostedCatalogPreview, publicBuild } from '@/features/public-build';
 import 'server-only';
 
 import { checkoutPreferences } from '@/features/checkout/admin-preferences';
@@ -6,6 +6,8 @@ import { checkoutEnabled } from '@/features/checkout/runtime';
 import { cookies, headers } from 'next/headers';
 import { cache } from 'react';
 import { marketForSegment, type Market } from '@/features/catalog/catalog';
+
+import { countryForIp } from './ip-country';
 
 export const marketCookie = 'griipbuddy-market';
 
@@ -28,9 +30,16 @@ export const resolveMarket = cache(async (markets: Market[], segment?: string) =
 
   // Enable this only behind a trusted proxy that overwrites the configured header.
   const name = process.env.GRIIPBUDDY_COUNTRY_HEADER?.toLowerCase();
-  const hint = name && /^x-[a-z0-9-]+$|^cf-ipcountry$|^cloudfront-viewer-country$/.test(name) ? (await headers()).get(name) : null;
-  const detected = hint && /^[a-z]{2}$/i.test(hint) ? marketForSegment(markets, hint) : undefined;
-  const fallback = (publicBuild() ? marketForSegment(markets, 'bd') : undefined) ?? markets.find((market) => market.code === 'INTL');
+  const requestHeaders = await headers();
+  const hint = name && /^(?:x-[a-z0-9-]+|cf-ipcountry|cloudfront-viewer-country)$/.test(name) ? requestHeaders.get(name) : null;
+  // The hosted preview listens on loopback. Its Nginx virtual host replaces
+  // X-Forwarded-For with the trusted remote address.
+  const country = hint && /^[a-z]{2}$/i.test(hint) && hint.toUpperCase() !== 'XX'
+    ? hint
+    : hostedCatalogPreview() ? await countryForIp(requestHeaders.get('x-forwarded-for')) : undefined;
+  const international = markets.find((market) => market.code === 'INTL');
+  const detected = country ? marketForSegment(markets, country) ?? international : undefined;
+  const fallback = (publicBuild() ? marketForSegment(markets, 'bd') : undefined) ?? international;
   if (!fallback) throw new Error('International storefront is not configured.');
   return { market: detected ?? fallback, explicit: false };
 });

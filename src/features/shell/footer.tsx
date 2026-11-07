@@ -16,7 +16,7 @@ const information = [
   ['/terms-and-conditions', 'Terms & conditions'],
 ] as const;
 
-export function Footer({ market, categories, onMarket, accountsEnabled }: { market: Market; categories: Category[]; onMarket: (trigger: HTMLButtonElement) => void; accountsEnabled: boolean }) {
+export function Footer({ market, categories, onMarket, accountsEnabled, geoAttribution }: { market: Market; categories: Category[]; onMarket: (trigger: HTMLButtonElement) => void; accountsEnabled: boolean; geoAttribution?: boolean }) {
   return (
     <footer className="footer">
       <div className="trust">
@@ -45,7 +45,7 @@ export function Footer({ market, categories, onMarket, accountsEnabled }: { mark
           <nav aria-label="Information"><h2>GriipBuddy</h2>{information.map(([path, label]) => <Link key={path} href={marketHref(market, path)}>{label}</Link>)}</nav>
         </div>
         <div className="footer-bottom">
-          <small>© GriipBuddy</small>
+          <small>© GriipBuddy{geoAttribution && <> · <a href="https://db-ip.com">IP geolocation by DB-IP</a></>}</small>
           <button type="button" className="footer-market" onClick={(event) => onMarket(event.currentTarget)}><Globe size={16} aria-hidden /> {market.name} · {market.currency} <ArrowUpRight size={15} aria-hidden /></button>
         </div>
       </div>

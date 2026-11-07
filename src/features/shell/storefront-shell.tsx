@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, ArrowUpRight, Check, ChevronDown, Compass, Globe, Heart, House, Menu, Search, ShoppingBag, UserRound, Zap } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Check, ChevronDown, Globe, Heart, House, LocateFixed, Menu, ShoppingBag, UserRound, Zap } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -15,7 +15,7 @@ import { discoveryLinks } from '@/features/discovery/contracts';
 import { Footer } from './footer';
 import { PanelDialog } from './panel-dialog';
 
-type Panel = 'search' | 'market' | 'browse' | 'bag';
+type Panel = 'market' | 'browse' | 'bag';
 
 type ShellProps = { children: ReactNode; markets: Market[]; categories: Category[]; signedIn: boolean; accountsEnabled: boolean; announcement?: string; preview?: boolean };
 
@@ -59,25 +59,26 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
     requestAnimationFrame(() => opener.current?.focus());
   }
 
-  async function changeMarket(next: Market) {
+  async function changeMarket(next: Market | null) {
     if (marketPending) return;
     setMarketPending(true);
     setMarketError(false);
     try {
       const response = await fetch('/api/markets/preference', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ market: next.code }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ market: next?.code ?? null }),
       });
       if (!response.ok) throw new Error('Preference unavailable');
       const query = new URLSearchParams(window.location.search);
-      if (next.currency !== market.currency) {
+      if (!next || next.currency !== market.currency) {
         query.delete('min');
         query.delete('max');
         query.delete('page');
       }
       query.delete('batch');
-      const path = marketHref(next, localPath) + (query.size ? '?' + query : '');
+      const suffix = query.size ? '?' + query : '';
       close();
-      router.push(path);
+      if (next) router.push(marketHref(next, localPath) + suffix);
+      else window.location.assign(localPath + suffix);
     } catch {
       setMarketError(true);
     } finally {
@@ -161,29 +162,35 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
         )}
       </header>
       <main id="main-content" className="storefront-route" tabIndex={-1}>{children}</main>
-      <Footer market={market} categories={categories} accountsEnabled={accountsEnabled} onMarket={(trigger) => open('market', trigger)} />
+      <Footer market={market} categories={categories} geoAttribution={preview} accountsEnabled={accountsEnabled} onMarket={(trigger) => open('market', trigger)} />
       <nav className="mobile-nav" aria-label="Mobile navigation">
         <Link href={marketHref(market)} aria-current={localPath === '/' ? 'page' : undefined}><House aria-hidden /><span>Home</span></Link>
-        <button type="button" onClick={(event) => open('browse', event.currentTarget)}><Compass aria-hidden /><span>Browse</span></button>
-        <button type="button" onClick={(event) => open('search', event.currentTarget)}><Search aria-hidden /><span>Search</span></button>
-        <Link href={marketHref(market, '/wishlist')} aria-current={localPath === '/wishlist' ? 'page' : undefined}><Heart aria-hidden /><span>Saved</span></Link>
-        <Link className="bag-trigger" href={marketHref(market, '/cart')} aria-label={count ? 'Bag, ' + countLabel : 'Bag'}
-          aria-current={localPath === '/cart' ? 'page' : undefined}><ShoppingBag aria-hidden /><span>Bag</span>
+        <Link className="bag-trigger" href={marketHref(market, '/cart')} aria-label={count ? 'Cart, ' + countLabel : 'Cart'}
+          aria-current={localPath === '/cart' || localPath === '/checkout' ? 'page' : undefined}><ShoppingBag aria-hidden /><span>Cart</span>
           {count > 0 && <span aria-hidden className="bag-count">{count}</span>}
+        </Link>
+        <Link href={marketHref(market, '/profile')} aria-current={/^\/(profile|account|login|wishlist)(\/|$)/.test(localPath) ? 'page' : undefined}>
+          <UserRound aria-hidden /><span>Profile</span>
         </Link>
       </nav>
       {panel === 'bag' && <PanelDialog title="Shopping bag" close={close}>
         <CartView market={market} view="drawer" onNavigate={close} preview={preview} />
       </PanelDialog>}
-      {panel === 'search' && <PanelDialog title="Search" close={close} placement="search"><SearchBox market={market} style="drawer" onChoose={close} /></PanelDialog>}
       {panel === 'market' && (
-        <PanelDialog title="Choose your country" close={close}>
-          <p className="drawer-lede">See the assortment and prices for your market. Shipping eligibility is checked separately in the bag.</p>
-          <div className="market-options">
+        <PanelDialog title="Choose your country" close={close} placement="market">
+          <div className="market-current">
+            <Globe size={21} aria-hidden />
+            <div><small>CURRENT MARKET</small><strong>{market.name} · {market.currency}</strong></div>
+          </div>
+          <p className="drawer-lede">Your market sets the catalog and currency. Delivery is checked in your cart.</p>
+          <button type="button" className="button button-outline market-auto" disabled={marketPending} onClick={() => void changeMarket(null)}>
+            <LocateFixed size={17} aria-hidden /> Use automatic location
+          </button>
+          <div className="market-options" aria-label="Available markets">
             {markets.map((option) => (
               <button key={option.code} type="button" aria-pressed={market.code === option.code} disabled={marketPending} onClick={() => void changeMarket(option)}>
-                <span>{option.name}<small>{option.currency}{option.catalogCountry ? ' · ' + option.catalogCountry + ' storefront presentation' : ''}</small></span>
-                {market.code === option.code ? <Check size={20} aria-hidden /> : <ArrowRight size={18} aria-hidden />}
+                <span>{option.name}<small>{option.catalogCountry ? option.catalogCountry + ' storefront assortment' : option.currency}</small></span>
+                {market.code === option.code ? <Check size={19} aria-hidden /> : <span className="market-option-code">{option.code}</span>}
               </button>
             ))}
           </div>

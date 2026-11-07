@@ -24,14 +24,7 @@ import { currentAccount } from '@/features/account/session';
 import { OrderPage } from '@/features/checkout/order-page';
 import { CustomerPage } from '@/features/account/account-page';
 
-const information: Record<string, { title: string; description: string }> = {
-  'about-us': { title: 'About GriipBuddy', description: 'A place to discover considered accessories and everyday favorites across technology, fashion, clothing, bags, and lifestyle.' },
-  'contact-and-support': { title: 'Contact & support', description: 'Customer support details will be published with the storefront.' },
-  'shipping-procedure': { title: 'Shipping information', description: 'Shipping options and charges for each market will be published before checkout opens.' },
-  'returns-and-exchange': { title: 'Returns & exchanges', description: 'Returns and exchange terms will be published before orders open.' },
-  'privacy-and-policy': { title: 'Privacy policy', description: 'The storefront privacy policy will be available before launch.' },
-  'terms-and-conditions': { title: 'Terms & conditions', description: 'The storefront terms will be available before launch.' },
-};
+import { InformationPage, ProfilePage, information, type InformationPageKey } from '@/features/information/pages';
 
 function PageFrame({ market, title, subtitle, checkout = false, shopping = false, children }: { market: Market; title: string; subtitle?: string; checkout?: boolean; shopping?: boolean; children?: ReactNode }) {
   return (
@@ -103,11 +96,15 @@ async function defaultMetadata({ market, categories, section, rest }: Awaited<Re
   if (section === 'search') return { title: 'Search' };
   if (section === 'products') return { title: 'Shop all', ...canonicalFor(marketHref(market, '/products')) };
   if (section === 'account' || section === 'login') return { title: 'My account' };
+  if (section === 'profile') return { title: 'Profile' };
   if (section === 'cart') return { title: 'Shopping bag' };
   if (section === 'wishlist') return { title: 'Wishlist' };
   if (section === 'checkout') return { title: 'Review checkout' };
   if (section === 'order') return { title: 'Order details', referrer: 'no-referrer' };
-  if (section && !rest.length && Object.hasOwn(information, section)) return { ...information[section], ...canonicalFor(marketHref(market, '/' + section)) };
+  if (section && !rest.length && Object.hasOwn(information, section)) {
+    const { title, description } = information[section as InformationPageKey];
+    return { title, description, ...canonicalFor(marketHref(market, '/' + section)) };
+  }
   if (!section) return canonicalFor(marketHref(market));
   return {};
 }
@@ -187,16 +184,8 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
         paused={checkout && checkoutPaused()} allowSimulation={!integrated} preview={hostedCatalogPreview()} />
     </PageFrame>;
   }
-  if (Object.hasOwn(information, section)) {
-    const page = information[section];
-    return <PageFrame market={market} title={page.title} subtitle={page.description}>
-      {section === 'contact-and-support' && <section className="support-topics" aria-label="Shopping help">
-        <h2>Shopping help</h2>
-        <Link className="text-link" href={marketHref(market, '/shipping-procedure')}>Shipping information</Link>
-        <Link className="text-link" href={marketHref(market, '/returns-and-exchange')}>Returns & exchanges</Link>
-        {!publicBuild() && (apiConfigured() || fixturesEnabled()) && <Link className="text-link" href={marketHref(market, '/account/orders')}>Order history and tracking</Link>}
-      </section>}
-    </PageFrame>;
-  }
+  if (section === 'profile') return <ProfilePage market={market} accountsEnabled={!publicBuild() && (apiConfigured() || fixturesEnabled())}
+    signedIn={Boolean(await currentAccount())} />;
+  if (Object.hasOwn(information, section)) return <InformationPage market={market} slug={section as InformationPageKey} />;
   notFound();
 }

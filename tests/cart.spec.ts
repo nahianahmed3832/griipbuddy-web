@@ -15,6 +15,11 @@ test('market URLs outrank saved selection and detection, with International USD 
   await page.goto('/products');
   await expect(page).toHaveURL(/\/gb\/products$/);
 
+  await page.getByRole('button', { name: /Choose country/ }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Use automatic location' }).click();
+  await expect(page).toHaveURL(/\/bd\/products$/);
+  expect((await context.cookies()).find(cookie => cookie.name === 'griipbuddy-market')).toBeUndefined();
+
   await context.clearCookies();
   await page.setExtraHTTPHeaders({ 'x-griipbuddy-country': 'SG' });
   await page.goto('/product/form-case');

@@ -3,7 +3,7 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useId, useRef, type ReactNode } from 'react';
 
-export function ShelfRail({ label, children }: { label: string; children: ReactNode }) {
+export function ShelfRail({ label, heading, children }: { label: string; heading: ReactNode; children: ReactNode }) {
   const id = useId();
   const rail = useRef<HTMLDivElement>(null);
 
@@ -17,14 +17,14 @@ export function ShelfRail({ label, children }: { label: string; children: ReactN
   }
 
   return <div className="shelf-rail">
-    <div className="shelf-rail-controls">
+    <div className="shelf-rail-header">{heading}<div className="shelf-rail-controls">
       <button type="button" className="icon-button" aria-controls={id} aria-label={'Previous ' + label} onClick={() => scroll(-1)}>
         <ChevronLeft aria-hidden />
       </button>
       <button type="button" className="icon-button" aria-controls={id} aria-label={'Next ' + label} onClick={() => scroll(1)}>
         <ChevronRight aria-hidden />
       </button>
-    </div>
+    </div></div>
     <div className="shelf-rail-track" id={id} ref={rail}>{children}</div>
   </div>;
 }

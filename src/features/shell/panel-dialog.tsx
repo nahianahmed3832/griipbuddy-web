@@ -3,7 +3,7 @@
 import { X } from 'lucide-react';
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 
-export function PanelDialog({ title, close, children, placement = 'side' }: { title: string; close: () => void; children: ReactNode; placement?: 'side' | 'bottom' | 'search' }) {
+export function PanelDialog({ title, close, children, placement = 'side' }: { title: string; close: () => void; children: ReactNode; placement?: 'side' | 'bottom' | 'market' }) {
   const titleId = useId();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {

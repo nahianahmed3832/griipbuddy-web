@@ -58,33 +58,38 @@ test('market navigation keeps the browse route and excludes products without a l
   await expect(page.getByRole('heading', { name: 'Studio Frames' })).toBeVisible();
 });
 
-test('mobile navigation supports search suggestions, browse and bag without horizontal overflow', async ({ page }) => {
+test('mobile tabs link to home, cart and profile while the header supports browse and search', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 740 });
   await page.goto('/bd');
   const nav = page.getByRole('navigation', { name: 'Mobile navigation' });
   await expect(nav).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
-  const searchTrigger = nav.getByRole('button', { name: 'Search' });
-  await searchTrigger.click();
-  const drawer = page.getByRole('dialog', { name: 'Search' });
-  const search = drawer.getByRole('combobox', { name: 'Search products' });
+  await expect(nav.getByRole('link')).toHaveText(['Home', 'Cart', 'Profile']);
+  const headerSearch = page.getByRole('search', { name: 'Storefront search' });
+  const search = headerSearch.getByRole('combobox', { name: 'Search products' });
+  await search.click();
   await expect(search).toBeFocused();
   await search.fill('arc');
-  const suggestion = drawer.getByRole('link', { name: 'The Arc Shoulder Bag' });
+  const suggestion = headerSearch.getByRole('link', { name: 'The Arc Shoulder Bag' });
   await expect(suggestion).toBeVisible();
   await expect(suggestion.locator('img')).toHaveAttribute('src', /catalog/);
   await page.keyboard.press('Escape');
-  await expect(searchTrigger).toBeFocused();
-  await nav.getByRole('button', { name: 'Browse' }).click();
+  await expect(search).toBeFocused();
+  await page.getByRole('button', { name: 'Browse categories' }).click();
   const browse = page.getByRole('dialog', { name: 'Browse' });
   await browse.locator('summary').getByText('Fashion', { exact: true }).click();
   await browse.getByRole('link', { name: 'Sunglasses', exact: true }).click();
   await expect(page).toHaveURL(/\/bd\/category\/fashion\/sunglasses$/);
   await expect(page.getByRole('heading', { name: 'Studio Frames' })).toBeVisible();
-  await nav.getByRole('link', { name: 'Bag' }).click();
+  await nav.getByRole('link', { name: 'Cart' }).click();
   await expect(page).toHaveURL(/\/bd\/cart$/);
   await expect(page.getByRole('heading', { name: 'Your bag is empty' })).toBeVisible();
+  await nav.getByRole('link', { name: 'Profile' }).click();
+  await expect(page.getByRole('heading', { name: 'Profile', exact: true })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Profile' })).toHaveAttribute('aria-current', 'page');
+  await page.getByRole('region', { name: 'Your shopping' }).getByRole('link', { name: /Saved items/ }).click();
+  await expect(page).toHaveURL(/\/bd\/wishlist$/);
 });
 
 test('recent search is market-scoped, keyboard selectable and clearable', async ({ page }) => {
