@@ -87,9 +87,12 @@ export function productHref(market: Market, slug: string) {
 }
 
 export function formatMoney(amount: number, market: Market) {
-  return new Intl.NumberFormat(market.locale, {
+  // Use the storefront's English price formats consistently across ICU versions.
+  const locale = market.currency === 'BDT' ? 'en-US' : market.currency === 'EUR' ? 'en-IE' : market.locale;
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency: market.currency,
+    currencyDisplay: market.currency === 'BDT' ? 'code' : 'symbol',
     minimumFractionDigits: Number.isInteger(amount) ? 0 : undefined,
   }).format(amount);
 }
