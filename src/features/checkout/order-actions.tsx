@@ -4,7 +4,9 @@ import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { methodDetails, type Method, type Status } from './contracts';
 
-export function OrderActions({ id, status, method, returnState, refundOnly }: { id: string; status: Status; method: Method; returnState?: string; refundOnly: boolean }) {
+export function OrderActions({ id, status, method, returnState, refundOnly, managed, canCancel }: {
+  id: string; status: Status; method: Method; returnState?: string; refundOnly: boolean; managed: boolean; canCancel?: boolean;
+}) {
   const router = useRouter();
   const [working, setWorking] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -30,7 +32,7 @@ export function OrderActions({ id, status, method, returnState, refundOnly }: { 
     void run('return', { kind: form.get('kind') ?? 'return', reason: form.get('reason') });
   }
   return <div className="checkout-actions">
-    {status === 'awaiting-payment' && <section>
+    {!managed && status === 'awaiting-payment' && (method === 'stripe' || method === 'paypal') && <section>
       <h2>{methodDetails[method].label} simulation</h2>
       <p className="checkout-note">Choose a test outcome. No provider account or card details are needed.</p>
       <div className="checkout-buttons">
@@ -38,7 +40,7 @@ export function OrderActions({ id, status, method, returnState, refundOnly }: { 
         <button className="button button-outline" disabled={!!working} onClick={() => void run('simulate', { outcome: 'declined' })}>Simulate decline</button>
       </div>
     </section>}
-    {['placed', 'awaiting-payment', 'awaiting-review'].includes(status) && <section>
+    {(canCancel ?? ['placed', 'awaiting-payment', 'awaiting-review'].includes(status)) && <section>
       {cancelPrompt ? <>
         <p>Cancel this order and release its reserved items?</p>
         <div className="checkout-buttons">

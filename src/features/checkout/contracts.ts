@@ -14,12 +14,14 @@ export const methodDetails: Record<Method, { label: string; description: string 
 export type Delivery = { name: string; phone: string; street: string; city: string; region: string; postal: string };
 export type OrderLine = { productId: string; variantId: string; slug: string; title: string; sku: string; quantity: number; unit: number };
 export type Status = 'awaiting-payment' | 'awaiting-review' | 'placed' | 'dispatched' | 'delivered' | 'cancelled' | 'expired' | 'returned';
-export type PaymentStatus = 'due-on-delivery' | 'pending' | 'review' | 'advance-verified' | 'paid' | 'failed' | 'void' | 'refund-pending' | 'refunded';
+export type PaymentStatus = 'due-on-delivery' | 'pending' | 'review' | 'advance-verified' | 'paid' | 'failed' | 'void' | 'refund-pending' | 'partially-refunded' | 'refunded';
 export type CheckoutOrder = {
   id: string; number: string; createdAt: string; market: string; currency: string; total: number; shipping: number;
   discount: number; method: Method; delivery: Delivery; lines: OrderLine[]; status: Status; payment: PaymentStatus;
   paid: number; advanceDue: number; refunded: number; expiresAt: number | null; history: { status: Status; date: string }[];
   failure?: 'declined' | 'receipt-rejected';
+  revision?: number;
+  canCancel?: boolean;
   tracking?: string; collectedOnDelivery?: number; manualReference?: string; manualPhone?: string; transaction?: string; providerAttempt?: string;
   returnRequest?: { kind: 'return' | 'refund'; reason: string; state: 'requested' | 'accepted'; date: string };
 };
@@ -30,7 +32,7 @@ export const statusLabels: Record<Status, string> = {
 };
 export const paymentLabels: Record<PaymentStatus, string> = {
   'due-on-delivery': 'Due on delivery', pending: 'Pending', review: 'Under review', 'advance-verified': 'Advance verified',
-  paid: 'Paid', failed: 'Failed', void: 'Voided', 'refund-pending': 'Refund pending', refunded: 'Refunded',
+  paid: 'Paid', failed: 'Failed', void: 'Voided', 'refund-pending': 'Refund pending', 'partially-refunded': 'Partially refunded', refunded: 'Refunded',
 };
 
 // Echo the exact reviewed values. The server reconstructs these independently; the echo never supplies selling prices.

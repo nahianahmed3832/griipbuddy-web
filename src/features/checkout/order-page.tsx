@@ -54,11 +54,12 @@ export async function OrderPage({ id, market }: { id: string; market: Market }) 
               <time dateTime={event.date}>{event.date.slice(0, 10)}</time></small></li>)}</ol>
           {order.returnRequest && <p>{order.returnRequest.kind === 'return' ? 'Return' : 'Refund'} request: {order.returnRequest.state}</p>}
         </section>
-        <OrderActions id={order.id} status={order.status} method={order.method} returnState={order.returnRequest?.state} refundOnly={!integratedCheckout()} />
+        <OrderActions id={order.id} status={order.status} method={order.method} returnState={order.returnRequest?.state} refundOnly={!integratedCheckout()}
+          managed={order.revision !== undefined} canCancel={order.canCancel} />
       </div>
       <section className="bag-summary" aria-label="Payment summary"><h2>Payment summary</h2>
         <dl className="bag-totals">
-          <div><dt>Method</dt><dd>{methodDetails[order.method].label}</dd></div>
+          <div><dt>Method</dt><dd>{methodDetails[order.method]?.label ?? 'Awaiting payment method'}</dd></div>
           <div><dt>Shipping</dt><dd>{money(order.shipping)}</dd></div>
           {order.discount > 0 && <div><dt>Savings</dt><dd>{money(order.discount)}</dd></div>}
           <div className="bag-estimate"><dt>Order total</dt><dd>{money(order.total)}</dd></div>
