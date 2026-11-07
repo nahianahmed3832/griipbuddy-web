@@ -159,7 +159,7 @@ export function AuthForm({ initial, market, fixture, integrated, preview, google
         </a> : <button type="button" className="button button-outline" disabled aria-describedby="google-sign-in-note">
           <span className="account-google-mark" aria-hidden>G</span> Continue with Google
         </button>}
-        {!googleEnabled && <p id="google-sign-in-note">Google sign-in is not configured for this storefront.</p>}
+        {!googleEnabled && <p id="google-sign-in-note">Google sign-in is shown for preview.</p>}
         {googleFailed && <Feedback error="Google sign-in didn’t finish. Please try again." />}
       </div>}
       <div className="account-auth-links">

@@ -3,7 +3,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { Suspense } from 'react';
 import { hostedCatalogPreview } from '@/features/public-build';
-import { compareProducts, inCollection } from '@/features/catalog/browse';
+import { compareProducts, inCategory, inCollection } from '@/features/catalog/browse';
 import { categoryHref, collections, marketHref, productHref, type CatalogProduct, type Category, type Market } from '@/features/catalog/catalog';
 import { availableMerchandise, catalogSample, withAvailability } from '@/features/catalog/data';
 import { CatalogImage } from '@/features/catalog/catalog-image';
@@ -94,19 +94,13 @@ function distinctProducts(products: CatalogProduct[]) {
 
 async function retailEdit(market: Market, popularity = false, root?: string) {
   const candidates = (await catalogSample(market, popularity, root))
-    .filter((product) => !popularity || inCollection(product, 'best-sellers'));
+    .filter((product) => (!popularity || inCollection(product, 'best-sellers')) && (!root || inCategory(product, [root])));
   return availableMerchandise(distinctProducts(candidates).slice(0, 16));
 }
 
-async function MarketplaceShelves({ market, categories }: { market: Market; categories: Category[] }) {
-  const departments = ['phone-cases', 'screen-and-camera-protectors', 'tech-accessories'].flatMap(slug =>
-    categories.find(category => category.slug === slug) ?? []);
-  const [latest, popular, ...departmentProducts] = await Promise.all([
-    retailEdit(market).catch(() => []),
-    retailEdit(market, true).catch(() => []),
-    ...departments.map(category => retailEdit(market, false, category.id).catch(() => [])),
-  ]);
-  const deals = distinctProducts([...latest, ...popular, ...departmentProducts.flat()]).flatMap(product => {
+async function MarketplaceShelves({ market }: { market: Market }) {
+  const [latest, popular] = await Promise.all([retailEdit(market).catch(() => []), retailEdit(market, true).catch(() => [])]);
+  const deals = distinctProducts([...latest, ...popular]).flatMap(product => {
     const variants = product.variants.filter(({ price }) => price?.sale !== undefined && price.sale < price.regular);
     return variants.length ? [{ ...product, variants }] : [];
   });
@@ -115,19 +109,30 @@ async function MarketplaceShelves({ market, categories }: { market: Market; cate
     <ProductShelf market={market} collection={{ id: 'sale', label: 'Today’s Deals' }} products={deals.slice(0, 8)} compact rail />
     <ProductShelf market={market} collection={collections[0]} products={latest.slice(0, 8)} linkVariant compact rail />
     <ProductShelf market={market} collection={collections[1]} products={best.slice(0, 8)} linkVariant compact rail />
-    {departments.map((category, index) => <ProductShelf key={category.id} market={market} compact rail linkVariant
-      collection={{ id: category.slug, label: category.label.toLowerCase().replace(/(^|\s)\w/g, char => char.toUpperCase()), href: '/category/' + category.path.map(encodeURIComponent).join('/') }}
-      products={departmentProducts[index].slice(0, 8)} />)}
   </>;
+}
+
+async function DepartmentShelf({ market, category }: { market: Market; category: Category }) {
+  const products = await retailEdit(market, false, category.path[0]).catch(() => []);
+  const label = category.label === category.label.toUpperCase()
+    ? category.label.toLowerCase().replace(/(^|\s)\w/g, char => char.toUpperCase()) : category.label;
+  return <ProductShelf market={market} compact rail linkVariant
+    collection={{ id: category.slug, label, href: '/category/' + category.path.map(encodeURIComponent).join('/') }}
+    products={products.slice(0, 8)} />;
 }
 
 async function RetailHomepage({ market, categories }: { market: Market; categories: Category[] }) {
   const content = await managedHeroContent();
+  const departments = ['phone-cases', 'screen-and-camera-protectors', 'tech-accessories'].flatMap(slug =>
+    categories.find(category => category.slug === slug) ?? []);
   return <div className="home container retail-home">
     <Hero market={market} content={content} retail />
     <Suspense fallback={<div className="skeleton-shelf" aria-hidden>{[1, 2, 3, 4].map(i => <span className="skeleton-tile" key={i} />)}</div>}>
-      <MarketplaceShelves market={market} categories={categories} />
+      <MarketplaceShelves market={market} />
     </Suspense>
+    {departments.map(category => <Suspense key={category.id} fallback={null}>
+      <DepartmentShelf market={market} category={category} />
+    </Suspense>)}
     <ShoppingHistory market={market} />
     <section className="retail-discovery" aria-labelledby="ways-to-shop">
       <div className="market-section-heading"><h2 id="ways-to-shop">More ways to shop</h2></div>
