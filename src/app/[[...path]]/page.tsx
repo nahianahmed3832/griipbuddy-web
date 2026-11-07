@@ -33,10 +33,16 @@ const information: Record<string, { title: string; description: string }> = {
   'terms-and-conditions': { title: 'Terms & conditions', description: 'The storefront terms will be available before launch.' },
 };
 
-function PageFrame({ market, title, subtitle, checkout = false, children }: { market: Market; title: string; subtitle?: string; checkout?: boolean; children?: ReactNode }) {
+function PageFrame({ market, title, subtitle, checkout = false, shopping = false, children }: { market: Market; title: string; subtitle?: string; checkout?: boolean; shopping?: boolean; children?: ReactNode }) {
   return (
     <div className={'container interior' + (checkout ? ' checkout-page' : '')}>
       <Link className="back-link" href={marketHref(market, checkout ? '/cart' : '/')}><ArrowLeft size={16} aria-hidden /> {checkout ? 'Shopping bag' : 'Home'}</Link>
+      {shopping && <nav className="purchase-progress" aria-label="Purchase progress">
+        <ol>
+          <li>{checkout ? <Link href={marketHref(market, '/cart')}>1. Bag</Link> : <span aria-current="step">1. Bag</span>}</li>
+          <li><span aria-current={checkout ? 'step' : undefined}>2. Checkout</span></li>
+        </ol>
+      </nav>}
       <div className="interior-heading"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
       {children}
     </div>
@@ -174,7 +180,7 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
         : integrated ? 'Checkout is unavailable for this delivery market. You can still review your bag.'
           : hostedCatalogPreview() ? 'Review catalog prices and stock. Shipping and payment are simulated on this development site.'
             : 'Review the current prices, availability and delivery estimate before running a simulation.';
-    return <PageFrame market={market} title={checkout ? 'Review checkout' : 'Shopping bag'} checkout={checkout}
+    return <PageFrame market={market} title={checkout ? 'Review checkout' : 'Shopping bag'} checkout={checkout} shopping
       subtitle={checkout ? checkoutIntro : undefined}>
       {signIn && <Link className="button button-primary" href={marketHref(market, '/login?next=%2Fcheckout')}>Sign in to check out</Link>}
       <CartView key={market.code + ':' + section} market={market} view={checkout ? 'checkout' : 'page'} methods={methods}
@@ -183,7 +189,14 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
   }
   if (Object.hasOwn(information, section)) {
     const page = information[section];
-    return <PageFrame market={market} title={page.title} subtitle={page.description} />;
+    return <PageFrame market={market} title={page.title} subtitle={page.description}>
+      {section === 'contact-and-support' && <section className="support-topics" aria-label="Shopping help">
+        <h2>Shopping help</h2>
+        <Link className="text-link" href={marketHref(market, '/shipping-procedure')}>Shipping information</Link>
+        <Link className="text-link" href={marketHref(market, '/returns-and-exchange')}>Returns & exchanges</Link>
+        {!publicBuild() && (apiConfigured() || fixturesEnabled()) && <Link className="text-link" href={marketHref(market, '/account/orders')}>Order history and tracking</Link>}
+      </section>}
+    </PageFrame>;
   }
   notFound();
 }

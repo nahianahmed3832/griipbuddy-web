@@ -19,6 +19,18 @@ type Panel = 'search' | 'market' | 'browse' | 'bag';
 
 type ShellProps = { children: ReactNode; markets: Market[]; categories: Category[]; signedIn: boolean; accountsEnabled: boolean; announcement?: string; preview?: boolean };
 
+function BrowseCategory({ category, market, close }: { category: Category; market: Market; close: () => void }) {
+  const href = categoryHref(market, category.path);
+  if (!category.children.length) return <Link href={href} onClick={close}>{category.label}<ArrowUpRight size={17} aria-hidden /></Link>;
+  return <details className="browse-category">
+    <summary>{category.label}<ChevronDown size={16} aria-hidden /></summary>
+    <div>
+      <Link href={href} onClick={close}>Shop all {category.label.toLowerCase()}<ArrowUpRight size={17} aria-hidden /></Link>
+      {category.children.map((child) => <BrowseCategory key={child.id} category={child} market={market} close={close} />)}
+    </div>
+  </details>;
+}
+
 function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, announcement, preview, children }: ShellProps & { pathname: string }) {
   const [segment, ...rest] = pathname.split('/').filter(Boolean);
   const explicitMarket = marketForSegment(markets, segment);
@@ -108,11 +120,12 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
           </div>
         </div>
         <nav className="container desktop-nav" aria-label="Main navigation">
-          <Link className="nav-shop-all" href={marketHref(market, '/products')} onClick={() => setMega(null)}>Shop all</Link>
-          <Link className="nav-featured" href={marketHref(market, '/collections/new-arrivals')} onClick={() => setMega(null)}>New Arrivals</Link>
+          <Link className="nav-shop-all" aria-current={localPath === '/products' ? 'page' : undefined} href={marketHref(market, '/products')} onClick={() => setMega(null)}>Shop all</Link>
+          <Link className="nav-featured" aria-current={localPath === '/collections/new-arrivals' ? 'page' : undefined} href={marketHref(market, '/collections/new-arrivals')} onClick={() => setMega(null)}>New Arrivals</Link>
           {categories.map((category) => (
             <button type="button" key={category.id} id={'nav-' + category.id} aria-expanded={mega === category.id}
               aria-controls={mega === category.id ? 'category-mega-menu' : undefined}
+              data-current={localPath === '/category/' + category.slug || localPath.startsWith('/category/' + category.slug + '/') || undefined}
               onClick={() => setMega(mega === category.id ? null : category.id)}>
               {category.label}<ChevronDown size={12} aria-hidden />
             </button>
@@ -148,7 +161,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
         )}
       </header>
       <main id="main-content" className="storefront-route" tabIndex={-1}>{children}</main>
-      <Footer market={market} categories={categories} onMarket={(trigger) => open('market', trigger)} />
+      <Footer market={market} categories={categories} accountsEnabled={accountsEnabled} onMarket={(trigger) => open('market', trigger)} />
       <nav className="mobile-nav" aria-label="Mobile navigation">
         <Link href={marketHref(market)} aria-current={localPath === '/' ? 'page' : undefined}><House aria-hidden /><span>Home</span></Link>
         <button type="button" onClick={(event) => open('browse', event.currentTarget)}><Compass aria-hidden /><span>Browse</span></button>
@@ -162,7 +175,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
       {panel === 'bag' && <PanelDialog title="Shopping bag" close={close}>
         <CartView market={market} view="drawer" onNavigate={close} preview={preview} />
       </PanelDialog>}
-      {panel === 'search' && <PanelDialog title="Search" close={close}><SearchBox market={market} style="drawer" onChoose={close} /></PanelDialog>}
+      {panel === 'search' && <PanelDialog title="Search" close={close} placement="search"><SearchBox market={market} style="drawer" onChoose={close} /></PanelDialog>}
       {panel === 'market' && (
         <PanelDialog title="Choose your country" close={close}>
           <p className="drawer-lede">See the assortment and prices for your market. Shipping eligibility is checked separately in the bag.</p>
@@ -183,7 +196,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
             <p className="eyebrow">SHOP BY CATEGORY</p>
             <Link href={marketHref(market, '/products')} onClick={close}>Shop all<ArrowUpRight size={17} aria-hidden /></Link>
             {categories.map((category) => (
-              <Link key={category.id} href={categoryHref(market, category.path)} onClick={close}>{category.label}<ArrowUpRight size={17} aria-hidden /></Link>
+              <BrowseCategory key={category.id} category={category} market={market} close={close} />
             ))}
           </div>
           <div className="drawer-links">

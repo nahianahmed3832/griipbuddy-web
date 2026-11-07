@@ -71,12 +71,16 @@ test('mobile navigation supports search suggestions, browse and bag without hori
   const search = drawer.getByRole('combobox', { name: 'Search products' });
   await expect(search).toBeFocused();
   await search.fill('arc');
-  await expect(drawer.getByRole('link', { name: 'The Arc Shoulder Bag' })).toBeVisible();
+  const suggestion = drawer.getByRole('link', { name: 'The Arc Shoulder Bag' });
+  await expect(suggestion).toBeVisible();
+  await expect(suggestion.locator('img')).toHaveAttribute('src', /catalog/);
   await page.keyboard.press('Escape');
   await expect(searchTrigger).toBeFocused();
   await nav.getByRole('button', { name: 'Browse' }).click();
-  await page.getByRole('dialog').getByRole('link', { name: 'Fashion' }).click();
-  await expect(page).toHaveURL(/\/bd\/category\/fashion$/);
+  const browse = page.getByRole('dialog', { name: 'Browse' });
+  await browse.locator('summary').getByText('Fashion', { exact: true }).click();
+  await browse.getByRole('link', { name: 'Sunglasses', exact: true }).click();
+  await expect(page).toHaveURL(/\/bd\/category\/fashion\/sunglasses$/);
   await expect(page.getByRole('heading', { name: 'Studio Frames' })).toBeVisible();
   await nav.getByRole('link', { name: 'Bag' }).click();
   await expect(page).toHaveURL(/\/bd\/cart$/);
@@ -114,7 +118,7 @@ test('tablet homepage loads local images and presents all sections without overf
     await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
   }
   await expect(page.getByRole('img', { name: /cream headphones, a cobalt bag/i })).toBeVisible();
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(250, 249, 246)');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 252, 248)');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(834);
   expect(offOrigin).toEqual([]);
 });

@@ -23,11 +23,14 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
   const [zoomed, setZoomed] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const image = images[active];
+  const zoomScroll = useRef<HTMLDivElement>(null);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const ignoreTap = useRef(false);
 
   function step(direction: number) {
     setActive(current => (current + direction + images.length) % images.length);
+    setZoomed(false);
+    zoomScroll.current?.scrollTo(0, 0);
   }
 
   if (!image) return <div className="gallery-main catalog-image-empty"><ImageIcon aria-hidden size={34} /><span>Image unavailable</span></div>;
@@ -52,7 +55,7 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
           if (ignoreTap.current && event.detail) { ignoreTap.current = false; return; }
           setOpen(true); setZoomed(false); dialog.current?.showModal();
         }}>
-        <CatalogImage src={image} fill priority={active === 0} alt={product + ' — image ' + (active + 1)}
+        <CatalogImage key={image} src={image} fill priority={active === 0} alt={product + ' — image ' + (active + 1)}
           sizes="(max-width: 760px) 92vw, 46vw" />
         <span className="gallery-zoom"><ZoomIn size={19} aria-hidden /></span>
       </button>
@@ -67,14 +70,24 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
           <CatalogImage src={src} fill alt="" sizes="76px" />
         </button>)}
       </div>}
-      <dialog ref={dialog} className="zoom-dialog" aria-label="Product image zoom" onClose={() => setOpen(false)}
+      <dialog ref={dialog} className="zoom-dialog" aria-label="Product image zoom" onKeyDown={(event) => {
+          if (images.length > 1 && !zoomed && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+            event.preventDefault();
+            step(event.key === 'ArrowLeft' ? -1 : 1);
+          }
+        }} onClose={() => setOpen(false)}
         onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
         <div className="zoom-toolbar">
+          {images.length > 1 && <div className="zoom-gallery-controls">
+            <button className="icon-button" type="button" aria-label="Previous enlarged image" onClick={() => step(-1)}><ChevronLeft aria-hidden /></button>
+            <span aria-live="polite">{active + 1} / {images.length}</span>
+            <button className="icon-button" type="button" aria-label="Next enlarged image" onClick={() => step(1)}><ChevronRight aria-hidden /></button>
+          </div>}
           <button className="icon-button" type="button" aria-label={zoomed ? 'Zoom out' : 'Zoom in'}
             aria-pressed={zoomed} onClick={() => setZoomed(!zoomed)}>{zoomed ? <Minus aria-hidden /> : <Plus aria-hidden />}</button>
           <button className="icon-button" type="button" aria-label="Close image zoom" onClick={() => dialog.current?.close()}><X aria-hidden /></button>
         </div>
-        <div className="zoom-scroll">
+        <div className="zoom-scroll" ref={zoomScroll}>
           <div className={'zoom-image' + (zoomed ? ' is-magnified' : '')}>
             {open && <CatalogImage src={image} fill alt={product + ' — enlarged image'} sizes="(max-width: 760px) 100vw, 1050px" />}
           </div>
@@ -212,7 +225,7 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
         </div>}
         {!dimensions.some(([key]) => key === 'size') && extras.guide && <SizeChart guide={extras.guide} product={product.name} />}
         {extras.guide?.note && <p className="detail-fit-note"><strong>Fit note</strong> {extras.guide.note}</p>}
-        <AddToBag key={selectedId ?? product.id} product={product} variant={selected} stock={knownStock} />
+        <AddToBag key={selectedId ?? product.id} product={product} variant={selected} stock={knownStock} showQuantity />
         {price && <WishlistButton slug={product.slug} name={product.name} className="button button-outline detail-wish" showLabel />}
         <div className="product-utility"><WatchButton slug={product.slug} market={market} />
           <ShareLink path={productHref(market, product.slug)} label="Share product" /></div>

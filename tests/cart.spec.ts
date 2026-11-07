@@ -121,3 +121,18 @@ test('quote ignores submitted totals and rejects malformed quantities and duplic
   const mismatched = await post([{ ...line, variantId: 'arc-bag-espresso' }]);
   expect(await mismatched.json()).toMatchObject({ estimatedTotal: null, reviewReady: false, lines: [{ status: 'unavailable' }] });
 });
+
+
+test('product quantity adds the selected number of units up to remaining variant stock', async ({ page }) => {
+  await page.goto('/us/product/form-case');
+  const detail = page.locator('.detail-copy');
+  const quantity = detail.getByRole('combobox', { name: 'Quantity' });
+  await expect(quantity.locator('option')).toHaveCount(8);
+  await quantity.selectOption('3');
+  await detail.getByRole('button', { name: 'Add to bag', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: 'Shopping bag' });
+  await expect(drawer.getByRole('spinbutton', { name: 'Quantity for The Form Case' })).toHaveValue('3');
+  await drawer.getByRole('button', { name: 'Close shopping bag' }).click();
+  await expect(quantity.locator('option')).toHaveCount(5);
+  await expect(quantity).toHaveValue('1');
+});

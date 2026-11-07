@@ -3,7 +3,7 @@
 import { X } from 'lucide-react';
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 
-export function PanelDialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
+export function PanelDialog({ title, close, children, placement = 'side' }: { title: string; close: () => void; children: ReactNode; placement?: 'side' | 'bottom' | 'search' }) {
   const titleId = useId();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -15,7 +15,7 @@ export function PanelDialog({ title, close, children }: { title: string; close: 
   }, []);
 
   return (
-    <dialog ref={ref} className="drawer" aria-labelledby={titleId}
+    <dialog ref={ref} className="drawer" data-placement={placement} aria-labelledby={titleId}
       onCancel={(event) => { event.preventDefault(); close(); }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {

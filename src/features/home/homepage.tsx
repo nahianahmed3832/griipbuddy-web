@@ -11,6 +11,7 @@ import { CatalogGrid } from '@/features/catalog/listing';
 import { record, rows } from '@/features/catalog/api';
 import { ShoppingHistory } from '@/features/catalog/saved-products';
 import { discoveryLinks } from '@/features/discovery/contracts';
+import { ShelfRail } from './shelf-rail';
 import { contentMedia, contentPath, contentRows, siteContent, text } from './content';
 
 function Hero({ market, content }: { market: Market; content: Record<string, unknown> }) {
@@ -80,10 +81,11 @@ function Departments({ categories, market }: { categories: Category[]; market: M
   );
 }
 
-function ProductShelf({ collection, market, products, linkVariant = collection.id === 'sale' }: {
-  collection: { label: string; id: string; href?: string }; market: Market; products: CatalogProduct[]; linkVariant?: boolean;
+function ProductShelf({ collection, market, products, rail = false, linkVariant = collection.id === 'sale' }: {
+  collection: { label: string; id: string; href?: string }; market: Market; products: CatalogProduct[]; rail?: boolean; linkVariant?: boolean;
 }) {
   if (!products.length) return null;
+  const grid = <CatalogGrid market={market} products={products} linkVariant={linkVariant} />;
   return (
     <section className="home-panel home-product-shelf" aria-label={collection.label}>
       <div className="market-section-heading">
@@ -91,7 +93,7 @@ function ProductShelf({ collection, market, products, linkVariant = collection.i
         <Link className="text-link" href={marketHref(market, collection.href ?? '/collections/' + collection.id)}
           aria-label={'View all ' + collection.label.toLowerCase()}>View all <ArrowRight size={15} aria-hidden /></Link>
       </div>
-      <CatalogGrid market={market} products={products} linkVariant={linkVariant} />
+      {rail ? <ShelfRail label={collection.label.toLowerCase()}>{grid}</ShelfRail> : grid}
     </section>
   );
 }
@@ -108,22 +110,24 @@ function distinctProducts(products: CatalogProduct[]) {
 
 async function retailEdit(market: Market, popular = false) {
   const candidates = (await catalogSample(market, popular)).filter((product) => !popular || inCollection(product, 'best-sellers'));
-  return availableMerchandise(distinctProducts(candidates).slice(0, 12));
+  return availableMerchandise(distinctProducts(candidates).slice(0, 16));
 }
 
-async function retailSelections(edit: Promise<CatalogProduct[]>) {
-  const newest = await edit;
-  const hero = newest.find((product) => product.images.length > 0 || product.variants[0]?.images.length > 0);
-  return { hero, arrivals: newest.filter((product) => product.id !== hero?.id).slice(0, 4) };
+async function retailSelections(edit: Promise<CatalogProduct[]>, best: Promise<CatalogProduct[]>) {
+  const [newest, popular] = await Promise.all([edit, best]);
+  const featureSlug = 'iqoo-z11-turbo-2nd-gen-camera-protector-0f97aa';
+  const hero = popular.find((product) => product.slug === featureSlug && product.images.length > 0)
+    ?? newest.find((product) => product.images.length > 0 || product.variants[0]?.images.length > 0);
+  return { hero, arrivals: newest.filter((product) => product.id !== hero?.id).slice(0, 8) };
 }
 
 async function RetailHeroFeature({ market, selections }: { market: Market; selections: ReturnType<typeof retailSelections> }) {
   const { hero } = await selections;
-  const image = hero?.variants[0]?.images[0] ?? hero?.images[0];
+  const image = hero?.images[0] ?? hero?.variants[0]?.images[0];
   if (!hero || !image) return <div className="retail-hero-mark" aria-hidden>GB<span>.</span></div>;
   return <Link className="retail-hero-feature" prefetch={false}
     href={productHref(market, hero.slug) + '?variant=' + encodeURIComponent(hero.variants[0].id)}>
-    <div className="retail-hero-image"><CatalogImage src={image} alt="" fill priority sizes="(max-width: 760px) 90vw, 48vw" /></div>
+    <div className="retail-hero-image"><CatalogImage src={image} alt="" fill priority sizes="(max-width: 760px) 100vw, 58vw" /></div>
     <div className="retail-hero-caption"><div><span>FROM THE CATALOG</span><strong>{hero.name}</strong></div><ArrowUpRight aria-hidden size={22} /></div>
   </Link>;
 }
@@ -133,19 +137,48 @@ async function RetailShelf({ market, selections, best }: {
 }) {
   const { hero, arrivals } = await selections;
   const shown = new Set([hero?.id, ...arrivals.map((product) => product.id)]);
-  const products = best ? (await best).filter((product) => !shown.has(product.id)).slice(0, 4) : arrivals;
-  return <ProductShelf market={market} collection={collections[best ? 1 : 0]} products={products} linkVariant />;
+  const products = best ? (await best).filter((product) => !shown.has(product.id)).slice(0, 8) : arrivals;
+  return <ProductShelf market={market} collection={collections[best ? 1 : 0]} products={products} linkVariant rail />;
+}
+
+const retailStories = [
+  { slug: 'phone-cases', title: 'A case for every day', copy: 'Find a finish and fit for the phone you reach for most.' },
+  { slug: 'screen-and-camera-protectors', title: 'Keep the details sharp', copy: 'Explore screen and camera protection by device.' },
+];
+
+function RetailStories({ market, categories }: { market: Market; categories: Category[] }) {
+  const stories = retailStories.flatMap((story) => {
+    const category = categories.find((entry) => entry.slug === story.slug);
+    return category?.image ? [{ ...story, category }] : [];
+  });
+  if (!stories.length) return null;
+  return <section className="retail-stories" aria-labelledby="retail-stories-title">
+    <div className="market-section-heading">
+      <div><p className="eyebrow">THE EVERYDAY EDIT</p><h2 id="retail-stories-title">Made for your device</h2></div>
+    </div>
+    <div className="retail-story-grid">
+      {stories.map(({ category, title, copy }) => <article className="retail-story" key={category.id}>
+        <Link className="retail-story-image" href={categoryHref(market, category.path)} tabIndex={-1} aria-hidden>
+          <CatalogImage src={category.image} alt="" fill sizes="(max-width: 600px) 100vw, 48vw" />
+        </Link>
+        <div className="retail-story-copy">
+          <p className="eyebrow">{category.label}</p><h3>{title}</h3><p>{copy}</p>
+          <Link className="text-link" href={categoryHref(market, category.path)}>Explore {category.label.toLowerCase()} <ArrowUpRight size={16} aria-hidden /></Link>
+        </div>
+      </article>)}
+    </div>
+  </section>;
 }
 
 function RetailHomepage({ market, categories }: { market: Market; categories: Category[] }) {
-  const selections = retailSelections(retailEdit(market));
-  const best = retailEdit(market, true);
-  return <div className="home container retail-home">
+  const best = retailEdit(market, true).catch(() => []);
+  const selections = retailSelections(retailEdit(market).catch(() => []), best);
+  return <>
     <section className="retail-hero" aria-labelledby="hero-title">
       <div className="retail-hero-copy">
-        <p className="eyebrow"><span aria-hidden /> THE GRIIPBUDDY EDIT</p>
-        <h1 id="hero-title">Everyday tech.<br /> Better grip.</h1>
-        <p>Phone cases, screen protectors and tech accessories for the gear you use every day.</p>
+        <p className="eyebrow"><span aria-hidden /> THE DEVICE EDIT</p>
+        <h1 id="hero-title">Good gear.<br /> Better grip.</h1>
+        <p>Explore phone cases, screen and camera protectors, and accessories for the tech you carry every day.</p>
         <div className="market-hero-actions">
           <Link className="button button-primary" href={marketHref(market, '/products')}>Shop the catalog <ArrowRight size={17} aria-hidden /></Link>
           <Link className="text-link" href={marketHref(market, '/collections/new-arrivals')}>New arrivals</Link>
@@ -155,15 +188,24 @@ function RetailHomepage({ market, categories }: { market: Market; categories: Ca
         <RetailHeroFeature market={market} selections={selections} />
       </Suspense>
     </section>
-    <Departments market={market} categories={categories} />
-    <Suspense fallback={null}><RetailShelf market={market} selections={selections} /></Suspense>
-    <section className="retail-discovery" aria-labelledby="ways-to-shop">
-      <div className="market-section-heading"><div><p className="eyebrow">THE MARKETPLACE</p><h2 id="ways-to-shop">More ways to shop</h2></div></div>
-      <ShopShortcuts market={market} />
-    </section>
-    <Suspense fallback={null}><RetailShelf market={market} selections={selections} best={best} /></Suspense>
-    <ShoppingHistory market={market} />
-  </div>;
+    <div className="home container retail-home">
+      <Departments market={market} categories={categories} />
+      <Suspense fallback={<div className="skeleton-shelf" aria-hidden>{[1, 2, 3, 4].map(i => <span className="skeleton-tile" key={i} />)}</div>}>
+        <RetailShelf market={market} selections={selections} />
+      </Suspense>
+      <RetailStories market={market} categories={categories} />
+      <Suspense fallback={null}><RetailShelf market={market} selections={selections} best={best} /></Suspense>
+      <section className="retail-discovery" aria-labelledby="ways-to-shop">
+        <div className="market-section-heading"><div><p className="eyebrow">THE MARKETPLACE</p><h2 id="ways-to-shop">More ways to shop</h2></div></div>
+        <ShopShortcuts market={market} />
+      </section>
+      <section className="retail-membership">
+        <div><p className="eyebrow">GRIIPBUDDY REWARDS</p><h2>Good finds add up.</h2><p>Explore GriipBuddy Rewards and see what’s available in your market.</p></div>
+        <Link className="button button-outline" href={marketHref(market, '/rewards')}>Explore rewards <ArrowRight size={17} aria-hidden /></Link>
+      </section>
+      <ShoppingHistory market={market} />
+    </div>
+  </>;
 }
 
 export async function Homepage({ market, categories }: { market: Market; categories: Category[] }) {

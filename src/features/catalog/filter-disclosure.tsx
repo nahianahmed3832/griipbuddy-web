@@ -17,10 +17,10 @@ export function FilterDisclosure({ applied, children }: { applied: number; child
 
   const label = <>Filters{applied > 0 && <span> · {applied} applied</span>}</>;
   return <div className="catalog-filter-panel">
-    <button type="button" className="button button-outline filter-trigger" ref={trigger} onClick={() => setOpen(true)}>
+    <button type="button" aria-haspopup="dialog" className="button button-outline filter-trigger" ref={trigger} onClick={() => setOpen(true)}>
       <SlidersHorizontal size={16} aria-hidden />{label}
     </button>
-    {open ? <PanelDialog title="Filters" close={() => {
+    {open ? <PanelDialog title="Filters" placement="bottom" close={() => {
       setOpen(false);
       requestAnimationFrame(() => trigger.current?.focus());
     }}>{children}</PanelDialog> : <div className="desktop-filter">

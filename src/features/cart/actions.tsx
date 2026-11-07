@@ -11,31 +11,41 @@ export const CartActions = createContext<{
   chooseMarket: (trigger: HTMLElement) => void;
 } | null>(null);
 
-export function AddToBag({ product, variant, stock, compact = false }: {
-  product: CatalogProduct; variant?: CatalogVariant; stock: number | null | undefined; compact?: boolean;
+export function AddToBag({ product, variant, stock, compact = false, showQuantity = false }: {
+  product: CatalogProduct; variant?: CatalogVariant; stock: number | null | undefined; compact?: boolean; showQuantity?: boolean;
 }) {
   const actions = useContext(CartActions);
   const { lines, hydrated } = useCart();
   const commands = useBagCommands();
   const [message, setMessage] = useState('');
   const [pending, setPending] = useState(false);
+  const [requested, setRequested] = useState(1);
   if (!variant?.price) return null;
 
   const identity = { productId: product.id, variantId: variant.id, slug: product.slug };
-  const quantity = lines.find((line) => lineKey(line) === lineKey(identity))?.quantity ?? 0;
+  const inBag = lines.find((line) => lineKey(line) === lineKey(identity))?.quantity ?? 0;
   const available = typeof stock === 'number' && stock > 0;
-  const limit = available && quantity >= Math.min(stock, maxLineQuantity);
-  return <div className="add-to-bag">
+  const remaining = available ? Math.max(0, Math.min(stock, maxLineQuantity) - inBag) : 0;
+  const limit = available && remaining === 0;
+  const quantity = Math.min(requested, remaining);
+  return <div className={'add-to-bag' + (showQuantity ? ' add-to-bag-with-quantity' : '')}>
+    {showQuantity && remaining > 1 && <label className="product-quantity">
+      <span>Quantity</span>
+      <select value={quantity} onChange={(event) => setRequested(Number(event.target.value))} disabled={!hydrated || pending}>
+        {Array.from({ length: remaining }, (_, index) => <option key={index + 1}>{index + 1}</option>)}
+      </select>
+    </label>}
     <button className={compact ? 'button button-outline' : 'button button-primary'}
       aria-label={compact ? 'Add ' + product.name + ' to bag' : undefined} type="button" disabled={!hydrated || !available || limit || pending} onClick={async (event) => {
       const trigger = event.currentTarget;
       setPending(true);
-      const added = await commands.add({ ...identity, quantity: 1, label: product.name });
+      const added = await commands.add({ ...identity, quantity, label: product.name });
       setPending(false);
       if (!added) {
         setMessage('The item could not be added. Check your bag and try again.');
         return;
       }
+      setRequested(1);
       setMessage('Added to your bag.');
       actions?.openBag(trigger);
     }}>

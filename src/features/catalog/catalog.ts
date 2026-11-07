@@ -67,7 +67,7 @@ export type CatalogProduct = {
 };
 
 export type Availability = 'in' | 'out' | 'unknown';
-export type Suggestion = { href: string; title: string; kind: 'Product' | 'Category' };
+export type Suggestion = { href: string; title: string; kind: 'Product' | 'Category'; image?: string };
 
 export function marketForSegment(markets: Market[], segment?: string) {
   const token = segment?.toLowerCase();

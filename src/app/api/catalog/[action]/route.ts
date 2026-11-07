@@ -1,4 +1,4 @@
-import { compareProducts, inCategory, relevance } from '@/features/catalog/browse';
+import { compareProducts, inCategory, lowestPricedVariant, relevance } from '@/features/catalog/browse';
 import { categoryHref, flattenCategories, marketForSegment, productHref, validSlug, type Suggestion } from '@/features/catalog/catalog';
 import { catalogNavigation, catalogProduct, catalogBrowse, mapLimited, variantStock } from '@/features/catalog/data';
 
@@ -47,7 +47,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ acti
       .filter(({ score }) => score > 0)
       .sort((a, b) => b.score - a.score || compareProducts(a.product, b.product, 'newest'))
       .slice(0, 6)
-      .map(({ product }): Suggestion => ({ title: product.name, href: productHref(market, product.slug), kind: 'Product' }));
+      .map(({ product }): Suggestion => ({
+        title: product.name, href: productHref(market, product.slug), kind: 'Product',
+        image: lowestPricedVariant(product.variants)?.images[0] ?? product.images[0],
+      }));
 
     return json({ suggestions: [...products, ...matches].slice(0, 7) });
   } catch {

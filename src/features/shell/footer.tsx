@@ -16,7 +16,7 @@ const information = [
   ['/terms-and-conditions', 'Terms & conditions'],
 ] as const;
 
-export function Footer({ market, categories, onMarket }: { market: Market; categories: Category[]; onMarket: (trigger: HTMLButtonElement) => void }) {
+export function Footer({ market, categories, onMarket, accountsEnabled }: { market: Market; categories: Category[]; onMarket: (trigger: HTMLButtonElement) => void; accountsEnabled: boolean }) {
   return (
     <footer className="footer">
       <div className="trust">
@@ -38,7 +38,10 @@ export function Footer({ market, categories, onMarket }: { market: Market; categ
           <nav aria-label="Departments"><h2>Departments</h2>{categories.map((category) => (
             <Link key={category.id} href={categoryHref(market, category.path)}>{category.label}</Link>
           ))}</nav>
-          <nav aria-label="Help"><h2>Help</h2>{support.map(([path, label]) => <Link key={path} href={marketHref(market, path)}>{label}</Link>)}</nav>
+          <nav aria-label="Help"><h2>Help</h2>{support.map(([path, label]) => <Link key={path} href={marketHref(market, path)}>{label}</Link>)}
+            {accountsEnabled && <Link href={marketHref(market, '/account/orders')}>Track an order</Link>}
+            <Link href={marketHref(market, '/wishlist')}>Saved items</Link>
+          </nav>
           <nav aria-label="Information"><h2>GriipBuddy</h2>{information.map(([path, label]) => <Link key={path} href={marketHref(market, path)}>{label}</Link>)}</nav>
         </div>
         <div className="footer-bottom">

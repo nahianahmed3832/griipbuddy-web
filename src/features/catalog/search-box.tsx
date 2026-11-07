@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useId, useState } from 'react';
 import { marketHref, type Category, type Market, type Suggestion } from './catalog';
+import { CatalogImage } from './catalog-image';
 import { updateBrowserList, useBrowserList } from './browser-lists';
 
 export function SearchBox({
@@ -33,7 +34,7 @@ export function SearchBox({
   const recentMode = !clean && recent.length > 0;
   const open = focused && (clean.length >= 2 || recentMode);
   const resultPath = (value: string) => action + '?' + new URLSearchParams({ q: value, ...(category && { category }) });
-  const suggestions = recentMode ? recent.slice(0, 5).map((term) => ({ title: term, href: resultPath(term), kind: 'Recent' }))
+  const suggestions: Array<Omit<Suggestion, 'kind'> & { kind: Suggestion['kind'] | 'Recent' }> = recentMode ? recent.slice(0, 5).map((term) => ({ title: term, href: resultPath(term), kind: 'Recent' }))
     : reply?.key === key ? reply.matches : [];
 
   useEffect(() => {
@@ -114,7 +115,10 @@ export function SearchBox({
               <li key={entry.href} id={id + '-' + index} role="option" aria-selected={index === active}>
                 <Link href={entry.href} prefetch={false} tabIndex={-1} onMouseDown={(event) => event.preventDefault()}
                   onClick={() => finish(recentMode ? entry.title : clean)}>
-                  <span>{entry.title}</span><small>{entry.kind} <ArrowUpRight size={13} aria-hidden /></small>
+                  <span className="search-suggestion-title">
+                    {entry.image && <span className="search-suggestion-image"><CatalogImage src={entry.image} alt="" fill sizes="42px" /></span>}
+                    {entry.title}
+                  </span><small>{entry.kind} <ArrowUpRight size={13} aria-hidden /></small>
                 </Link>
               </li>
             ))}

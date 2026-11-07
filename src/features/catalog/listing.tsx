@@ -1,6 +1,8 @@
 import Link from 'next/link';
+import Form from 'next/form';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { Suspense } from 'react';
+import { CatalogImage } from './catalog-image';
 import CatalogSkeleton from './catalog-skeleton';
 import { categoryAt, categoryHref, formatMoney, marketHref, type CatalogProduct, type Category, type CollectionId, type Market } from './catalog';
 import { compareProducts, facetValue, inCategory, inCollection, matchingVariants, optionFacets, parseFilters, relevance, sortLabels, type CatalogParams, type Filters } from './browse';
@@ -75,7 +77,7 @@ function FilterPanel({ market, filters, products, categories, action, scoped }: 
 
   return (
     <FilterDisclosure applied={applied}>
-      <form className="catalog-filters" action={action} method="get">
+      <Form className="catalog-filters" action={action}>
         {filters.query && <input type="hidden" name="q" value={filters.query} />}
         {filters.sort && <input type="hidden" name="sort" value={filters.sort} />}
         {!scoped && <SelectFilter label="Category" name="category" selected={filters.category}
@@ -94,7 +96,7 @@ function FilterPanel({ market, filters, products, categories, action, scoped }: 
           <button type="submit" className="button button-primary">Apply filters</button>
           <Link className="text-link" href={action + (filters.query ? '?q=' + encodeURIComponent(filters.query) : '')}>Clear filters</Link>
         </div>
-      </form>
+      </Form>
     </FilterDisclosure>
   );
 }
@@ -200,14 +202,19 @@ async function ListingResults({ market, categories, category, collection, params
   return (
     <div className="container catalog-page">
       <Breadcrumbs market={market} categories={categories} path={ancestors} current={title} />
-      <div className="catalog-heading">
-        <p className="eyebrow">{search ? 'DISCOVER' : collection ? 'COLLECTION' : 'THE CATALOG'}</p>
-        <h1>{title}</h1>
-        {description && <p>{description}</p>}
-        {search && <SearchBox key={filters.query + filters.category} market={market} style="page" initialQuery={filters.query} initialCategory={filters.category} />}
-        {category?.children.length ? <nav className="category-chips" aria-label="Subcategories">
-          {category.children.map((child) => <Link key={child.id} href={categoryHref(market, child.path)}>{child.label}<ChevronRight size={14} aria-hidden /></Link>)}
-        </nav> : null}
+      <div className={'catalog-heading' + (category?.image ? ' catalog-heading-with-image' : '')}>
+        {category?.image && <div className="catalog-heading-image">
+          <CatalogImage src={category.image} alt="" fill sizes="(max-width: 650px) 28vw, 300px" />
+        </div>}
+        <div className="catalog-heading-copy">
+          <p className="eyebrow">{search ? 'DISCOVER' : collection ? 'COLLECTION' : 'THE CATALOG'}</p>
+          <h1>{title}</h1>
+          {description && description.trim().toLowerCase() !== title.trim().toLowerCase() && <p>{description}</p>}
+          {search && <SearchBox key={filters.query + filters.category} market={market} style="page" initialQuery={filters.query} initialCategory={filters.category} />}
+          {category?.children.length ? <nav className="category-chips" aria-label="Subcategories">
+            {category.children.map((child) => <Link key={child.id} href={categoryHref(market, child.path)}>{child.label}<ChevronRight size={14} aria-hidden /></Link>)}
+          </nav> : null}
+        </div>
       </div>
       <div className="catalog-layout">
         <aside aria-label="Catalog filters">
@@ -217,20 +224,21 @@ async function ListingResults({ market, categories, category, collection, params
           <div className="results-toolbar">
             <p>{notice ? 'Update filters' : total + (total === 1 ? ' product' : ' products') + (batch ? ' in this batch' : '')}{filters.query && ' for “' + filters.query + '”'}</p>
             <div className="results-actions"><CompareLink market={market} />
-            <form className="sort-form" action={action} method="get">
+            <Form className="sort-form" action={action}>
               {[...query].filter(([name]) => name !== 'sort').map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
               <label>Sort by <select name="sort" defaultValue={filters.sort} aria-label="Sort by">
                 {Object.entries(sortLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
               </select></label>
               <button className="button button-outline" type="submit">Sort</button>
-            </form></div>
+            </Form></div>
           </div>
           <AppliedFilters filters={filters} scope={scope} scoped={Boolean(category)} products={scopeProducts} market={market} action={action} />
           {batch && <p className="catalog-notice">Browse batch {batch} of {batches}. Prices, filters and availability reflect this batch in your market.</p>}
           {notice ? <p className="catalog-notice" role="status">{notice}</p>
             : visible.length ? <CatalogGrid products={visible} market={market} linkVariant={Boolean(collection === 'sale'
               || optionFacets.some(({ key }) => filters[key]) || filters.min !== undefined || filters.max !== undefined || filters.availability)} />
-              : <div className="empty-state"><Search aria-hidden /><h2>No products found</h2><p>Try another search or clear your filters.</p></div>}
+              : <div className="empty-state"><Search aria-hidden /><h2>No products found</h2><p>Try another search or clear your filters.</p>
+                <Link className="button button-outline" href={marketHref(market, '/products')}>Browse all products</Link></div>}
           {!notice && pages > 1 && <nav className="catalog-pagination" aria-label="Product pages">
             {page > 1 && <Link className="button button-outline" href={pageHref(page - 1)}>Previous</Link>}
             <span>Page {page} of {pages}</span>
