@@ -113,44 +113,34 @@ async function retailEdit(market: Market, popular = false) {
   return availableMerchandise(distinctProducts(candidates).slice(0, 16));
 }
 
-async function retailSelections(edit: Promise<CatalogProduct[]>, best: Promise<CatalogProduct[]>) {
-  const [newest, popular] = await Promise.all([edit, best]);
-  const featureSlug = 'iqoo-z11-turbo-2nd-gen-camera-protector-0f97aa';
-  const hero = popular.find((product) => product.slug === featureSlug && product.images.length > 0)
-    ?? newest.find((product) => product.images.length > 0 || product.variants[0]?.images.length > 0);
-  return { hero, arrivals: newest.filter((product) => product.id !== hero?.id).slice(0, 8) };
-}
-
-async function RetailHeroFeature({ market, selections }: { market: Market; selections: ReturnType<typeof retailSelections> }) {
-  const { hero } = await selections;
-  const image = hero?.images[0] ?? hero?.variants[0]?.images[0];
-  if (!hero || !image) return <div className="retail-hero-mark" aria-hidden>GB<span>.</span></div>;
-  return <Link className="retail-hero-feature" prefetch={false}
-    aria-label={'Shop the featured product, ' + hero.name}
-    href={productHref(market, hero.slug) + '?variant=' + encodeURIComponent(hero.variants[0].id)}>
-    <CatalogImage src={image} alt="" fill priority sizes="(max-width: 760px) 100vw, 58vw" />
-    <span className="retail-hero-caption">Shop featured <ArrowUpRight aria-hidden size={16} /></span>
+function RetailHeroFeature({ market, category }: { market: Market; category?: Category }) {
+  const photo = <Image src="/editorial/device-edit-campaign.webp"
+    alt={category ? '' : 'White, gray and charcoal phone cases with orange camera rims on terracotta'}
+    fill priority sizes="(max-width: 760px) 100vw, (max-width: 960px) 62vw, (max-width: 1550px) 55vw, 795px" />;
+  if (!category) return <div className="retail-hero-feature">{photo}</div>;
+  return <Link className="retail-hero-feature" prefetch={false} href={categoryHref(market, category.path)}>
+    {photo}<span className="retail-hero-caption">Shop phone cases <ArrowUpRight aria-hidden size={16} /></span>
   </Link>;
 }
 
-async function RetailShelf({ market, selections, best }: {
-  market: Market; selections: ReturnType<typeof retailSelections>; best?: Promise<CatalogProduct[]>;
+async function RetailShelf({ market, arrivals, best }: {
+  market: Market; arrivals: Promise<CatalogProduct[]>; best?: Promise<CatalogProduct[]>;
 }) {
-  const { hero, arrivals } = await selections;
-  const shown = new Set([hero?.id, ...arrivals.map((product) => product.id)]);
-  const products = best ? (await best).filter((product) => !shown.has(product.id)).slice(0, 8) : arrivals;
+  const newest = await arrivals;
+  const shown = new Set(newest.map((product) => product.id));
+  const products = best ? (await best).filter((product) => !shown.has(product.id)).slice(0, 8) : newest;
   return <ProductShelf market={market} collection={collections[best ? 1 : 0]} products={products} linkVariant rail />;
 }
 
 const retailStories = [
-  { slug: 'phone-cases', title: 'A case for every day', copy: 'Find a finish and fit for the phone you reach for most.' },
-  { slug: 'screen-and-camera-protectors', title: 'Keep the details sharp', copy: 'Explore screen and camera protection by device.' },
+  { slug: 'phone-cases', image: '/editorial/device-edit-phone-cases.webp', title: 'A case for every day', copy: 'Find a finish and fit for the phone you reach for most.' },
+  { slug: 'screen-and-camera-protectors', image: '/editorial/device-edit-camera-protection.webp', title: 'Keep the details sharp', copy: 'Explore screen and camera protection by device.' },
 ];
 
 function RetailStories({ market, categories }: { market: Market; categories: Category[] }) {
   const stories = retailStories.flatMap((story) => {
     const category = categories.find((entry) => entry.slug === story.slug);
-    return category?.image ? [{ ...story, category }] : [];
+    return category ? [{ ...story, category }] : [];
   });
   if (!stories.length) return null;
   return <section className="retail-stories" aria-labelledby="retail-stories-title">
@@ -158,9 +148,9 @@ function RetailStories({ market, categories }: { market: Market; categories: Cat
       <div><p className="eyebrow">THE EVERYDAY EDIT</p><h2 id="retail-stories-title">Made for your device</h2></div>
     </div>
     <div className="retail-story-grid">
-      {stories.map(({ category, title, copy }) => <article className="retail-story" key={category.id}>
+      {stories.map(({ category, image, title, copy }) => <article className="retail-story" key={category.id}>
         <Link className="retail-story-image" href={categoryHref(market, category.path)} tabIndex={-1} aria-hidden>
-          <CatalogImage src={category.image} alt="" fill sizes="(max-width: 600px) 100vw, 48vw" />
+          <Image src={image} alt="" fill sizes="(max-width: 540px) 92vw, (max-width: 1550px) 46vw, 700px" />
         </Link>
         <div className="retail-story-copy">
           <p className="eyebrow">{category.label}</p><h3>{title}</h3><p>{copy}</p>
@@ -173,7 +163,8 @@ function RetailStories({ market, categories }: { market: Market; categories: Cat
 
 function RetailHomepage({ market, categories }: { market: Market; categories: Category[] }) {
   const best = retailEdit(market, true).catch(() => []);
-  const selections = retailSelections(retailEdit(market).catch(() => []), best);
+  const arrivals = retailEdit(market).then(products => products.slice(0, 8)).catch(() => []);
+  const phoneCases = categories.find(({ slug }) => slug === 'phone-cases');
   return <>
     <section className="container retail-hero" aria-labelledby="hero-title">
       <div className="retail-hero-copy">
@@ -185,17 +176,15 @@ function RetailHomepage({ market, categories }: { market: Market; categories: Ca
           <Link className="text-link" href={marketHref(market, '/collections/new-arrivals')}>New arrivals <ArrowUpRight size={15} aria-hidden /></Link>
         </div>
       </div>
-      <Suspense fallback={<div className="retail-hero-mark" aria-hidden>GB<span>.</span></div>}>
-        <RetailHeroFeature market={market} selections={selections} />
-      </Suspense>
+      <RetailHeroFeature market={market} category={phoneCases} />
     </section>
     <div className="home container retail-home">
       <Departments market={market} categories={categories} />
       <Suspense fallback={<div className="skeleton-shelf" aria-hidden>{[1, 2, 3, 4].map(i => <span className="skeleton-tile" key={i} />)}</div>}>
-        <RetailShelf market={market} selections={selections} />
+        <RetailShelf market={market} arrivals={arrivals} />
       </Suspense>
       <RetailStories market={market} categories={categories} />
-      <Suspense fallback={null}><RetailShelf market={market} selections={selections} best={best} /></Suspense>
+      <Suspense fallback={null}><RetailShelf market={market} arrivals={arrivals} best={best} /></Suspense>
       <section className="retail-discovery" aria-labelledby="ways-to-shop">
         <div className="market-section-heading"><div><p className="eyebrow">THE MARKETPLACE</p><h2 id="ways-to-shop">More ways to shop</h2></div></div>
         <ShopShortcuts market={market} />
