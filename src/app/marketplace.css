@@ -265,11 +265,12 @@ body:has(.quick-dialog[open]) { overflow: hidden; }
 .shelf-rail-controls button:disabled { opacity: .45; }
 .skeleton-shelf { display: grid; gap: 16px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .skeleton-shelf .skeleton-tile { aspect-ratio: 1.04; border-radius: 0; }
-.product-image-secondary { position: absolute; inset: 0; opacity: 0; transition: opacity 220ms ease; }
+.product-image-secondary { display: none; position: absolute; inset: 0; }
 .product-image-secondary:not(:has(img)) { visibility: hidden; }
 @media (hover: hover) and (pointer: fine) {
-  .product-card:has(.product-title-link:hover) .product-image-secondary { opacity: 1; }
+  .product-card:has(.product-title-link:hover) .product-image-secondary { display: block; animation: secondary-image-enter 220ms ease; }
 }
+@keyframes secondary-image-enter { from { opacity: 0; } to { opacity: 1; } }
 .clear-search-history { margin: 6px 10px; }
 .mega-menu, .search-suggestions, .quick-dialog[open], .gallery-main img { animation: enter 200ms ease both; }
 .drawer[open] { animation: drawer-enter 230ms ease-out both; }
@@ -299,7 +300,7 @@ body:has(.quick-dialog[open]) { overflow: hidden; }
 
 /* Shared shopping surfaces */
 .storefront-route { animation: route-enter 190ms ease-out; }
-@keyframes route-enter { from { opacity: .65; } to { opacity: 1; } }
+@keyframes route-enter { from { translate: 0 4px; } to { translate: 0; } }
 .desktop-nav button svg, .browse-category summary svg { transition: transform var(--transition); flex-shrink: 0; }
 .browse-category summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 45px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: .93rem; font-weight: 590; list-style: none; }
 .browse-category summary::-webkit-details-marker { display: none; }

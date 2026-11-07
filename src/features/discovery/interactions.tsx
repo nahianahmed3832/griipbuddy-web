@@ -5,6 +5,8 @@ import { useEffect, useId, useState } from 'react';
 import { updateBrowserList, useBrowserList } from '@/features/catalog/browser-lists';
 import { formatMoney, type Market } from '@/features/catalog/catalog';
 import { useBagCommands } from '@/features/cart/store';
+
+const offerEndDate = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'UTC' });
 import type { Campaign, CouponOffer, GroupCampaign } from './contracts';
 
 export function CampaignClock({ campaign }: { campaign: Campaign }) {
@@ -112,7 +114,7 @@ export function CouponWallet({ offers, market }: { offers: CouponOffer[]; market
             {offer.minSpend !== undefined && <li>Minimum spend {formatMoney(offer.minSpend, market)}</li>}
             {offer.maxDiscount !== undefined && <li>Maximum discount {formatMoney(offer.maxDiscount, market)}</li>}
             {offer.restrictedItems && <li>Selected items only</li>}
-            {offer.endsAt && <li>Ends <time dateTime={offer.endsAt}>{new Intl.DateTimeFormat(market.locale, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(offer.endsAt))} UTC</time></li>}
+            {offer.endsAt && <li>Ends <time dateTime={offer.endsAt}>{offerEndDate.format(new Date(offer.endsAt))} UTC</time></li>}
             {!offer.fixture && <li>Subject to eligibility at checkout</li>}
           </ul>
           <div className="coupon-ticket-actions">
