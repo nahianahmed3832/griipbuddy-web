@@ -97,6 +97,13 @@ export function formatMoney(amount: number, market: Market) {
   }).format(amount);
 }
 
+const soldNumber = new Intl.NumberFormat('en-US');
+
+export function formatUnitsSold(sold?: number) {
+  if (sold === undefined || !Number.isSafeInteger(sold) || sold < 0) return undefined;
+  return soldNumber.format(sold) + (sold === 1 ? ' unit sold' : ' units sold');
+}
+
 export function currentPrice(price: Money) {
   return price.sale ?? price.regular;
 }

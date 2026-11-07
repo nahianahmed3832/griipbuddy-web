@@ -9,6 +9,7 @@ import { fixtureCategories, fixtureMarkets, fixtureProducts, fixtureStock } from
 
 const pageSize = 100;
 const maxProducts = 1500;
+const salesPageSize = 250;
 const references = { reference: true };
 
 export const catalogNavigation = cache(async () => {
@@ -41,8 +42,11 @@ const catalogReferences = cache(async () => {
   };
 });
 
-async function productPage(region: Market['region'], page: number, popularity: boolean, root?: string, query?: string) {
-  const params = new URLSearchParams({ region, page: String(page), limit: String(pageSize) });
+async function productPage(region: Market['region'], page: number, popularity: boolean, options: {
+  root?: string; query?: string; limit?: number;
+} = {}) {
+  const { root, query, limit = pageSize } = options;
+  const params = new URLSearchParams({ region, page: String(page), limit: String(limit) });
   if (root && !popularity) params.set('category', root);
   // The recovered API interprets q as a regular expression. Send a literal.
   if (query && !popularity) params.set('q', query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
@@ -55,18 +59,46 @@ async function productPage(region: Market['region'], page: number, popularity: b
 }
 
 const initialPage = cache((region: Market['region'], popularity: boolean, root?: string) =>
-  productPage(region, 1, popularity, root));
+  productPage(region, 1, popularity, { root }));
 
-async function normalizeProducts(products: unknown[], market: Market) {
+const retailSalesByProduct = cache(async (region: Market['region']) => {
+  // Retail detail and browse responses carry a legacy stored count. The sales
+  // endpoint computes units from orders and identifies each product by ID.
+  const fetchSales = (page: number) => productPage(region, page, true, { limit: salesPageSize }).catch(() => undefined);
+  const first = await fetchSales(1);
+  const counts = new Map<string, number>();
+  if (!first) return counts;
+
+  const pages = Math.ceil(Math.min(first.total, maxProducts) / salesPageSize);
+  const rest = await mapLimited(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), 3, fetchSales);
+  for (const batch of [first, ...rest]) {
+    for (const row of batch?.products ?? []) {
+      const { _id, total_sold } = record(row);
+      if (typeof _id === 'string' && typeof total_sold === 'number' && Number.isSafeInteger(total_sold) && total_sold >= 0) {
+        counts.set(_id, total_sold);
+      }
+    }
+  }
+  return counts;
+});
+
+export async function withRetailSales(market: Market, products: CatalogProduct[]) {
+  if (!hostedCatalogPreview() || !products.length) return products;
+  const counts = await retailSalesByProduct(market.region);
+  return products.map(product => ({ ...product, sold: counts.get(product.id) }));
+}
+
+async function normalizeProducts(products: unknown[], market: Market, popularity: boolean) {
   const { taxonomy, brands } = await catalogReferences();
   const normalized = products.flatMap((row) => apiProduct(row, record(row).variants, market, taxonomy, brands) ?? []);
-  return [...new Map(normalized.filter(hasPrice).map((product) => [product.id, product])).values()];
+  const eligible = [...new Map(normalized.filter(hasPrice).map((product) => [product.id, product])).values()];
+  return popularity ? eligible : withRetailSales(market, eligible);
 }
 
 export async function catalogSample(market: Market, popularity = false, root?: string) {
   if (!market.id || !apiConfigured()) return catalogProducts(market, popularity, root);
   const list = await initialPage(market.region, popularity, popularity ? undefined : root);
-  return normalizeProducts(list.products, market);
+  return normalizeProducts(list.products, market, popularity);
 }
 
 export const catalogBrowse = cache(async (market: Market, popularity = false, root?: string, requestedBatch = 1, query?: string) => {
@@ -76,16 +108,16 @@ export const catalogBrowse = cache(async (market: Market, popularity = false, ro
   const category = popularity ? undefined : root;
   const first = await initialPage(market.region, popularity, category);
   if (first.total > maxProducts) {
-    const firstMatch = query && !popularity ? await productPage(market.region, 1, false, category, query) : first;
+    const firstMatch = query && !popularity ? await productPage(market.region, 1, false, { root: category, query }) : first;
     const batches = Math.max(1, Math.ceil(firstMatch.total / pageSize));
     const batch = Math.min(requestedBatch, batches);
-    const window = batch === 1 ? firstMatch : await productPage(market.region, batch, popularity, category, query);
-    return { products: await normalizeProducts(window.products, market), batch, batches };
+    const window = batch === 1 ? firstMatch : await productPage(market.region, batch, popularity, { root: category, query });
+    return { products: await normalizeProducts(window.products, market, popularity), batch, batches };
   }
 
   const pages = Array.from({ length: Math.max(0, Math.ceil(first.total / pageSize) - 1) }, (_, i) => i + 2);
-  const rest = await mapLimited(pages, 3, (page) => productPage(market.region, page, popularity, category));
-  return { products: await normalizeProducts(first.products.concat(...rest.map((page) => page.products)), market) };
+  const rest = await mapLimited(pages, 3, (page) => productPage(market.region, page, popularity, { root: category }));
+  return { products: await normalizeProducts(first.products.concat(...rest.map((page) => page.products)), market, popularity) };
 });
 
 export const catalogProducts = cache(async (market: Market, popularity = false, root?: string) =>

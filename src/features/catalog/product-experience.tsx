@@ -1,10 +1,9 @@
 'use client';
 
-import { ChevronLeft, ChevronRight, ImageIcon, Minus, Plus, X, ZoomIn } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ImageIcon, Minus, PackageCheck, Plus, X, ZoomIn } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { currentPrice, formatMoney, productBadges, type CatalogProduct, type CatalogVariant, type Market } from './catalog';
+import { currentPrice, formatMoney, formatUnitsSold, productBadges, productHref, type CatalogProduct, type CatalogVariant, type Market } from './catalog';
 import { WishlistButton } from './wishlist';
-import { productHref } from './catalog';
 import { ShareLink } from '@/features/discovery/interactions';
 import { DeliveryDetails } from './delivery-details';
 import { CatalogImage } from './catalog-image';
@@ -37,37 +36,39 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
 
   return (
     <div className="product-gallery">
-      <button className="gallery-main" type="button" aria-label={'Zoom image ' + (active + 1)}
-        onTouchStart={event => {
-          const { clientX: x, clientY: y } = event.touches[0];
-          swipeStart.current = event.touches.length === 1 ? { x, y } : null;
-          ignoreTap.current = false;
-        }}
-        onTouchCancel={() => { swipeStart.current = null; }}
-        onTouchEnd={event => {
-          if (images.length < 2 || swipeStart.current === null) return;
-          const delta = event.changedTouches[0].clientX - swipeStart.current.x;
-          const vertical = event.changedTouches[0].clientY - swipeStart.current.y;
-          if (Math.abs(delta) > 45 && Math.abs(delta) > Math.abs(vertical)) { ignoreTap.current = true; step(delta < 0 ? 1 : -1); }
-          swipeStart.current = null;
-        }}
-        onClick={event => {
-          if (ignoreTap.current && event.detail) { ignoreTap.current = false; return; }
-          setOpen(true); setZoomed(false); dialog.current?.showModal();
-        }}>
-        <CatalogImage key={image} src={image} fill priority={active === 0} alt={product + ' — image ' + (active + 1)}
-          sizes="(max-width: 760px) 92vw, 46vw" />
-        <span className="gallery-zoom"><ZoomIn size={19} aria-hidden /></span>
-      </button>
-      {images.length > 1 && <div className="gallery-controls">
-        <button type="button" className="icon-button" aria-label="Previous image" onClick={() => step(-1)}><ChevronLeft aria-hidden /></button>
-        <span aria-live="polite">{active + 1} / {images.length}</span>
-        <button type="button" className="icon-button" aria-label="Next image" onClick={() => step(1)}><ChevronRight aria-hidden /></button>
-      </div>}
+      <div className="gallery-stage">
+        <button className="gallery-main" type="button" aria-label={'Zoom image ' + (active + 1)}
+          onTouchStart={event => {
+            const { clientX: x, clientY: y } = event.touches[0];
+            swipeStart.current = event.touches.length === 1 ? { x, y } : null;
+            ignoreTap.current = false;
+          }}
+          onTouchCancel={() => { swipeStart.current = null; }}
+          onTouchEnd={event => {
+            if (images.length < 2 || swipeStart.current === null) return;
+            const delta = event.changedTouches[0].clientX - swipeStart.current.x;
+            const vertical = event.changedTouches[0].clientY - swipeStart.current.y;
+            if (Math.abs(delta) > 45 && Math.abs(delta) > Math.abs(vertical)) { ignoreTap.current = true; step(delta < 0 ? 1 : -1); }
+            swipeStart.current = null;
+          }}
+          onClick={event => {
+            if (ignoreTap.current && event.detail) { ignoreTap.current = false; return; }
+            setOpen(true); setZoomed(false); dialog.current?.showModal();
+          }}>
+          <CatalogImage key={image} src={image} fill priority={active === 0} alt={product + ' — image ' + (active + 1)}
+            sizes="(max-width: 760px) 92vw, 46vw" />
+          <span className="gallery-zoom"><ZoomIn size={19} aria-hidden /></span>
+        </button>
+        {images.length > 1 && <div className="gallery-controls">
+          <button type="button" className="icon-button" aria-label="Previous image" onClick={() => step(-1)}><ChevronLeft aria-hidden /></button>
+          <span aria-live="polite">{active + 1} / {images.length}</span>
+          <button type="button" className="icon-button" aria-label="Next image" onClick={() => step(1)}><ChevronRight aria-hidden /></button>
+        </div>}
+      </div>
       {images.length > 1 && <div className="gallery-thumbs" aria-label="Product images">
         {images.map((src, index) => <button key={src} type="button" onClick={() => setActive(index)}
           aria-label={'Show image ' + (index + 1)} aria-pressed={active === index}>
-          <CatalogImage src={src} fill alt="" sizes="76px" />
+          <CatalogImage src={src} fill alt="" sizes="64px" />
         </button>)}
       </div>}
       <dialog ref={dialog} className="zoom-dialog" aria-label="Product image zoom" onKeyDown={(event) => {
@@ -144,6 +145,7 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
   const [reply, setReply] = useState<{ id: string; stock: number | null }>();
   const selected = product.variants.find((variant) => variant.id === selectedId);
   const price = selected?.price;
+  const sold = formatUnitsSold(product.sold);
   const knownStock = reply?.id === selectedId ? reply?.stock : selectedId === initialId ? initialStock : undefined;
   const availability = !price ? 'Unavailable in this market'
     : knownStock === undefined ? 'Checking availability…'
@@ -186,18 +188,25 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
     <div className="detail-grid">
       <Gallery key={selectedId ?? product.id} images={images} product={product.name} />
       <div className="detail-copy">
-        {product.brand && <p className="eyebrow">{product.brand.name}</p>}
-        <h1>{product.name}</h1>
-        {reviewTotal > 0 && <button type="button" className="text-link review-jump" onClick={showReviews}>{reviewTotal} {reviewTotal === 1 ? 'customer review' : 'customer reviews'}</button>}
-        {badges.length > 0 && <ul className="detail-badges" aria-label="Product badges">
-          {badges.map((badge) => <li data-badge={badge} key={badge}>{badge}</li>)}
-        </ul>}
-        <div className="detail-market" aria-live="polite">
-          {price && <p className="detail-price">{formatMoney(currentPrice(price), market)}
-            {price.sale !== undefined && <del>{formatMoney(price.regular, market)}</del>}
-          </p>}
-          <p className="detail-stock" data-stock={knownStock === 0 ? 'out' : knownStock && price ? 'in' : 'unknown'}>{availability}</p>
-          {(selected?.sku || product.sku) && <p className="detail-sku">SKU <span>{selected?.sku || product.sku}</span></p>}
+        <div className="detail-summary">
+          {product.brand && <p className="eyebrow">{product.brand.name}</p>}
+          <h1>{product.name}</h1>
+          <div className="detail-market" aria-live="polite">
+            <div className="detail-price-line">
+              {price && <p className="detail-price">{formatMoney(currentPrice(price), market)}
+                {price.sale !== undefined && <del>{formatMoney(price.regular, market)}</del>}
+              </p>}
+              {badges.length > 0 && <ul className="detail-badges" aria-label="Product badges">
+                {badges.map((badge) => <li data-badge={badge} key={badge}>{badge}</li>)}
+              </ul>}
+            </div>
+            <p className="detail-stock" data-stock={knownStock === 0 ? 'out' : knownStock && price ? 'in' : 'unknown'}>{availability}</p>
+          </div>
+          <div className="detail-facts">
+            {sold && <p className="detail-sold"><PackageCheck size={16} aria-hidden />{sold}</p>}
+            {reviewTotal > 0 && <button type="button" className="text-link review-jump" onClick={showReviews}>{reviewTotal} {reviewTotal === 1 ? 'customer review' : 'customer reviews'}</button>}
+            {(selected?.sku || product.sku) && <p className="detail-sku">SKU <span>{selected?.sku || product.sku}</span></p>}
+          </div>
         </div>
         <FamilySelector family={extras.family} slug={product.slug} market={market} />
         {dimensions.length > 0 && <div className="variant-groups">
@@ -226,12 +235,14 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
         {!dimensions.some(([key]) => key === 'size') && extras.guide && <SizeChart guide={extras.guide} product={product.name} />}
         {extras.guide?.note && <p className="detail-fit-note"><strong>Fit note</strong> {extras.guide.note}</p>}
         <AddToBag key={selectedId ?? product.id} product={product} variant={selected} stock={knownStock} showQuantity />
-        {price && <WishlistButton slug={product.slug} name={product.name} className="button button-outline detail-wish" showLabel />}
-        <div className="product-utility"><WatchButton slug={product.slug} market={market} />
-          <ShareLink path={productHref(market, product.slug)} label="Share product" /></div>
+        <div className="product-utility" aria-label="Product actions" role="group">
+          {price && <WishlistButton slug={product.slug} name={product.name} className="button button-outline detail-wish" showLabel />}
+          <WatchButton slug={product.slug} market={market} />
+          <ShareLink path={productHref(market, product.slug)} label="Share product" />
+        </div>
         <ProductAddons addons={extras.addons} market={market} />
         <div className="product-information">
-          {product.description && <details className="detail-accordion" open><summary>Description</summary>
+          {product.description && <details className="detail-accordion" open><summary>Product details</summary>
             <p className="detail-description">{product.description}</p></details>}
           {product.videos && product.videos.length > 0 && <ProductVideos videos={product.videos} />}
           <ProductReviews product={product} market={market} initial={reviews} enabled={reviewsEnabled} writable={reviewsWritable} />

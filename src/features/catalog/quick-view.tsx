@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { ArrowRight, Eye, X } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
-import { currentPrice, formatMoney, productHref, type Market } from './catalog';
+import { currentPrice, formatMoney, formatUnitsSold, productHref, type Market } from './catalog';
 import { lowestPricedVariant } from './browse';
 import { CatalogImage } from './catalog-image';
 import { useCatalogItems } from './use-catalog-items';
@@ -19,6 +19,7 @@ export function QuickView({ name, slug, market }: { name: string; slug: string; 
   const variant = variants.find((item) => item.id === selected) ?? lowestPricedVariant(variants);
   const src = variant?.images[0] ?? product?.images[0];
   const href = productHref(market, slug);
+  const sold = formatUnitsSold(product?.sold);
 
   return <>
     <button className="product-card-action" type="button" aria-label={'Quick view ' + name} onClick={() => {
@@ -40,6 +41,7 @@ export function QuickView({ name, slug, market }: { name: string; slug: string; 
           </select></label>}
           {variant?.price && <p className="detail-price">{formatMoney(currentPrice(variant.price), market)}
             {variant.price.sale !== undefined && <del>{formatMoney(variant.price.regular, market)}</del>}</p>}
+          {sold && <p className="product-sold">{sold}</p>}
           <Link className="button button-primary" href={href + (variant ? '?variant=' + encodeURIComponent(variant.id) : '')}
             onClick={() => dialog.current?.close()}>View product <ArrowRight size={17} aria-hidden /></Link>
         </div>

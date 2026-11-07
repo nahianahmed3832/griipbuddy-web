@@ -1,6 +1,6 @@
 import { compareProducts, inCategory, lowestPricedVariant, relevance } from '@/features/catalog/browse';
 import { categoryHref, flattenCategories, marketForSegment, productHref, validSlug, type Suggestion } from '@/features/catalog/catalog';
-import { catalogNavigation, catalogProduct, catalogBrowse, mapLimited, variantStock } from '@/features/catalog/data';
+import { catalogNavigation, catalogProduct, catalogBrowse, mapLimited, variantStock, withRetailSales } from '@/features/catalog/data';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +29,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ acti
       const slugs = [...new Set(query.getAll('slug').filter(validSlug))].slice(0, 30);
       if (!slugs.length) return json({ products: [] });
       const products = await mapLimited(slugs, 6, (slug) => catalogProduct(market, slug));
-      return json({ products: products.flatMap((product) => product?.variants.some((variant) => variant.price) ? [product] : []) });
+      const eligible = products.flatMap((product) => product?.variants.some((variant) => variant.price) ? [product] : []);
+      return json({ products: await withRetailSales(market, eligible) });
     }
 
     const text = (query.get('q') ?? '').trim().slice(0, 100);

@@ -2,7 +2,7 @@ import { publicBuild } from '@/features/public-build';
 import { Suspense } from 'react';
 import { categoryAt, type CatalogProduct, type Category, type Market } from './catalog';
 import { compareProducts, inCategory } from './browse';
-import { catalogSample, variantStock, withAvailability } from './data';
+import { catalogSample, variantStock, withAvailability, withRetailSales } from './data';
 import { Breadcrumbs, CatalogGrid } from './listing';
 import { ProductExperience } from './product-experience';
 import { merchandising, storefrontExtrasEnabled } from './merchandising';
@@ -14,17 +14,18 @@ export async function ProductPage({ product, market, categories, requestedVarian
 }) {
   const initial = product.variants.find((variant) => variant.id === requestedVariant)
     ?? product.variants.find((variant) => variant.price) ?? product.variants[0];
-  const [stock, extras, reviews] = await Promise.all([
+  const [stock, extras, reviews, [productWithSales]] = await Promise.all([
     initial ? variantStock(product, initial) : null,
     merchandising(product, market),
     storefrontExtrasEnabled() ? publicReviews(product.id).catch(() => null) : null,
+    withRetailSales(market, [product]),
   ]);
   const category = categoryAt(categories, product.category);
   return (
     <div className="container catalog-page product-page">
       <Breadcrumbs market={market} categories={categories} path={category?.path ?? []} current={product.name} />
       <ProductExperience key={market.code + ':' + product.id + ':' + (initial?.id ?? '')}
-        product={product} market={market} initialId={initial?.id} initialStock={stock} extras={extras} reviews={reviews} reviewsEnabled={storefrontExtrasEnabled()} reviewsWritable={!publicBuild()} />
+        product={productWithSales} market={market} initialId={initial?.id} initialStock={stock} extras={extras} reviews={reviews} reviewsEnabled={storefrontExtrasEnabled()} reviewsWritable={!publicBuild()} />
       <Suspense fallback={<p className="product-shelf catalog-notice" role="status">Finding related products…</p>}>
         <Recommendations product={product} market={market} />
       </Suspense>

@@ -16,6 +16,7 @@ test('catalog filters and sorts matching variants by the selected market price',
   await expect(results.getByRole('heading', { level: 3 })).toHaveCount(1);
   const card = results.getByRole('article');
   await expect(card.getByText('£33')).toBeVisible();
+  await expect(card.getByText('38 units sold', { exact: true })).toBeVisible();
   await expect(card.getByText('Out of Stock', { exact: true })).toBeVisible();
   await expect(card.getByRole('link')).toHaveCount(1);
   await results.getByRole('link', { name: 'Remove filter: Color: Cobalt' }).click();
@@ -56,6 +57,7 @@ test('mobile gallery and variant selection update image, price, SKU and stock', 
   const detail = page.locator('.detail-grid');
   await expect(detail.getByText('$34', { exact: true })).toBeVisible();
   await expect(detail.getByText('In stock · 8 available')).toBeVisible();
+  await expect(detail.getByText('38 units sold', { exact: true })).toBeVisible();
   await expect(detail.getByText('DEMO-FORM-CASE-STD')).toBeVisible();
   await detail.getByRole('button', { name: 'Show image 2' }).click();
   const zoomTrigger = detail.getByRole('button', { name: 'Zoom image 2' });
@@ -73,6 +75,7 @@ test('mobile gallery and variant selection update image, price, SKU and stock', 
   await expect(detail.getByText('$39', { exact: true })).toBeVisible();
   await expect(detail.getByText('DEMO-FORM-CASE-PLUS')).toBeVisible();
   await expect(detail.locator('.detail-stock')).toHaveText('Out of stock');
+  await expect(detail.getByText('38 units sold', { exact: true })).toBeVisible();
   await expect(detail.getByRole('img', { name: 'The Form Case — image 1' })).toHaveAttribute('src', /technology.webp/);
   await expect(page).toHaveURL(/variant=form-case-plus$/);
   await page.reload();
@@ -103,4 +106,6 @@ test('scoped autocomplete supports keyboard selection and recent items stay mark
   await expect(page.locator('.detail-price')).toHaveText('£72');
   await expect(recent).toHaveCount(0);
   await expect(page.locator('.detail-badges').getByText('Sale', { exact: true })).toHaveCount(0);
+  await page.goto('/gb/product/dune-lamp');
+  await expect(page.locator('.detail-sold')).toHaveText('0 units sold');
 });

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { CatalogImage } from './catalog-image';
 import { lowestPricedVariant } from './browse';
-import { attribute, currentPrice, formatMoney, productBadges, productHref, type CatalogProduct, type Market } from './catalog';
+import { attribute, currentPrice, formatMoney, formatUnitsSold, productBadges, productHref, type CatalogProduct, type Market } from './catalog';
 import { WishlistButton } from './wishlist';
 import { QuickView } from './quick-view';
 import { CompareButton } from './compare';
@@ -11,6 +11,7 @@ export function ProductCard({ product, market, priority = false, linkVariant = f
 }) {
   const variant = lowestPricedVariant(product.variants);
   const price = variant?.price;
+  const sold = formatUnitsSold(product.sold);
   const colors = [...new Map(product.variants.flatMap((entry) => {
     const color = (attribute(entry, 'color') ?? attribute(entry, 'colour'))?.trim();
     return color ? [[color.toLowerCase(), color] as const] : [];
@@ -36,7 +37,6 @@ export function ProductCard({ product, market, priority = false, linkVariant = f
         {product.brand && <p className="product-brand">{product.brand.name}</p>}
         <h3><Link className="product-title-link" href={href} prefetch={false}>{product.name}</Link></h3>
         {colors.length > 0 && <p className="product-color">{colors.length === 1 ? colors[0] : colors.length + ' colors'}</p>}
-        {Boolean(product.sold && product.sold > 0) && <small className="product-sold">{new Intl.NumberFormat(market.locale).format(product.sold!)} sold</small>}
         <div className="product-card-bottom">
           {price ? <p className="product-price">
             {hasRange && <span className="price-from">From</span>}{formatMoney(currentPrice(price), market)}
@@ -44,6 +44,7 @@ export function ProductCard({ product, market, priority = false, linkVariant = f
           </p> : <p className="product-color">Price unavailable</p>}
           <QuickView name={product.name} slug={product.slug} market={market} />
         </div>
+        {sold && <small className="product-sold">{sold}</small>}
         <CompareButton market={market} slug={product.slug} name={product.name} />
       </div>
     </article>
