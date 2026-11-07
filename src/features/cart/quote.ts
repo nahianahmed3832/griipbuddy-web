@@ -1,6 +1,6 @@
 import 'server-only';
 import { apiConfigured } from '@/features/catalog/api';
-import { fixturesEnabled } from '@/features/public-build';
+import { fixturesEnabled, hostedCatalogPreview } from '@/features/public-build';
 import { currentPrice, type Market } from '@/features/catalog/catalog';
 import { catalogProduct, mapLimited, variantStock } from '@/features/catalog/data';
 import { currencyScale, type CartLine, type CartQuote, type QuotedLine } from './cart';
@@ -51,7 +51,10 @@ export async function quoteCart(market: Market, lines: CartLine[], code?: string
   const net = ready.reduce((sum, line) => sum + (line.lineTotal ?? 0), 0);
   const allReady = ready.length > 0 && ready.length === lines.length;
   const { discount, coupon } = quoteCoupon(code, market, allReady, net);
-  const policy = integratedCheckout() ? await integratedPolicy(market.code) : null;
+  const policy = integratedCheckout() ? await integratedPolicy(market.code).catch((error: unknown) => {
+    if (hostedCatalogPreview()) return null;
+    throw error;
+  }) : null;
   const shipping: CartQuote['shipping'] = policy?.methods.length && policy.currency === market.currency && policy.shippingMinor !== undefined
     ? { status:'estimated', amount:policy.shippingMinor }
     : shippingEstimate(market);

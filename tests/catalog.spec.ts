@@ -42,8 +42,16 @@ test('mobile gallery and variant selection update image, price, SKU and stock', 
   await page.goto('/us/category/technology');
   const filter = page.locator('.catalog-filter-panel');
   await expect(filter.getByRole('button', { name: 'Apply filters' })).toBeHidden();
-  await filter.getByText('Filters', { exact: true }).click();
-  await expect(filter.getByRole('button', { name: 'Apply filters' })).toBeVisible();
+  const filterTrigger = filter.getByRole('button', { name: 'Filters', exact: true });
+  await filterTrigger.click();
+  const filterDrawer = page.getByRole('dialog', { name: 'Filters' });
+  await expect(filterDrawer.getByRole('button', { name: 'Apply filters' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(filterTrigger).toBeFocused();
+  await filterTrigger.click();
+  await filterDrawer.getByRole('combobox', { name: 'Material', exact: true }).selectOption('TPU');
+  await filterDrawer.getByRole('button', { name: 'Apply filters' }).click();
+  await expect(page.getByRole('link', { name: 'Remove filter: Material: TPU' })).toBeVisible();
   await page.goto('/us/product/form-case');
   const detail = page.locator('.detail-grid');
   await expect(detail.getByText('$34', { exact: true })).toBeVisible();

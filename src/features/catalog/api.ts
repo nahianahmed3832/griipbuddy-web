@@ -1,11 +1,12 @@
 import 'server-only';
+import { hostedCatalogPreview } from '@/features/public-build';
 import { validSlug, type CatalogProduct, type CatalogVariant, type Category, type Market, type Money } from './catalog';
 import { approvedCatalogImage } from './media';
 
 export class CatalogError extends Error {}
 
 export function apiConfigured() {
-  return Boolean(process.env.GRIIPBUDDY_CATALOG_API);
+  return hostedCatalogPreview() || Boolean(process.env.GRIIPBUDDY_CATALOG_API);
 }
 
 export function record(value: unknown): Record<string, unknown> {
@@ -24,8 +25,12 @@ export const objectId = (value: string) => /^[a-f0-9]{24}$/i.test(value);
 const ref = (value: unknown) => typeof value === 'string' ? value : string(record(value)._id);
 
 export async function catalogGet(path: string, params?: URLSearchParams, { missing = false, reference = false } = {}) {
-  const base = process.env.GRIIPBUDDY_CATALOG_API ?? '';
-  if (!/^http:\/\/127\.0\.0\.1:\d{4,5}\/api\/v1$/.test(base)) {
+  const hosted = hostedCatalogPreview();
+  const base = hosted ? 'https://api.griipbuddy.com/api/v1' : process.env.GRIIPBUDDY_CATALOG_API ?? '';
+  if (hosted) {
+    const publicRead = /^\/(?:country\/all|category\/published\/all|brand\/all|product(?:\/top-sale|\/slug\/(?:[\w.-]|%[0-9a-f]{2})+)?|coupon\/public\/active|sub-category\/by-category\/published\/[a-f0-9]{24}|stocks\/[a-f0-9]{24}\/[a-f0-9]{24})$/i;
+    if (!publicRead.test(path)) throw new CatalogError('This endpoint is unavailable in the public catalog.');
+  } else if (!/^http:\/\/127\.0\.0\.1:\d{4,5}\/api\/v1$/.test(base)) {
     throw new CatalogError('Set the catalog API to the isolated loopback recovery service.');
   }
   const query = params?.toString();
@@ -33,8 +38,8 @@ export async function catalogGet(path: string, params?: URLSearchParams, { missi
     method: 'GET',
     redirect: 'error',
     signal: AbortSignal.timeout(5000),
-    ...(reference && process.env.GRIIPBUDDY_CHECKOUT !== 'integrated' ? { next: { revalidate: 60 } } : { cache: 'no-store' }),
-  }).catch(() => { throw new CatalogError('The isolated catalog API did not respond.'); });
+    ...(reference && (hosted || process.env.GRIIPBUDDY_CHECKOUT !== 'integrated') ? { next: { revalidate: 60 } } : { cache: 'no-store' }),
+  }).catch(() => { throw new CatalogError('The catalog API did not respond.'); });
   if (response.status === 404 && missing) return null;
   if (!response.ok) throw new CatalogError('The catalog API returned an error.');
   const envelope = record(await response.json().catch(() => null));
@@ -133,6 +138,18 @@ function specs(row: Record<string, unknown>) {
   });
 }
 
+const descriptionEntities: Record<string, string> = { nbsp: ' ', amp: '&', quot: '"', apos: "'", '#39': "'", lt: '<', gt: '>' };
+
+function descriptionText(value: unknown) {
+  // The retail API stores rich descriptions. Render readable text in cards and
+  // metadata without allowing catalog markup to run in the storefront.
+  return string(value)
+    .replace(/<\/(?:p|div|li|h[1-6])\s*>|<br\s*\/?>/gi, '\n')
+    .replace(/<\/?[a-z][^>]*>/gi, '')
+    .replace(/&(nbsp|amp|quot|apos|#39|lt|gt);/g, (_, entity: string) => descriptionEntities[entity])
+    .trim();
+}
+
 export function apiProduct(
   value: unknown,
   variants: unknown,
@@ -146,10 +163,10 @@ export function apiProduct(
   const name = string(row.name);
   if (!objectId(id) || !validSlug(slug) || !name.trim() || !eligible(row, market)) return undefined;
   return {
-    id, slug, name, sku: string(row.sku),
+    id, slug, name: name.trim(), sku: string(row.sku),
     category: categoryPath(row, taxonomy),
     brand: brands.get(ref(row.brand)),
-    description: string(row.description),
+    description: descriptionText(row.description),
     deliveryEstimate: string(row.approximately_delivery_time).trim().slice(0, 160) || undefined,
     images: images([row.thumbnail, ...rows(row.slider_images)]),
     variants: rows(variants).flatMap((variant) => apiVariant(variant, id, market) ?? []),

@@ -1,4 +1,5 @@
 import 'server-only';
+import { hostedCatalogPreview } from '@/features/public-build';
 import { cache } from 'react';
 import { approvedCatalogImage } from '@/features/catalog/media';
 import { record, rows } from '@/features/catalog/api';
@@ -14,6 +15,7 @@ export function contentMedia(value: unknown) {
 }
 
 export const siteContent = cache(async () => {
+  if (hostedCatalogPreview()) return {};
   const base = process.env.GRIIPBUDDY_CONTENT_API;
   if (!base || !/^http:\/\/127\.0\.0\.1:\d{4,5}\/api\/v1$/.test(base)) return {};
   try {

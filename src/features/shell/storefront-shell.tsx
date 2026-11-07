@@ -1,54 +1,25 @@
 'use client';
 
-import { ArrowRight, ArrowUpRight, Check, ChevronDown, Compass, Globe, Heart, House, Menu, Search, ShoppingBag, UserRound, X, Zap } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Check, ChevronDown, Compass, Globe, Heart, House, Menu, Search, ShoppingBag, UserRound, Zap } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { categoryHref, collections, marketForSegment, marketHref, type Category, type Market } from '@/features/catalog/catalog';
 import { SearchBox } from '@/features/catalog/search-box';
+import { CatalogImage } from '@/features/catalog/catalog-image';
 import { CartActions } from '@/features/cart/actions';
 import { CartView } from '@/features/cart/cart-view';
 import { useCart } from '@/features/cart/store';
 import { discoveryLinks } from '@/features/discovery/contracts';
 import { Footer } from './footer';
+import { PanelDialog } from './panel-dialog';
 
 type Panel = 'search' | 'market' | 'browse' | 'bag';
 
-function PanelDialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    dialog.showModal();
-    dialog.querySelector<HTMLElement>('[data-first-focus]')?.focus();
-    return () => { if (dialog.open) dialog.close(); };
-  }, []);
+type ShellProps = { children: ReactNode; markets: Market[]; categories: Category[]; signedIn: boolean; accountsEnabled: boolean; announcement?: string; preview?: boolean };
 
-  return (
-    <dialog ref={ref} className="drawer" aria-labelledby="drawer-title"
-      onCancel={(event) => { event.preventDefault(); close(); }}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          close();
-        }
-      }}
-      onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <div className="drawer-inner">
-        <div className="drawer-heading">
-          <h2 id="drawer-title">{title}</h2>
-          <button type="button" className="icon-button" aria-label={'Close ' + title.toLowerCase()} onClick={close}><X aria-hidden /></button>
-        </div>
-        {children}
-      </div>
-    </dialog>
-  );
-}
-
-function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, announcement, children }: {
-  pathname: string; markets: Market[]; categories: Category[]; signedIn: boolean; accountsEnabled: boolean; announcement?: string; children: ReactNode;
-}) {
+function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, announcement, preview, children }: ShellProps & { pathname: string }) {
   const [segment, ...rest] = pathname.split('/').filter(Boolean);
   const explicitMarket = marketForSegment(markets, segment);
   const market = explicitMarket ?? markets.find((entry) => entry.code === 'INTL') ?? markets[0];
@@ -169,15 +140,14 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
 
                 </div>
                 {activeCategory.image && <div className="mega-image">
-                  <Image src={activeCategory.image} alt="" fill unoptimized={activeCategory.image.startsWith('https://')}
-                    referrerPolicy="no-referrer" sizes="320px" />
+                  <CatalogImage src={activeCategory.image} alt="" fill sizes="320px" />
                 </div>}
               </div>
             </nav>
           </>
         )}
       </header>
-      <main id="main-content" tabIndex={-1}>{children}</main>
+      <main id="main-content" className="storefront-route" tabIndex={-1}>{children}</main>
       <Footer market={market} categories={categories} onMarket={(trigger) => open('market', trigger)} />
       <nav className="mobile-nav" aria-label="Mobile navigation">
         <Link href={marketHref(market)} aria-current={localPath === '/' ? 'page' : undefined}><House aria-hidden /><span>Home</span></Link>
@@ -190,7 +160,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
         </Link>
       </nav>
       {panel === 'bag' && <PanelDialog title="Shopping bag" close={close}>
-        <CartView market={market} view="drawer" onNavigate={close} />
+        <CartView market={market} view="drawer" onNavigate={close} preview={preview} />
       </PanelDialog>}
       {panel === 'search' && <PanelDialog title="Search" close={close}><SearchBox market={market} style="drawer" onChoose={close} /></PanelDialog>}
       {panel === 'market' && (
@@ -211,6 +181,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
         <PanelDialog title="Browse" close={close}>
           <div className="drawer-links">
             <p className="eyebrow">SHOP BY CATEGORY</p>
+            <Link href={marketHref(market, '/products')} onClick={close}>Shop all<ArrowUpRight size={17} aria-hidden /></Link>
             {categories.map((category) => (
               <Link key={category.id} href={categoryHref(market, category.path)} onClick={close}>{category.label}<ArrowUpRight size={17} aria-hidden /></Link>
             ))}
@@ -229,7 +200,7 @@ function Chrome({ pathname, markets, categories, signedIn, accountsEnabled, anno
   );
 }
 
-export function StorefrontShell({ children, markets, categories, signedIn, accountsEnabled, announcement }: { children: ReactNode; markets: Market[]; categories: Category[]; signedIn: boolean; accountsEnabled: boolean; announcement?: string }) {
+export function StorefrontShell(props: ShellProps) {
   const pathname = usePathname();
-  return <Chrome key={pathname} pathname={pathname} markets={markets} categories={categories} signedIn={signedIn} accountsEnabled={accountsEnabled} announcement={announcement}>{children}</Chrome>;
+  return <Chrome key={pathname} pathname={pathname} {...props} />;
 }

@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  images: {
+    remotePatterns: [{ protocol: 'https', hostname: 'd11ml80zmgyrxk.cloudfront.net', pathname: '/uploads/*', search: '' }],
+  },
   serverExternalPackages: ['better-sqlite3', 'sharp'],
   async headers() {
     return [{ source: '/:path*', headers: [

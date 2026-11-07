@@ -1,4 +1,5 @@
 import 'server-only';
+import { hostedCatalogPreview } from '@/features/public-build';
 import { approvedCatalogImage } from './media';
 import { catalogGet } from './api';
 import { catalogProduct, mapLimited, variantStock } from './data';
@@ -11,7 +12,7 @@ type Settings = { label?: string; family: { slug: string; label?: string }[]; st
 const empty: Settings = { family: [], addons: [], guide: null };
 
 export function storefrontExtrasEnabled() {
-  return process.env.GRIIPBUDDY_CHECKOUT === 'integrated' && Boolean(process.env.GRIIPBUDDY_CATALOG_API);
+  return !hostedCatalogPreview() && process.env.GRIIPBUDDY_CHECKOUT === 'integrated' && Boolean(process.env.GRIIPBUDDY_CATALOG_API);
 }
 
 export async function merchandising(product: CatalogProduct, market: Market) {

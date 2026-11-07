@@ -1,10 +1,10 @@
 import 'server-only';
-import { apiConfigured } from '@/features/catalog/api';
 import { CheckoutError, methodDetails, methodIds, type CheckoutOrder, type MethodOption } from './contracts';
 import { currentAccount } from '@/features/account/session';
 
 export function integratedCheckout() {
-  return process.env.GRIIPBUDDY_CHECKOUT === 'integrated' && apiConfigured();
+  return process.env.GRIIPBUDDY_CHECKOUT === 'integrated'
+    && /^http:\/\/127\.0\.0\.1:\d{4,5}\/api\/v1$/.test(process.env.GRIIPBUDDY_CATALOG_API ?? '');
 }
 
 export async function commerceRequest<T>(path: string, { token, data }: { token?: string; data?: unknown } = {}) {

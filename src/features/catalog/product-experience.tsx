@@ -1,13 +1,13 @@
 'use client';
 
 import { ChevronLeft, ChevronRight, ImageIcon, Minus, Plus, X, ZoomIn } from 'lucide-react';
-import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
 import { currentPrice, formatMoney, productBadges, type CatalogProduct, type CatalogVariant, type Market } from './catalog';
 import { WishlistButton } from './wishlist';
 import { productHref } from './catalog';
 import { ShareLink } from '@/features/discovery/interactions';
 import { DeliveryDetails } from './delivery-details';
+import { CatalogImage } from './catalog-image';
 import { WatchButton } from './product-watch';
 import { SaveToCollection } from './collections-local';
 import { AddToBag } from '@/features/cart/actions';
@@ -51,7 +51,7 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
           if (ignoreTap.current && event.detail) { ignoreTap.current = false; return; }
           setOpen(true); setZoomed(false); dialog.current?.showModal();
         }}>
-        <Image src={image} fill priority={active === 0} unoptimized={image.startsWith('https://')} referrerPolicy="no-referrer" alt={product + ' — image ' + (active + 1)}
+        <CatalogImage src={image} fill priority={active === 0} alt={product + ' — image ' + (active + 1)}
           sizes="(max-width: 760px) 92vw, 46vw" />
         <span className="gallery-zoom"><ZoomIn size={19} aria-hidden /></span>
       </button>
@@ -63,7 +63,7 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
       {images.length > 1 && <div className="gallery-thumbs" aria-label="Product images">
         {images.map((src, index) => <button key={src} type="button" onClick={() => setActive(index)}
           aria-label={'Show image ' + (index + 1)} aria-pressed={active === index}>
-          <Image src={src} fill unoptimized={src.startsWith('https://')} referrerPolicy="no-referrer" alt="" sizes="76px" />
+          <CatalogImage src={src} fill alt="" sizes="76px" />
         </button>)}
       </div>}
       <dialog ref={dialog} className="zoom-dialog" aria-label="Product image zoom" onClose={() => setOpen(false)}
@@ -75,7 +75,7 @@ function Gallery({ images, product }: { images: string[]; product: string }) {
         </div>
         <div className="zoom-scroll">
           <div className={'zoom-image' + (zoomed ? ' is-magnified' : '')}>
-            {open && <Image src={image} fill unoptimized={image.startsWith('https://')} referrerPolicy="no-referrer" alt={product + ' — enlarged image'} sizes="(max-width: 760px) 100vw, 1050px" />}
+            {open && <CatalogImage src={image} fill alt={product + ' — enlarged image'} sizes="(max-width: 760px) 100vw, 1050px" />}
           </div>
         </div>
       </dialog>
@@ -201,7 +201,7 @@ export function ProductExperience({ product, market, initialId, initialStock, ex
                 const soldOut = next && (next.id === selectedId && knownStock !== undefined ? knownStock : extras.stock[next.id]) === 0;
                 return <button type="button" key={value} className="variant-option" disabled={!next} data-sold-out={soldOut || undefined}
                   aria-label={title + ': ' + label} aria-pressed={current.get(key) === value} onClick={() => select(key, value)}>
-                  {image ? <span className="option-image"><Image src={image} alt="" fill sizes="74px" unoptimized={image.startsWith('https://')} /></span>
+                  {image ? <span className="option-image"><CatalogImage src={image} alt="" fill sizes="74px" /></span>
                     : key === 'color' && next?.colorCode && <span className="option-swatch" style={{ backgroundColor: next.colorCode }} />}
                   <span>{label}</span>{soldOut && <span className="option-stock">Sold out</span>}
                 </button>;

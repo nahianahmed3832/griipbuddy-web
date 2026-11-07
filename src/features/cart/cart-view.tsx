@@ -59,11 +59,11 @@ function stockMessage(line: QuotedLine) {
   }
 }
 
-function BagItem({ line, quoted, market, onNavigate, readonly }: {
-  line: CartLine; quoted?: QuotedLine; market: Market; onNavigate?: () => void; readonly: boolean;
+function BagItem({ line, quoted, market, onNavigate, readonly, preview }: {
+  line: CartLine; quoted?: QuotedLine; market: Market; onNavigate?: () => void; readonly: boolean; preview?: boolean;
 }) {
   const commands = useBagCommands();
-  const title = quoted?.title || line.label || line.slug;
+  const title = quoted?.title || (preview ? quoted ? 'Unavailable item' : 'Bag item' : line.label || line.slug);
   const message = quoted ? stockMessage(quoted) : '';
   const href = productHref(market, line.slug) + '?variant=' + encodeURIComponent(line.variantId);
   return <li className="bag-item">
@@ -124,7 +124,7 @@ function Coupon({ market, code, coupon }: { market: Market; code?: string; coupo
   </div>;
 }
 
-function Totals({ quote, market }: { quote: CartQuote; market: Market }) {
+function Totals({ quote, market, preview }: { quote: CartQuote; market: Market; preview?: boolean }) {
   const money = (amount: number) => formatMinor(amount, market);
   const issues = quote.lines.some((line) => line.status !== 'ready');
   const shipping = quote.shipping.status === 'estimated' ? money(quote.shipping.amount)
@@ -135,13 +135,13 @@ function Totals({ quote, market }: { quote: CartQuote; market: Market }) {
     {quote.saleDiscount > 0 && <div><dt>Sale savings</dt><dd>−{money(quote.saleDiscount)}</dd></div>}
     {quote.couponDiscount > 0 && <div><dt>Coupon discount</dt><dd>−{money(quote.couponDiscount)}</dd></div>}
     {(quote.saleDiscount > 0 || quote.couponDiscount > 0) && <div><dt>Merchandise</dt><dd>{money(quote.merchandise)}</dd></div>}
-    <div><dt>Estimated shipping</dt><dd>{shipping}</dd></div>
-    <div className="bag-estimate"><dt>Estimated total before tax</dt><dd>{quote.estimatedTotal === null ? '—' : money(quote.estimatedTotal)}</dd></div>
+    <div><dt>{preview ? 'Sandbox shipping estimate' : 'Estimated shipping'}</dt><dd>{shipping}</dd></div>
+    <div className="bag-estimate"><dt>{preview ? 'Sandbox total before tax' : 'Estimated total before tax'}</dt><dd>{quote.estimatedTotal === null ? '—' : money(quote.estimatedTotal)}</dd></div>
   </dl>;
 }
 
-export function CartView({ market, view, onNavigate, methods, paused, allowSimulation = true }: {
-  market: Market; view: 'drawer' | 'page' | 'checkout'; onNavigate?: () => void; methods?: MethodOption[]; paused?: boolean; allowSimulation?: boolean;
+export function CartView({ market, view, onNavigate, methods, paused, allowSimulation = true, preview }: {
+  market: Market; view: 'drawer' | 'page' | 'checkout'; onNavigate?: () => void; methods?: MethodOption[]; paused?: boolean; allowSimulation?: boolean; preview?: boolean;
 }) {
   const { lines, coupon, hydrated } = useCart();
   const actions = useContext(CartActions);
@@ -217,7 +217,7 @@ export function CartView({ market, view, onNavigate, methods, paused, allowSimul
   const items = <section className="bag-items" aria-label={checkout ? 'Items for review' : 'Bag items'}>
     {!checkoutEnabled && <p className="bag-context">{count} {count === 1 ? 'item' : 'items'} · {market.name} · {market.currency}</p>}
     <ul>{lines.map((line) => <BagItem key={lineKey(line)} line={line} quoted={byKey.get(lineKey(line))} market={market}
-      onNavigate={onNavigate} readonly={checkout} />)}</ul>
+      onNavigate={onNavigate} readonly={checkout} preview={preview} />)}</ul>
     {checkout && <Link className="text-link" href={bagPath}>Edit shopping bag</Link>}
   </section>;
 
@@ -234,7 +234,7 @@ export function CartView({ market, view, onNavigate, methods, paused, allowSimul
       {!current ? <p role="status" className="bag-loading">Checking prices and availability…</p>
         : !quote ? <div className="bag-quote-error"><p role="status">Prices and stock could not be verified.</p>
           <button type="button" className="button button-outline" onClick={() => setAttempt(attempt + 1)}>Retry estimate</button></div>
-          : <Totals quote={quote} market={market} />}
+          : <Totals quote={quote} market={market} preview={preview} />}
       {(view === 'page' || checkoutEnabled) && <Coupon market={market} code={code} coupon={quote?.coupon} />}
       {quote && !ready && <p className="bag-estimate-note">
         {quote.lines.some((line) => line.status !== 'ready') ? 'Update unavailable items before checkout review.'

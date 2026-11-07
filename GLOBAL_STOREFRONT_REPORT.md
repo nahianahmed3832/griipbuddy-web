@@ -2,6 +2,8 @@
 
 7 November 2026
 
+This report records the original global-storefront baseline at `6774f968`. The hosted storefront subsequently switched to the read-only retail catalog and received a new design pass. See the [preview configuration](README.md#step-10-local-verification).
+
 The global storefront is available in the local `feature/global-storefront` branch, based on Step 10 revision `45a94fc2`. The marketplace design, catalog discovery, and customer journey are ready for local review. Features that depend on a commerce service have either a clearly labeled development preview or an availability state.
 
 ## Completed and incomplete features

@@ -1,11 +1,11 @@
 'use client';
 
-import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowRight, Eye, X } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
 import { currentPrice, formatMoney, productHref, type Market } from './catalog';
 import { lowestPricedVariant } from './browse';
+import { CatalogImage } from './catalog-image';
 import { useCatalogItems } from './use-catalog-items';
 
 export function QuickView({ name, slug, market }: { name: string; slug: string; market: Market }) {
@@ -29,8 +29,7 @@ export function QuickView({ name, slug, market }: { name: string; slug: string; 
       onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
       <div className="quick-content">
         <button className="icon-button quick-close" type="button" aria-label="Close quick view" onClick={() => dialog.current?.close()}><X aria-hidden /></button>
-        {src && <div className="quick-image"><Image src={src} alt="" fill sizes="(max-width: 640px) 90vw, 340px"
-          unoptimized={src.startsWith('https://')} referrerPolicy="no-referrer" /></div>}
+        {src && <div className="quick-image"><CatalogImage src={src} alt="" fill sizes="(max-width: 640px) 90vw, 340px" /></div>}
         <div className="quick-copy">
           <p className="eyebrow">QUICK VIEW</p><h2 id={id}>{name}</h2>
           {loading && <p role="status">Loading product…</p>}

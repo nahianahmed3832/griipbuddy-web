@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useId, useState } from 'react';
 import { marketHref, type Category, type Market, type Suggestion } from './catalog';
+import { updateBrowserList, useBrowserList } from './browser-lists';
 
 export function SearchBox({
   market, categories = [], style, initialQuery = '', initialCategory = '', onChoose, onFocus,
@@ -26,12 +27,17 @@ export function SearchBox({
   const [reply, setReply] = useState<{ key: string; matches: Suggestion[]; failed?: boolean }>();
   const clean = query.trim();
   const key = market.code + '\n' + clean + '\n' + category;
-  const open = focused && clean.length >= 2;
-  const suggestions = reply?.key === key ? reply.matches : [];
   const action = marketHref(market, '/search');
+  const historyKey = 'griipbuddy-recent-searches:' + market.code;
+  const { items: recent } = useBrowserList(historyKey);
+  const recentMode = !clean && recent.length > 0;
+  const open = focused && (clean.length >= 2 || recentMode);
+  const resultPath = (value: string) => action + '?' + new URLSearchParams({ q: value, ...(category && { category }) });
+  const suggestions = recentMode ? recent.slice(0, 5).map((term) => ({ title: term, href: resultPath(term), kind: 'Recent' }))
+    : reply?.key === key ? reply.matches : [];
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || clean.length < 2) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
@@ -47,13 +53,11 @@ export function SearchBox({
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [open, clean, key, category, market.code]);
 
-  function select() {
-    const suggestion = suggestions[active];
-    if (suggestion) {
-      onChoose?.();
-      setFocused(false);
-      router.push(suggestion.href);
-    }
+  function finish(term: string) {
+    if (term) updateBrowserList(historyKey, (previous) => [term, ...previous.filter((item) => item !== term)].slice(0, 5));
+    onChoose?.();
+    setFocused(false);
+    setActive(-1);
   }
 
   return (
@@ -65,7 +69,10 @@ export function SearchBox({
         if (!event.currentTarget.contains(event.relatedTarget)) { setFocused(false); setActive(-1); }
       }}
       onSubmit={(event) => {
-        if (open && suggestions[active]) { event.preventDefault(); select(); }
+        event.preventDefault();
+        const suggestion = open ? suggestions[active] : undefined;
+        finish(recentMode && suggestion ? suggestion.title : clean);
+        router.push(suggestion?.href ?? resultPath(clean));
       }}
     >
       {style === 'header' && categories.length > 0 && (
@@ -102,15 +109,17 @@ export function SearchBox({
       <button className={style === 'header' ? undefined : 'icon-button'} type="submit" aria-label="Search the store"><Search size={18} aria-hidden /></button>
       {open && (
         <div className="search-suggestions">
-          <ul id={id} role="listbox" aria-label="Search suggestions">
+          <ul id={id} role="listbox" aria-label={recentMode ? 'Recent searches' : 'Search suggestions'}>
             {suggestions.map((entry, index) => (
               <li key={entry.href} id={id + '-' + index} role="option" aria-selected={index === active}>
-                <Link href={entry.href} tabIndex={-1} onMouseDown={(event) => event.preventDefault()} onClick={() => { setFocused(false); onChoose?.(); }}>
+                <Link href={entry.href} prefetch={false} tabIndex={-1} onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => finish(recentMode ? entry.title : clean)}>
                   <span>{entry.title}</span><small>{entry.kind} <ArrowUpRight size={13} aria-hidden /></small>
                 </Link>
               </li>
             ))}
           </ul>
+          {recentMode && <button type="button" className="text-link clear-search-history" onClick={() => updateBrowserList(historyKey, () => [])}>Clear recent searches</button>}
           {!suggestions.length && <p role="status">{reply?.key !== key ? 'Finding suggestions…' : reply.failed ? 'Suggestions are unavailable.' : 'No matching suggestions.'}</p>}
         </div>
       )}

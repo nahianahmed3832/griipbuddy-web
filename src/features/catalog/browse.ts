@@ -8,6 +8,21 @@ type Sort = keyof typeof sortLabels;
 export type CatalogParams = Record<string, string | string[] | undefined>;
 export type Filters = ReturnType<typeof parseFilters>;
 
+export const optionFacets = [
+  { key: 'size', label: 'Size', aliases: ['size'] },
+  { key: 'color', label: 'Color', aliases: ['color', 'colour'] },
+  { key: 'fit', label: 'Fit', aliases: ['fit'] },
+  { key: 'material', label: 'Material', aliases: ['material'] },
+  { key: 'device', label: 'Device', aliases: ['device', 'model', 'compatibility'] },
+] as const;
+
+export function facetValue(variant: CatalogVariant, facet: (typeof optionFacets)[number]) {
+  for (const alias of facet.aliases) {
+    const value = attribute(variant, alias);
+    if (value?.trim()) return value.trim();
+  }
+}
+
 function text(value: CatalogParams[string], limit = 100) {
   return typeof value === 'string' ? value.trim().slice(0, limit) : '';
 }
@@ -23,6 +38,7 @@ export function parseFilters(params: CatalogParams, fallback: Sort) {
   return {
     query: text(params.q), category: text(params.category, 180), brand: text(params.brand),
     size: text(params.size), color: text(params.color),
+    fit: text(params.fit), material: text(params.material), device: text(params.device),
     min: amount(params.min), max: amount(params.max),
     availability: availability === 'in' || availability === 'out' ? availability : undefined,
     sort: (Object.hasOwn(sortLabels, sort) ? sort : fallback) as Sort,
@@ -68,8 +84,7 @@ export function matchingVariants(product: CatalogProduct, filters: Filters) {
   return product.variants.filter((variant) => {
     if (!variant.price) return false;
     const price = currentPrice(variant.price);
-    return (!filters.size || normalized(attribute(variant, 'size') ?? '') === normalized(filters.size))
-      && (!filters.color || normalized(attribute(variant, 'color') ?? attribute(variant, 'colour') ?? '') === normalized(filters.color))
+    return optionFacets.every(facet => !filters[facet.key] || normalized(facetValue(variant, facet) ?? '') === normalized(filters[facet.key]))
       && (filters.min === undefined || price >= filters.min)
       && (filters.max === undefined || price <= filters.max);
   });

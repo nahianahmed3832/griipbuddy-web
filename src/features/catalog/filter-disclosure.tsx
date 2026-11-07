@@ -1,21 +1,30 @@
 'use client';
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { SlidersHorizontal } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { PanelDialog } from '@/features/shell/panel-dialog';
 
 export function FilterDisclosure({ applied, children }: { applied: number; children: ReactNode }) {
-  const ref = useRef<HTMLDetailsElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+
   useEffect(() => {
     const wide = window.matchMedia('(min-width: 761px)');
-    function update() {
-      if (ref.current) ref.current.open = wide.matches;
-    }
-    update();
-    wide.addEventListener('change', update);
-    return () => wide.removeEventListener('change', update);
+    const dismiss = () => { if (wide.matches) setOpen(false); };
+    wide.addEventListener('change', dismiss);
+    return () => wide.removeEventListener('change', dismiss);
   }, []);
 
-  return <details ref={ref} className="catalog-filter-panel" open>
-    <summary>Filters{applied > 0 && <span> · {applied} applied</span>}</summary>
-    {children}
-  </details>;
+  const label = <>Filters{applied > 0 && <span> · {applied} applied</span>}</>;
+  return <div className="catalog-filter-panel">
+    <button type="button" className="button button-outline filter-trigger" ref={trigger} onClick={() => setOpen(true)}>
+      <SlidersHorizontal size={16} aria-hidden />{label}
+    </button>
+    {open ? <PanelDialog title="Filters" close={() => {
+      setOpen(false);
+      requestAnimationFrame(() => trigger.current?.focus());
+    }}>{children}</PanelDialog> : <div className="desktop-filter">
+      <h2>{label}</h2>{children}
+    </div>}
+  </div>;
 }

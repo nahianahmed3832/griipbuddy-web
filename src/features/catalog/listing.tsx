@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { ChevronRight, Search, X } from 'lucide-react';
-import { attribute, categoryAt, categoryHref, formatMoney, marketHref, type CatalogProduct, type Category, type CollectionId, type Market } from './catalog';
-import { compareProducts, inCategory, inCollection, matchingVariants, parseFilters, relevance, sortLabels, type CatalogParams, type Filters } from './browse';
+import { Suspense } from 'react';
+import CatalogSkeleton from './catalog-skeleton';
+import { categoryAt, categoryHref, formatMoney, marketHref, type CatalogProduct, type Category, type CollectionId, type Market } from './catalog';
+import { compareProducts, facetValue, inCategory, inCollection, matchingVariants, optionFacets, parseFilters, relevance, sortLabels, type CatalogParams, type Filters } from './browse';
 import { catalogBrowse, mapLimited, variantStock, withAvailability } from './data';
 import { ProductCard } from './product-card';
 import { SearchBox } from './search-box';
@@ -67,10 +69,8 @@ function FilterPanel({ market, filters, products, categories, action, scoped }: 
     .sort((a, b) => a[1].localeCompare(b[1]));
   if (filters.brand && !brands.some(([id]) => id === filters.brand)) brands.push([filters.brand, 'Selected brand']);
   const variants = products.flatMap((product) => product.variants.filter((variant) => variant.price));
-  const sizes = choices(variants.flatMap((variant) => attribute(variant, 'size') ?? []), filters.size);
-  const colors = choices(variants.flatMap((variant) => attribute(variant, 'color') ?? attribute(variant, 'colour') ?? []), filters.color);
   const asOptions = (values: string[]) => values.map((value) => ({ value, label: value }));
-  const applied = [filters.category, filters.brand, filters.size, filters.color, filters.availability,
+  const applied = [filters.category, filters.brand, ...optionFacets.map(({ key }) => filters[key]), filters.availability,
     filters.min !== undefined, filters.max !== undefined].filter(Boolean).length;
 
   return (
@@ -81,8 +81,8 @@ function FilterPanel({ market, filters, products, categories, action, scoped }: 
         {!scoped && <SelectFilter label="Category" name="category" selected={filters.category}
           options={categories.map((category) => ({ value: category.slug, label: category.label }))} />}
         <SelectFilter label="Brand" name="brand" selected={filters.brand} options={brands.map(([value, label]) => ({ value, label }))} />
-        <SelectFilter label="Size" name="size" selected={filters.size} options={asOptions(sizes)} />
-        <SelectFilter label="Color" name="color" selected={filters.color} options={asOptions(colors)} />
+        {optionFacets.map((facet) => <SelectFilter key={facet.key} label={facet.label} name={facet.key}
+          selected={filters[facet.key]} options={asOptions(choices(variants.flatMap((variant) => facetValue(variant, facet) ?? []), filters[facet.key]))} />)}
         <fieldset className="price-filters">
           <legend>Price ({market.currency})</legend>
           <label className="filter-field">Min<input name="min" type="number" min="0" step="0.01" defaultValue={filters.min} /></label>
@@ -102,7 +102,8 @@ function FilterPanel({ market, filters, products, categories, action, scoped }: 
 function queryFor(filters: Filters) {
   const query = new URLSearchParams();
   const entries = {
-    q: filters.query, category: filters.category, brand: filters.brand, size: filters.size, color: filters.color,
+    q: filters.query, category: filters.category, brand: filters.brand,
+    ...Object.fromEntries(optionFacets.map(({ key }) => [key, filters[key]])),
     min: filters.min, max: filters.max, availability: filters.availability, sort: filters.sort,
   };
   for (const [key, value] of Object.entries(entries)) {
@@ -116,7 +117,7 @@ async function filterStock(products: CatalogProduct[], availability: NonNullable
     const available = [];
     let allOut = true;
     for (const variant of product.variants) {
-      const stock = await variantStock(product, variant);
+      const stock = await variantStock(product, variant, true);
       if (stock !== 0) allOut = false;
       if (stock !== null && stock > 0) available.push(variant);
     }
@@ -132,8 +133,7 @@ function AppliedFilters({ filters, scope, scoped, products, market, action }: {
   const chips = [
     ['category', !scoped && filters.category ? 'Category: ' + (scope?.label ?? filters.category) : ''],
     ['brand', filters.brand ? 'Brand: ' + (products.find(product => product.brand?.id === filters.brand)?.brand?.name ?? 'Selected brand') : ''],
-    ['size', filters.size ? 'Size: ' + filters.size : ''],
-    ['color', filters.color ? 'Color: ' + filters.color : ''],
+    ...optionFacets.map(({ key, label }) => [key, filters[key] ? label + ': ' + filters[key] : '']),
     ['min', filters.min !== undefined ? 'From ' + formatMoney(filters.min, market) : ''],
     ['max', filters.max !== undefined ? 'Up to ' + formatMoney(filters.max, market) : ''],
     ['availability', filters.availability === 'in' ? 'In stock' : filters.availability === 'out' ? 'Out of stock' : ''],
@@ -148,7 +148,7 @@ function AppliedFilters({ filters, scope, scoped, products, market, action }: {
   })}</ul>;
 }
 
-export async function CatalogListing({ market, categories, category, collection, params, title, description, path, search = false }: {
+async function ListingResults({ market, categories, category, collection, params, title, description, path, search = false }: {
   market: Market;
   categories: Category[];
   category?: Category;
@@ -228,7 +228,8 @@ export async function CatalogListing({ market, categories, category, collection,
           <AppliedFilters filters={filters} scope={scope} scoped={Boolean(category)} products={scopeProducts} market={market} action={action} />
           {batch && <p className="catalog-notice">Browse batch {batch} of {batches}. Prices, filters and availability reflect this batch in your market.</p>}
           {notice ? <p className="catalog-notice" role="status">{notice}</p>
-            : visible.length ? <CatalogGrid products={visible} market={market} linkVariant={Boolean(collection === 'sale' || filters.size || filters.color || filters.min !== undefined || filters.max !== undefined || filters.availability)} />
+            : visible.length ? <CatalogGrid products={visible} market={market} linkVariant={Boolean(collection === 'sale'
+              || optionFacets.some(({ key }) => filters[key]) || filters.min !== undefined || filters.max !== undefined || filters.availability)} />
               : <div className="empty-state"><Search aria-hidden /><h2>No products found</h2><p>Try another search or clear your filters.</p></div>}
           {!notice && pages > 1 && <nav className="catalog-pagination" aria-label="Product pages">
             {page > 1 && <Link className="button button-outline" href={pageHref(page - 1)}>Previous</Link>}
@@ -243,4 +244,10 @@ export async function CatalogListing({ market, categories, category, collection,
       </div>
     </div>
   );
+}
+
+export function CatalogListing(props: Parameters<typeof ListingResults>[0]) {
+  return <Suspense key={props.path + JSON.stringify(props.params)} fallback={<CatalogSkeleton />}>
+    <ListingResults {...props} />
+  </Suspense>;
 }

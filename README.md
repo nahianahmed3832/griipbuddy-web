@@ -104,6 +104,8 @@ GRIIPBUDDY_TEST_SOURCE=api npm test -- --workers=1
 GRIIPBUDDY_TEST_SOURCE=integrated npm test -- --workers=1
 ```
 
-The integrated suite uses the recovered order ledger, simulated payments and the local media processor. `GRIIPBUDDY_SCREENSHOTS` can point to a local evidence directory. `GRIIPBUDDY_RECOVERED_WISHLIST=1` enables saving to existing customer favorites when the matching backend version is available. The public sample storefront continues to use guest storage.
+The integrated suite uses the recovered order ledger, simulated payments and the local media processor. `GRIIPBUDDY_SCREENSHOTS` can point to a local evidence directory. `GRIIPBUDDY_RECOVERED_WISHLIST=1` enables saving to existing customer favorites when the matching backend version is available.
+
+The hosted preview at [frontend.griipbuddy.com](https://frontend.griipbuddy.com/) uses the public retail catalog in read-only mode when the sandbox sets `GRIIPBUDDY_PUBLIC_DEV=1` and the exact hosted canonical origin. Taxonomy, published products, catalog imagery, public offers, and variant stock use an explicit set of public GET endpoints. The bag rechecks variant stock and prices. Shipping and payment simulation remain on the loopback sandbox. Customer accounts, order writes and review writes are disabled in public preview mode. The local public-preview suite still uses the isolated fixture API.
 
 See [global storefront acceptance](GLOBAL_STOREFRONT_REPORT.md) for the feature matrix and screenshots.

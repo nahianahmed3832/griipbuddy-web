@@ -1,4 +1,4 @@
-import { fixturesEnabled, publicBuild } from '@/features/public-build';
+import { fixturesEnabled, hostedCatalogPreview, publicBuild } from '@/features/public-build';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
@@ -172,12 +172,13 @@ export default async function StorefrontPage({ params, searchParams }: PageProps
     const checkoutIntro = methods?.length ? 'Confirm delivery and payment for your test order.'
       : signIn ? 'Sign in to confirm delivery and payment for your test order.'
         : integrated ? 'Checkout is unavailable for this delivery market. You can still review your bag.'
-          : 'Review the current prices, availability and delivery estimate before running a simulation.';
+          : hostedCatalogPreview() ? 'Review catalog prices and stock. Shipping and payment are simulated on this development site.'
+            : 'Review the current prices, availability and delivery estimate before running a simulation.';
     return <PageFrame market={market} title={checkout ? 'Review checkout' : 'Shopping bag'} checkout={checkout}
       subtitle={checkout ? checkoutIntro : undefined}>
       {signIn && <Link className="button button-primary" href={marketHref(market, '/login?next=%2Fcheckout')}>Sign in to check out</Link>}
       <CartView key={market.code + ':' + section} market={market} view={checkout ? 'checkout' : 'page'} methods={methods}
-        paused={checkout && checkoutPaused()} allowSimulation={!integrated} />
+        paused={checkout && checkoutPaused()} allowSimulation={!integrated} preview={hostedCatalogPreview()} />
     </PageFrame>;
   }
   if (Object.hasOwn(information, section)) {

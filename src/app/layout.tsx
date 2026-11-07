@@ -1,4 +1,4 @@
-import { fixturesEnabled, publicBuild } from '@/features/public-build';
+import { fixturesEnabled, hostedCatalogPreview, publicBuild } from '@/features/public-build';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import '@fontsource-variable/manrope';
@@ -26,8 +26,12 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const [navigation, account, content] = await Promise.all([catalogNavigation().catch(() => null), currentAccount().catch(() => null), siteContent()]);
   const preview = publicBuild();
-  const announcement = fixturesEnabled() ? 'DEVELOPMENT PREVIEW · Synthetic catalog and offers' : preview ? 'Sample storefront · Explore the catalog' : text(contentRows(content.top_bar_messages).sort((a,b) => Number(a.position) - Number(b.position))[0]?.message);
-  const shop = navigation ? <StorefrontShell {...navigation} signedIn={Boolean(account)} accountsEnabled={!preview && (apiConfigured() || fixturesEnabled())} announcement={announcement}>{children}</StorefrontShell> : children;
+  const announcement = hostedCatalogPreview() ? 'Development storefront · Checkout simulation only'
+    : fixturesEnabled() ? 'DEVELOPMENT PREVIEW · Synthetic catalog and offers'
+      : preview ? 'Sample storefront · Explore the catalog'
+        : text(contentRows(content.top_bar_messages).sort((a,b) => Number(a.position) - Number(b.position))[0]?.message);
+  const shop = navigation ? <StorefrontShell {...navigation} signedIn={Boolean(account)} accountsEnabled={!preview && (apiConfigured() || fixturesEnabled())}
+    announcement={announcement} preview={hostedCatalogPreview()}>{children}</StorefrontShell> : children;
   return <html lang="en"><body>
     {account ? <AccountShoppingProvider key={account.profile.id}
       scope={{ mode: account.mode, saved: account.profile.saved, cart: account.fixture?.cart,

@@ -83,6 +83,26 @@ test('mobile navigation supports search suggestions, browse and bag without hori
   await expect(page.getByRole('heading', { name: 'Your bag is empty' })).toBeVisible();
 });
 
+test('recent search is market-scoped, keyboard selectable and clearable', async ({ page }) => {
+  await page.goto('/us');
+  const search = page.getByRole('search', { name: 'Storefront search' }).getByRole('combobox', { name: 'Search products' });
+  await search.fill('arc');
+  await search.press('Enter');
+  await expect(page).toHaveURL(/\/us\/search\?q=arc$/);
+  await search.focus();
+  await expect(page.getByRole('listbox', { name: 'Recent searches' })).toBeVisible();
+  await search.press('ArrowDown');
+  await search.press('Enter');
+  await expect(page).toHaveURL(/\/us\/search\?q=arc$/);
+  await page.goto('/bd');
+  await search.focus();
+  await expect(page.getByRole('listbox', { name: 'Recent searches' })).toHaveCount(0);
+  await page.goto('/us');
+  await search.focus();
+  await page.getByRole('button', { name: 'Clear recent searches' }).click();
+  await expect(page.getByRole('listbox', { name: 'Recent searches' })).toHaveCount(0);
+});
+
 test('tablet homepage loads local images and presents all sections without overflow', async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 834, height: 1112 });
   const offOrigin: string[] = [];
@@ -94,7 +114,7 @@ test('tablet homepage loads local images and presents all sections without overf
     await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
   }
   await expect(page.getByRole('img', { name: /cream headphones, a cobalt bag/i })).toBeVisible();
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(250, 248, 244)');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(250, 249, 246)');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(834);
   expect(offOrigin).toEqual([]);
 });

@@ -1,6 +1,6 @@
 import 'server-only';
 import { cache } from 'react';
-import { fixturesEnabled } from '@/features/public-build';
+import { fixturesEnabled, hostedCatalogPreview } from '@/features/public-build';
 import { withInternational } from '@/features/markets/resolve';
 import { apiBrands, apiCategory, apiConfigured, apiMarkets, apiProduct, CatalogError, catalogGet, objectId, record, rows } from './api';
 import { flattenCategories, validSlug, type Availability, type CatalogProduct, type CatalogVariant, type Market } from './catalog';
@@ -46,7 +46,7 @@ async function productPage(region: Market['region'], page: number, popularity: b
   if (root && !popularity) params.set('category', root);
   // The recovered API interprets q as a regular expression. Send a literal.
   if (query && !popularity) params.set('q', query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const payload = record(await catalogGet(popularity ? '/product/top-sale' : '/product', params));
+  const payload = record(await catalogGet(popularity ? '/product/top-sale' : '/product', params, { reference: hostedCatalogPreview() && !query }));
   const total = record(payload.meta).total;
   if (typeof total !== 'number' || !Number.isInteger(total) || total < 0 || !Array.isArray(payload.products)) {
     throw new CatalogError('Unexpected catalog listing response.');
@@ -104,13 +104,15 @@ function hasPrice(product: CatalogProduct) {
   return product.variants.some((variant) => variant.price);
 }
 
-export const variantStock = cache(async (product: CatalogProduct, variant: CatalogVariant) => {
+export const variantStock = cache(async (product: CatalogProduct, variant: CatalogVariant, merchandising = false) => {
   if (!variant.price) return null;
   if (!apiConfigured()) return fixturesEnabled() ? syntheticStock(product.id, variant.id, fixtureStock(product, variant.id)) : null;
   if (!objectId(product.id) || !objectId(variant.id)) return null;
 
   try {
-    const data = record(await catalogGet('/stocks/' + product.id + '/' + variant.id, undefined, { missing: true }));
+    const data = record(await catalogGet('/stocks/' + product.id + '/' + variant.id, undefined, {
+      missing: true, reference: merchandising && hostedCatalogPreview(),
+    }));
     const amount = data.totalAvailableQuantity;
     return typeof amount === 'number' && Number.isSafeInteger(amount) && amount >= 0 ? amount : null;
   } catch {
@@ -118,11 +120,21 @@ export const variantStock = cache(async (product: CatalogProduct, variant: Catal
   }
 });
 
+export async function availableMerchandise(products: CatalogProduct[]) {
+  const checked = await mapLimited(products, 5, async (product) => {
+    for (const variant of product.variants.filter((entry) => entry.price).slice(0, 5)) {
+      const stock = await variantStock(product, variant, true);
+      if (stock && stock > 0) return { ...product, variants: [variant], availability: 'in' as const };
+    }
+  });
+  return checked.flatMap((product) => product ?? []);
+}
+
 export async function productAvailability(product: CatalogProduct, limit = 8): Promise<Availability> {
   const variants = product.variants.filter((variant) => variant.price);
   let unknown = variants.length > limit;
   for (const variant of variants.slice(0, limit)) {
-    const stock = await variantStock(product, variant);
+    const stock = await variantStock(product, variant, true);
     if (stock === null) unknown = true;
     else if (stock > 0) return 'in';
   }
