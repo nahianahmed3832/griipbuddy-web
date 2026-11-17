@@ -75,10 +75,10 @@ export async function MarketplaceHome({ market, departments, products }: { marke
           <p>{market.id === "bd" ? "Bangladesh sale" : "US sale"}</p>
           <h1 id="mp-sale-heading">Up to {discountPercentage(topDeal)}% off</h1>
           <div className="mp-sale-terms">
-            {timed ? <>
-              <SaleCountdown key={end} endsAt={end} initialSeconds={remaining}/>
-              <span className="sr-only">Featured offer ends <time dateTime={end}>{new Date(end).toLocaleString(market.locale, { timeZone: market.id === "bd" ? "Asia/Dhaka" : "America/New_York", dateStyle: "medium", timeStyle: "short" })}</time>.</span>
-            </> : "Selected styles"}
+            {timed ? <SaleCountdown key={end} endsAt={end} initialSeconds={remaining}
+              deadlineLabel={new Date(end).toLocaleString(market.locale, {
+                timeZone: market.id === "bd" ? "Asia/Dhaka" : "America/New_York", dateStyle: "medium", timeStyle: "short",
+              })} /> : "Selected styles"}
           </div>
           <Link className="mp-sale-cta" href={href("/shop?offer=sale")}>Shop sale <ArrowRight size={17} aria-hidden="true"/></Link>
         </div>

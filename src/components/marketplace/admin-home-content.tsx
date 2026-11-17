@@ -5,9 +5,8 @@ import type { Market } from "@/config/markets";
 import type { CatalogProduct, Department } from "@/lib/catalog/types";
 import { productCards } from "@/lib/catalog/listing";
 import { activeOffer, adminLink, adminMedia, ordered, type AdminContent } from "@/lib/marketplace/admin-content";
-import { offerTimerEnd } from "@/lib/marketplace/dev-offer";
 import { ProductGrid, productHref } from "../product-grid";
-import { SaleCountdown } from "./sale-countdown";
+import { SaleOfferCountdown } from "./sale-offer-countdown";
 
 export function AdminHomeContent({ data, market, products, departments, regional, showPromotionalMedia }: {
   data: AdminContent;
@@ -40,11 +39,11 @@ export function AdminHomeContent({ data, market, products, departments, regional
   const mobile = showPromotionalMedia ? bannerUrl({ banners: content?.mobile_banners }) : [];
   const featured = bannerUrl({ banners: content?.featured_products })
     .filter(({ cards }) => showPromotionalMedia || cards.length > 0);
-  const slides = ordered(content?.hero_section).flatMap(slide => {
+  const slides = showPromotionalMedia ? ordered(content?.hero_section).flatMap(slide => {
     const video = adminMedia(slide.video_url);
     const image = adminMedia(slide.thumbnail_url);
     return video || image ? [{ ...slide, video, image }] : [];
-  }).filter(slide => showPromotionalMedia || (slide.button?.enabled && slide.button.text));
+  }) : [];
   const categories = ordered(homepage?.shop_by_category).flatMap(entry => {
     const reference = entry.subcategory_id ?? entry.category_id;
     const department = departments.find(item => item.id === reference?._id || item.slug === reference?.slug);
@@ -59,14 +58,12 @@ export function AdminHomeContent({ data, market, products, departments, regional
   const leatherCards = listed(leather?.product_ids);
   const campaign = activeOffer(data.offer);
   const offer = campaign?.pageConf?.header;
-  const timer = campaign && offerTimerEnd(campaign, campaign.now);
 
   return <>
-    {slides.map((slide, index) => <section key={slide.position + ":" + slide.title}
-      className={showPromotionalMedia ? "mp-home-section mp-admin-preview" : "mp-home-section"}>
-      {showPromotionalMedia && index === 0 ? <h1 className="display-type">{slide.title}</h1> : <h2>{slide.title}</h2>}
-      {showPromotionalMedia && (slide.video ? <video src={slide.video} poster={slide.image} controls preload="metadata" />
-        : slide.image && <Image src={slide.image} alt={slide.title} width={1200} height={600} unoptimized />)}
+    {slides.map((slide, index) => <section key={slide.position + ":" + slide.title} className="mp-home-section mp-admin-preview">
+      {index === 0 ? <h1 className="display-type">{slide.title}</h1> : <h2>{slide.title}</h2>}
+      {slide.video ? <video src={slide.video} poster={slide.image} controls preload="metadata" />
+        : slide.image && <Image src={slide.image} alt={slide.title} width={1200} height={600} unoptimized />}
       {slide.button?.enabled && slide.button.text && <Link className="button button--primary"
         href={localHref(adminLink(slide.button.redirect_route, "/shop"))}>{slide.button.text}</Link>}
     </section>)}
@@ -86,12 +83,12 @@ export function AdminHomeContent({ data, market, products, departments, regional
       {showPromotionalMedia && <Image src={src} alt="Featured products" width={1200} height={600} unoptimized />}
       {cards.length > 0 && <ProductGrid cards={cards} market={market} regional={regional} />}
     </section>)}
-    {offer && <section className="mp-home-section">
+    {offer && <section className="mp-home-section mp-cms-offer">
       <div className="mp-section-heading"><h2>{offer.title_1} {offer.title_2}</h2>
         <Link href={localHref("/shop?offer=sale")}>{offer.button_label}</Link>
       </div>
       <p>{offer.description}</p>
-      {campaign && timer && <SaleCountdown key={timer} endsAt={new Date(timer).toISOString()} initialSeconds={Math.ceil((timer - campaign.now) / 1000)} />}
+      <SaleOfferCountdown campaign={campaign} market={market} />
     </section>}
     {categories.length > 0 && <section className="mp-home-section">
       <div className="mp-section-heading"><h2>Shop by category</h2></div>

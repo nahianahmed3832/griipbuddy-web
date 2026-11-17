@@ -6,10 +6,13 @@ import { localizedStoreHref, marketStoreHref } from "@/config/regional-path";
 import { listingView, sortOptions, type SearchParams } from "@/lib/catalog/listing";
 import { searchDevice } from "@/lib/catalog/search";
 import { cardActivity } from "@/lib/catalog/card-activity";
+import { activeOffer, readAdminContent } from "@/lib/marketplace/admin-content";
 import type { CatalogProduct, Department } from "@/lib/catalog/types";
+import { ListingPagination } from "./listing-pagination";
 import { ProductGrid } from "./product-grid";
 import { Breadcrumbs, EmptyState } from "./store-ui";
 import { MarketplaceFilters } from "./marketplace/filters";
+import { SaleOfferCountdown } from "./marketplace/sale-offer-countdown";
 import { hybridDemoMode, marketplaceMode } from "@/lib/release-config";
 
 type View = ReturnType<typeof listingView>;
@@ -105,7 +108,11 @@ export async function ListingPage({
   const requestedPage = typeof params.page === "string" && /^\d{1,5}$/.test(params.page) ? Number(params.page) : 1;
   const page = Math.min(pageCount, Math.max(1, requestedPage));
   const cards = allCards.slice((page - 1) * pageSize, page * pageSize);
-  const activity = marketplace ? await cardActivity(market.id, cards.map(card => card.id)) : undefined;
+  const [activity, adminContent] = await Promise.all([
+    marketplace ? cardActivity(market.id, cards.map(card => card.id)) : undefined,
+    regional && market.id === "bd" && view.sale ? readAdminContent() : null,
+  ]);
+  const campaign = activeOffer(adminContent?.offer);
 
   function pageHref(target: number) {
     const search = new URLSearchParams();
@@ -134,6 +141,7 @@ export async function ListingPage({
         <h1>{title}</h1>
         {description && <p>{description}</p>}
       </div>
+      {campaign && <SaleOfferCountdown campaign={campaign} market={market} className="mp-listing-sale-countdown" />}
       {childDepartments && childDepartments.length > 0 &&
         <nav className="mp-subcategory-links" aria-label="Subcategories">
           {childDepartments.map(({ id, shortName, slug }) => <Link key={id} href={href(`/departments/${slug}`)}>{shortName}</Link>)}
@@ -158,11 +166,7 @@ export async function ListingPage({
               <section aria-label="Products">
                 <h2 className="sr-only">Products</h2>
                 <ProductGrid cards={cards} market={market} regional={regional} activity={activity} />
-                {pageCount > 1 && <nav className="staff-filters" aria-label="Product pages">
-                  {page > 1 && <Link href={pageHref(page - 1)}>Previous</Link>}
-                  <span>Page {page} of {pageCount}</span>
-                  {page < pageCount && <Link href={pageHref(page + 1)}>Next</Link>}
-                </nav>}
+                <ListingPagination {...{ page, pageCount, pageHref }} />
               </section>
             ) : (
               <EmptyState
