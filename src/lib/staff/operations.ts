@@ -10,12 +10,16 @@ import { bangladeshStaffTrackingHistory, demoHandoff, devShipmentAvailable } fro
 import { nextBangladeshTrackingStatuses } from "../commerce/bangladesh-shipment-status.ts";
 import { isManualPaymentMethod } from "../commerce/manual-payment-methods.ts";
 import { notifyOrder } from "../commerce/order-notifications.ts";
-import { hybridStoreMode } from "../release-config.ts";
+import { hybridDemoMode, hybridStoreMode } from "../release-config.ts";
+import { devAdminOrderScope } from "./dev-admin-orders.ts";
+import type { DevAdminFulfillmentOperator } from "./dev-admin-order-proof.ts";
 
-export class OperationError extends Error {}
+export class OperationError extends Error {
+  constructor(message: string, readonly status = 409) { super(message); }
+}
 
 function deny(): never {
-  throw new OperationError("You don’t have permission for that action.");
+  throw new OperationError("You don’t have permission for that action.", 403);
 }
 
 export async function authorize(db: DbReader, actorId: string, ownerOnly = false, marketId?: MarketId) {
@@ -79,12 +83,30 @@ export async function staffOrder(actorId: string, id: string) {
   });
 }
 
-async function lockedOrder(tx: Prisma.TransactionClient, id: string, markets: MarketId[]) {
-  if (!uuid.safeParse(id).success) throw new OperationError("Order not found.");
+async function lockedOrder(tx: Prisma.TransactionClient, id: string, where: Prisma.OrderWhereInput) {
+  if (!uuid.safeParse(id).success) throw new OperationError("Order not found.", 404);
   await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${id}::uuid FOR UPDATE`;
-  const order = await tx.order.findFirst({ where: { id, marketId: { in: markets } }, include: orderDetails });
-  if (!order?.payment) throw new OperationError("Order not found.");
+  const order = await tx.order.findFirst({ where: { ...where, id }, include: orderDetails });
+  if (!order?.payment) throw new OperationError("Order not found.", 404);
   return { ...order, payment: order.payment };
+}
+
+export type FulfillmentActor = string | DevAdminFulfillmentOperator;
+
+export async function lockFulfillmentOrder(tx: Prisma.TransactionClient, actor: FulfillmentActor, orderId: string,
+  { ownerOnly = false, returns = false, bangladeshOnly = false }: { ownerOnly?: boolean; returns?: boolean; bangladeshOnly?: boolean } = {}) {
+  if (typeof actor === "string") {
+    const scope = await authorize(tx, actor, ownerOnly, bangladeshOnly ? "bd" : undefined);
+    const order = await lockedOrder(tx, orderId, { marketId: bangladeshOnly ? "bd" : { in: scope.marketIds } });
+    return { order, actorId: actor };
+  }
+  if (process.env.COMMERCE_MODE !== "staging" || !hybridDemoMode() || returns && !actor.canReturn) deny();
+  const order = await lockedOrder(tx, orderId, devAdminOrderScope);
+  // The service account has no credentials or staff access. It identifies the signed admin actor in audit records.
+  const actorId = `editable-admin:${actor.id}`;
+  const email = `${actor.id}@editable-admin.invalid`;
+  await tx.user.upsert({ where: { id: actorId }, create: { id: actorId, email, name: actor.name }, update: { name: actor.name } });
+  return { order, actorId };
 }
 
 const shipmentText = (limit: number) => z.string().trim().min(1).max(limit).regex(/^[^\u0000-\u001f\u007f]+$/u);
@@ -95,13 +117,12 @@ const fulfillmentInput = z.object({
   simulate: z.boolean().optional(),
 });
 
-export async function advanceFulfillment(actorId: string, orderId: string, input: unknown) {
+export async function advanceFulfillment(actor: FulfillmentActor, orderId: string, input: unknown) {
   const parsed = fulfillmentInput.safeParse(input);
   if (!parsed.success) throw new OperationError("Choose a valid fulfillment step.");
   const { next } = parsed.data;
   await getDb().$transaction(async (tx) => {
-    const scope = await authorize(tx, actorId);
-    const order = await lockedOrder(tx, orderId, scope.marketIds);
+    const { order, actorId } = await lockFulfillmentOrder(tx, actor, orderId);
     if (order.status !== "PLACED") throw new OperationError("This order is cancelled.");
     if (order.payment.method !== "COD" && order.payment.status !== "PAID") {
       throw new OperationError("This prepaid order cannot move through packing while payment is incomplete or a refund is pending.");
@@ -131,8 +152,8 @@ export async function advanceFulfillment(actorId: string, orderId: string, input
       data: { actorId, action: "FULFILLMENT_CHANGED", target: orderId, changes: { from: order.fulfillmentStatus, to: next, ...fields } },
     });
   });
-  if (next === "SHIPPED") await notifyOrder(orderId, "shipped");
-  if (next === "DELIVERED") await notifyOrder(orderId, "delivered");
+  if (typeof actor === "string" && next === "SHIPPED") await notifyOrder(orderId, "shipped");
+  if (typeof actor === "string" && next === "DELIVERED") await notifyOrder(orderId, "delivered");
 }
 
 const trackingInput = z.object({
@@ -140,13 +161,12 @@ const trackingInput = z.object({
   evidence: shipmentText(200).min(3).optional(),
 });
 
-export async function recordBangladeshTracking(actorId: string, orderId: string, input: unknown) {
+export async function recordBangladeshTracking(actor: FulfillmentActor, orderId: string, input: unknown) {
   const parsed = trackingInput.safeParse(input);
   if (!parsed.success) throw new OperationError("Choose a courier status and enter a valid evidence reference if required.");
   const { status, evidence } = parsed.data;
   const changed = await getDb().$transaction(async (tx) => {
-    const scope = await authorize(tx, actorId, status === "REFUSED");
-    const order = await lockedOrder(tx, orderId, scope.marketIds);
+    const { order, actorId } = await lockFulfillmentOrder(tx, actor, orderId, { ownerOnly: status === "REFUSED", returns: status === "REFUSED" });
     const current = order.marketId === "bd" && await tx.bangladeshShipment.findUnique({ where: { orderId } });
     if (!current || order.status !== "PLACED") throw new OperationError("There is no active Bangladesh shipment for this order.");
     const simulated = current.source === "DEV_SIMULATOR";
@@ -174,7 +194,7 @@ export async function recordBangladeshTracking(actorId: string, orderId: string,
     });
     return true;
   });
-  if (changed) await notifyOrder(orderId, ({ OUT_FOR_DELIVERY: "out-for-delivery", DELIVERED: "delivered", REFUSED: "refused" } as const)[status]);
+  if (changed && typeof actor === "string") await notifyOrder(orderId, ({ OUT_FOR_DELIVERY: "out-for-delivery", DELIVERED: "delivered", REFUSED: "refused" } as const)[status]);
 }
 
 async function cancelUnshipped(tx: Prisma.TransactionClient, actorId: string, order: Awaited<ReturnType<typeof lockedOrder>>) {
@@ -212,19 +232,19 @@ const manualDecision = z.discriminatedUnion("approve", [
   z.object({ approve: z.literal(false), note: shipmentText(300).min(3) }),
 ]);
 
-export async function reviewManualPayment(actorId: string, orderId: string, input: unknown) {
+export async function reviewManualPayment(actor: FulfillmentActor, orderId: string, input: unknown) {
   const parsed = manualDecision.safeParse(input);
   if (!parsed.success) throw new OperationError("Enter the verified amount and transaction ID, or enter why payment could not be verified.");
   const decision = parsed.data;
   try {
     await getDb().$transaction(async tx => {
-      const scope = await authorize(tx, actorId, true);
-      const order = await lockedOrder(tx, orderId, scope.marketIds);
+      const { order, actorId } = await lockFulfillmentOrder(tx, actor, orderId, { ownerOnly: true });
       const proof = await tx.bangladeshManualProof.findUnique({ where: { orderId },
         select: { reviewedAt: true, submittedTransaction: true, verifiedTransaction: true, test: true } });
       if (!proof || order.marketId !== "bd" || !isManualPaymentMethod(order.payment.method)) {
         throw new OperationError("This order has no manual wallet payment.");
       }
+      if (typeof actor !== "string" && !proof.test) deny();
       if (proof.reviewedAt && (decision.approve
         ? order.payment.status === "PAID" && proof.verifiedTransaction === decision.transaction
         : order.payment.status === "VOIDED")) return;
@@ -260,10 +280,9 @@ export async function reviewManualPayment(actorId: string, orderId: string, inpu
   }
 }
 
-export async function cancelOrder(actorId: string, orderId: string) {
+export async function cancelOrder(actor: FulfillmentActor, orderId: string) {
   await getDb().$transaction(async (tx) => {
-    const scope = await authorize(tx, actorId, true);
-    const order = await lockedOrder(tx, orderId, scope.marketIds);
+    const { order, actorId } = await lockFulfillmentOrder(tx, actor, orderId, { ownerOnly: true });
     if (order.status === "CANCELLED") return;
     if (!canCancelFrom.includes(order.fulfillmentStatus) || order.payment.status !== "AWAITING_COLLECTION") {
       throw new OperationError("Only unshipped orders awaiting collection can be cancelled.");
@@ -272,10 +291,9 @@ export async function cancelOrder(actorId: string, orderId: string) {
   });
 }
 
-export async function collectCash(actorId: string, orderId: string) {
+export async function collectCash(actor: FulfillmentActor, orderId: string) {
   await getDb().$transaction(async (tx) => {
-    const scope = await authorize(tx, actorId, true);
-    const order = await lockedOrder(tx, orderId, scope.marketIds);
+    const { order, actorId } = await lockFulfillmentOrder(tx, actor, orderId, { ownerOnly: true });
     if (order.status !== "PLACED" || order.fulfillmentStatus !== "DELIVERED" || order.payment.method !== "COD") {
       throw new OperationError("Record COD collection after the order is delivered.");
     }

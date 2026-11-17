@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Prisma } from "../../generated/prisma/client.ts";
 import { variantQuantities } from "../cart/model.ts";
 import { getDb } from "../db/client.ts";
-import { authorize, OperationError } from "../staff/operations.ts";
+import { lockFulfillmentOrder, OperationError, type FulfillmentActor } from "../staff/operations.ts";
 import { uuid } from "./checkout-types.ts";
 import { isManualPaymentMethod } from "./manual-payment-methods.ts";
 
@@ -25,30 +25,20 @@ export async function restoreBangladeshInventory(tx: Prisma.TransactionClient, l
   return quantities.reduce((units, [, quantity]) => units + quantity, 0);
 }
 
-export async function receiveBangladeshRefusedParcel(actorId: string, orderId: string, raw: unknown) {
+export async function receiveBangladeshRefusedParcel(actor: FulfillmentActor, orderId: string, raw: unknown) {
   if (!uuid.safeParse(orderId).success) throw new OperationError("Order not found.");
   const parsed = warehouseReturnInput.safeParse(raw);
   if (!parsed.success) throw new OperationError("Choose how to handle the stock and enter a warehouse note (3 to 500 characters).");
   const { disposition, note } = parsed.data;
 
   return getDb().$transaction(async tx => {
-    await authorize(tx, actorId, false, "bd");
-    await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
-    const order = await tx.order.findUnique({
-      where: { id: orderId },
-      select: {
-        status: true, fulfillmentStatus: true, marketId: true,
-        payment: { select: { method: true, status: true } },
-        bangladeshShipment: { select: { status: true } },
-        bangladeshRefusedParcelReceipt: { select: { disposition: true, restockedUnits: true } },
-        items: { select: { variantId: true, quantity: true } },
-      },
-    });
-    if (order?.marketId !== "bd" || order.status !== "PLACED" || order.fulfillmentStatus !== "SHIPPED" ||
-        order.bangladeshShipment?.status !== "REFUSED") {
+    const { order, actorId } = await lockFulfillmentOrder(tx, actor, orderId, { bangladeshOnly: true, returns: true });
+    const shipment = await tx.bangladeshShipment.findUnique({ where: { orderId }, select: { status: true } });
+    if (order.status !== "PLACED" || order.fulfillmentStatus !== "SHIPPED" || shipment?.status !== "REFUSED") {
       throw new OperationError("Only a refused Bangladesh parcel can be received this way.");
     }
-    const prior = order.bangladeshRefusedParcelReceipt;
+    const prior = await tx.bangladeshRefusedParcelReceipt.findUnique({ where: { orderId },
+      select: { disposition: true, restockedUnits: true } });
     if (prior) {
       if (prior.disposition !== disposition) throw new OperationError("A receipt already exists with a different stock decision. Refresh the order.");
       return prior;

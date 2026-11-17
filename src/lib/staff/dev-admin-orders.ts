@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "../../generated/prisma/client.ts";
 import type { DbReader } from "../db/client.ts";
+import { bangladeshTrackingHistory } from "../commerce/bangladesh-shipment.ts";
 import { storeShop } from "../marketplace/constants.ts";
 import { hybridDemoMode } from "../release-config.ts";
 
@@ -17,7 +18,7 @@ export function canReadDevAdminOrders(authorization: string | null) {
 }
 
 const firstParty = { OR: [{ marketplaceShopId: null }, { marketplaceShopId: storeShop.id }] } satisfies Prisma.OrderItemWhereInput;
-const scope = {
+export const devAdminOrderScope = {
   marketId: "bd", currency: "BDT", measurementTest: true, items: { some: firstParty, every: firstParty },
 } satisfies Prisma.OrderWhereInput;
 
@@ -43,6 +44,14 @@ const workspaceSummary = {
 } satisfies Prisma.OrderSelect;
 const detail = {
   ...workspaceSummary, subtotalMinor: true, discountMinor: true, deliveryMinor: true, taxMinor: true,
+  bangladeshShipment: bangladeshTrackingHistory,
+  bangladeshRefusedParcelReceipt: { select: { receivedAt: true, disposition: true, restockedUnits: true } },
+  payment: { select: { ...workspaceSummary.payment.select, manualProof: {
+    select: { test: true, reviewedAt: true, submittedTransaction: true },
+  } } },
+  events: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: {
+    status: true, type: true, createdAt: true, actor: { select: { name: true } },
+  } },
 } satisfies Prisma.OrderSelect;
 
 type Cursor = { createdAt: Date; id: string };
@@ -88,11 +97,15 @@ export function readDevAdminOrderQuery(params: URLSearchParams): OrderQuery | nu
 
 export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
   if (query.kind === "detail") {
-    const row = await db.order.findFirst({ where: { ...scope, id: query.id }, select: detail });
+    const row = await db.order.findFirst({ where: { ...devAdminOrderScope, id: query.id }, select: detail });
     if (!row) return null;
-    const { items, subtotalMinor, discountMinor, deliveryMinor, taxMinor, ...summaryFields } = row;
-    const order = orderSummary(summaryFields);
-    return { ...order, subtotalMinor, discountMinor, deliveryMinor, taxMinor, items };
+    const { items, subtotalMinor, discountMinor, deliveryMinor, taxMinor, payment, ...summaryFields } = row;
+    const manualProof = payment?.manualProof;
+    const manualPayment = manualProof?.test && !manualProof.reviewedAt ? { transaction: manualProof.submittedTransaction } : null;
+    const order = orderSummary({ ...summaryFields, payment: payment ? {
+      method: payment.method, status: payment.status, amountMinor: payment.amountMinor, collectedAt: payment.collectedAt,
+    } : null });
+    return { ...order, subtotalMinor, discountMinor, deliveryMinor, taxMinor, items, manualPayment };
   }
   if (query.kind === "workspace") {
     const { q, sku, from, to, creator } = query.filters;
@@ -100,7 +113,7 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
     const start = from && new Date(from + "T00:00:00.000+06:00");
     const end = to && new Date(to + "T23:59:59.999+06:00");
     const orders = await db.order.findMany({
-      where: { ...scope,
+      where: { ...devAdminOrderScope,
         ...(q && { reference: contains(q) }),
         ...(sku && { items: { every: firstParty, some: { ...firstParty, sku: contains(sku) } } }),
         ...((start || end) && { createdAt: { ...(start && { gte: start }), ...(end && { lte: end }) } }),
@@ -113,7 +126,7 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
 
   const { limit, search, after } = query;
   const rows = await db.order.findMany({
-    where: { ...scope, ...(search && { reference: { startsWith: search, mode: "insensitive" } }),
+    where: { ...devAdminOrderScope, ...(search && { reference: { startsWith: search, mode: "insensitive" } }),
       ...(after && { OR: [{ createdAt: { lt: after.createdAt } }, { createdAt: after.createdAt, id: { lt: after.id } }] }) },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: limit + 1, select: summary,
   });
