@@ -2,10 +2,11 @@ import { z } from "zod";
 import type { MarketId } from "../../config/markets.ts";
 import { hybridDemoMode } from "../release-config.ts";
 import { storeShop } from "./constants.ts";
-import sourcePrices from "../catalog/dev-bd-prices.json" with { type: "json" };
 
 const day = 86_400_000;
 const origin = "https://dev.griipbuddy.com";
+const mongoId = /^[a-f0-9]{24}$/;
+const pricePageSize = 60;
 const text = z.string().max(1000);
 export const devOffer = z.object({
   offer_start_date: z.iso.datetime(), validFor: z.number().min(1), specialSaleActive: z.boolean().optional(),
@@ -22,13 +23,23 @@ export const devOffer = z.object({
 type Offer = z.infer<typeof devOffer>;
 type OfferVariant = { id: string; productId: string; product: { marketplaceShopId: string | null } };
 type SourcePrice = { productId: string; subcategoryId: string; regularMinor: number };
-const catalog: Readonly<Record<string, SourcePrice | undefined>> = sourcePrices;
-const offerResponse = z.object({ offer: devOffer.nullish() });
+const offerResponse = z.object({ offer: devOffer.nullish(), prices: z.array(z.object({
+  productId: z.string().regex(/^p-[a-f0-9]{24}$/), variantId: z.string().regex(/^v-[a-f0-9]{24}$/),
+  subcategoryId: z.string().regex(mongoId), regularMinor: z.number().int().positive(),
+})) });
 
-function sourcePrice(variant: OfferVariant) {
+function sourceVariant(variant: OfferVariant) {
   const shopId = variant.product.marketplaceShopId;
-  const source = catalog[variant.id];
-  return (shopId === null || shopId === storeShop.id) && source?.productId === variant.productId ? source : null;
+  return (shopId === null || shopId === storeShop.id) && variant.productId.startsWith("p-") &&
+    mongoId.test(variant.productId.slice(2)) && variant.id.startsWith("v-") && mongoId.test(variant.id.slice(2));
+}
+
+async function readOfferPrices(ids: string[], fetchRequest: typeof fetch) {
+  const result = await fetchRequest(origin + "/api/dev-admin-content?product_ids=" + ids.join(","), {
+    cache: "no-store", redirect: "error", signal: AbortSignal.timeout(2500),
+  });
+  if (!result.ok) throw new Error("Could not verify dev offer pricing.");
+  return offerResponse.parse(await result.json());
 }
 
 export function activeOffer(offer: Offer | null | undefined, now = Date.now()) {
@@ -51,22 +62,31 @@ export function matchedOfferPrice(offer: NonNullable<ReturnType<typeof activeOff
   return { amountMinor, regularMinor: source.regularMinor, freeDelivery: offer.freeDelivery };
 }
 
-export async function devOfferPricing(marketId: MarketId, variants: readonly OfferVariant[], now: Date) {
-  if (marketId !== "bd" || !hybridDemoMode() || process.env.COMMERCE_MODE !== "staging" ||
-      !variants.some(variant => sourcePrice(variant))) return null;
+export async function devOfferPricing(marketId: MarketId, variants: readonly OfferVariant[], now: Date, fetchRequest = fetch) {
+  if (marketId !== "bd" || !hybridDemoMode() || process.env.COMMERCE_MODE !== "staging") return null;
+  const ids = [...new Set(variants.filter(sourceVariant).map(variant => variant.productId.slice(2)))];
+  if (!ids.length) return null;
 
-  const response = await fetch(origin + "/api/dev-admin-content", {
-    cache: "no-store", redirect: "error", signal: AbortSignal.timeout(2500),
-  });
-  if (!response.ok) throw new Error("Could not verify dev offer pricing.");
-  const { offer } = offerResponse.parse(await response.json());
-  const campaign = activeOffer(offer, now.getTime());
+  const first = await readOfferPrices(ids.slice(0, pricePageSize), fetchRequest);
+  const campaign = activeOffer(first.offer, now.getTime());
   if (!campaign) return null;
+  const catalog = new Map(first.prices.map(price => [price.variantId, price]));
+  const otherPages = Array.from({ length: Math.ceil(ids.length / pricePageSize) - 1 }, (_, index) => (index + 1) * pricePageSize);
+  const queue = otherPages.values();
+  const offer = JSON.stringify(first.offer);
+  await Promise.all(Array.from({ length: Math.min(4, otherPages.length) }, async () => {
+    for (const offset of queue) {
+      const result = await readOfferPrices(ids.slice(offset, offset + pricePageSize), fetchRequest);
+      if (JSON.stringify(result.offer) !== offer) throw new Error("Offer pricing changed during the catalog read.");
+      for (const price of result.prices) catalog.set(price.variantId, price);
+    }
+  }));
   return {
     end: new Date(campaign.end),
     price(variant: OfferVariant, fallback: { amountMinor: number; regularMinor: number }) {
-      const source = sourcePrice(variant);
-      const price = source && matchedOfferPrice(campaign, source);
+      const source = catalog.get(variant.id);
+      if (!sourceVariant(variant) || source?.productId !== variant.productId) return null;
+      const price = matchedOfferPrice(campaign, source);
       // A delivery-only offer preserves the existing sale price.
       return price && (campaign.discountPercentage > 0 ? price : { ...fallback, freeDelivery: price.freeDelivery });
     },
