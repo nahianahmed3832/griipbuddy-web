@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { activeOffer, devOffer, matchedOfferPrice, offerTimerEnd } from "../src/lib/marketplace/dev-offer.ts";
+import { activeOffer, devOffer, devOfferPricing, matchedOfferPrice, offerTimerEnd } from "../src/lib/marketplace/dev-offer.ts";
 
 const subcategoryId = "6a7f48fdf0ee1f53362478bd";
 const offer = devOffer.parse({
@@ -32,4 +32,45 @@ test("the dev countdown uses the active CMS window and respects display settings
   assert.equal(offerTimerEnd({ ...campaign, pageConf: { timer_config: { show_timer: false, mode: "countdown" } } }, start), null);
   assert.equal(offerTimerEnd({ ...campaign, pageConf: { timer_config: { show_timer: true, mode: "12h_timer" } } }, start), start + 43_200_000);
   assert.equal(offerTimerEnd({ ...campaign, pageConf: { timer_config: { show_timer: true, mode: "24h_timer" } } }, end - 1), end);
+});
+
+test("the checkout reads current published prices only for matching first-party catalog identities", async () => {
+  const environment = {
+    COMMERCE_MODE: "staging", GRIIP_MARKETPLACE_PREVIEW: "1", GRIIP_HYBRID_STOREFRONT: "1",
+    BETTER_AUTH_URL: "https://dev.griipbuddy.com", DATABASE_URL: "postgresql://griipbuddy_demo:fixture@db:5432/griipbuddy_hybrid_demo",
+  };
+  const previous = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
+  Object.assign(process.env, environment);
+  try {
+    const id = "fac000000000000000000001";
+    const productId = "p-" + id;
+    const variantId = "v-fac000000000000000000002";
+    const candidate = { id: variantId, productId, product: { marketplaceShopId: null } };
+    const seller = { ...candidate, product: { marketplaceShopId: "third-party" } };
+    const mockId = { ...candidate, productId: "p-unmapped", id: "v-unmapped" };
+    let regularMinor = 20000;
+    const fallback = { amountMinor: 12000, regularMinor: 14000 };
+    const fetchPrices: typeof fetch = async input => {
+      const url = new URL(String(input));
+      assert.equal(url.origin, "https://dev.griipbuddy.com");
+      assert.equal(url.pathname, "/api/dev-admin-content");
+      assert.equal(url.searchParams.get("product_ids"), id);
+      return Response.json({ offer, prices: [{ variantId, productId, subcategoryId, regularMinor }] });
+    };
+    const first = await devOfferPricing("bd", [candidate, seller, mockId], new Date(start), fetchPrices);
+    assert.equal(first?.price(candidate, fallback)?.amountMinor, 14000);
+    assert.equal(first?.price(seller, fallback), null);
+    assert.equal(first?.price(mockId, fallback), null);
+    assert.equal(first?.price({ ...candidate, productId: "p-fac000000000000000000003" }, fallback), null);
+    regularMinor = 35000;
+    const changed = await devOfferPricing("bd", [candidate], new Date(start), fetchPrices);
+    assert.equal(changed?.price(candidate, fallback)?.amountMinor, 24500);
+    const withdrawn = await devOfferPricing("bd", [candidate], new Date(start), async () => Response.json({ offer, prices: [] }));
+    assert.equal(withdrawn?.price(candidate, fallback), null);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
