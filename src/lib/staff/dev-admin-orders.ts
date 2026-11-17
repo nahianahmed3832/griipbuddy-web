@@ -40,12 +40,12 @@ const itemSnapshot = {
 const workspaceSummary = {
   ...summary, payment: { select: { method: true, status: true, amountMinor: true, collectedAt: true } },
   bangladeshShipment: { select: { status: true, carrier: true, trackingReference: true } },
+  bangladeshRefusedParcelReceipt: { select: { receivedAt: true, disposition: true, restockedUnits: true } },
   items: { orderBy: { id: "asc" }, select: itemSnapshot },
 } satisfies Prisma.OrderSelect;
 const detail = {
   ...workspaceSummary, subtotalMinor: true, discountMinor: true, deliveryMinor: true, taxMinor: true,
   bangladeshShipment: bangladeshTrackingHistory,
-  bangladeshRefusedParcelReceipt: { select: { receivedAt: true, disposition: true, restockedUnits: true } },
   payment: { select: { ...workspaceSummary.payment.select, manualProof: {
     select: { test: true, reviewedAt: true, submittedTransaction: true },
   } } },
