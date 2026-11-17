@@ -28,18 +28,31 @@ const summary = {
 } satisfies Prisma.OrderSelect;
 
 type Summary = Prisma.OrderGetPayload<{ select: typeof summary }>;
-const orderSummary = ({ _count, createdAt, ...order }: Summary) => ({ ...order, createdAt: createdAt.toISOString(), itemCount: _count.items });
+function orderSummary<T extends Summary>({ _count, createdAt, ...order }: T) {
+  return { ...order, createdAt: createdAt.toISOString(), itemCount: _count.items };
+}
 
+const itemSnapshot = {
+  productName: true, variantName: true, sku: true, quantity: true,
+  unitPriceMinor: true, unitDiscountMinor: true, lineTotalMinor: true,
+} satisfies Prisma.OrderItemSelect;
+const workspaceSummary = {
+  ...summary, payment: { select: { method: true, status: true, amountMinor: true, collectedAt: true } },
+  bangladeshShipment: { select: { status: true, carrier: true, trackingReference: true } },
+  items: { orderBy: { id: "asc" }, select: itemSnapshot },
+} satisfies Prisma.OrderSelect;
 const detail = {
-  ...summary, subtotalMinor: true, discountMinor: true, deliveryMinor: true, taxMinor: true,
-  items: { orderBy: { id: "asc" }, select: {
-    productName: true, variantName: true, sku: true, quantity: true,
-    unitPriceMinor: true, unitDiscountMinor: true, lineTotalMinor: true,
-  } },
+  ...workspaceSummary, subtotalMinor: true, discountMinor: true, deliveryMinor: true, taxMinor: true,
 } satisfies Prisma.OrderSelect;
 
 type Cursor = { createdAt: Date; id: string };
-type OrderQuery = { kind: "detail"; id: string } | { kind: "list"; limit: number; search: string; after?: Cursor };
+const workspace = z.object({
+  view: z.literal("workspace"), q: z.string().trim().max(100).optional(), sku: z.string().trim().max(100).optional(),
+  from: z.iso.date().optional(), to: z.iso.date().optional(), creator: z.enum(["USER", "GUEST"]).optional(),
+}).strict().refine(value => !value.from || !value.to || value.from <= value.to);
+type OrderQuery = { kind: "detail"; id: string } | { kind: "list"; limit: number; search: string; after?: Cursor } |
+  { kind: "workspace"; filters: z.infer<typeof workspace> };
+const workspaceLimit = 10_000;
 
 function decodeCursor(value: string): Cursor | undefined {
   if (!/^[a-zA-Z0-9_-]{1,96}$/.test(value)) return;
@@ -55,9 +68,14 @@ function encodeCursor(row: Cursor) {
 }
 
 export function readDevAdminOrderQuery(params: URLSearchParams): OrderQuery | null {
-  const allowed = ["id", "limit", "search", "after"];
   const provided = [...params.keys()];
-  if (new Set(provided).size !== provided.length || provided.some(key => !allowed.includes(key))) return null;
+  if (new Set(provided).size !== provided.length) return null;
+  if (params.get("view") === "workspace") {
+    const parsed = workspace.safeParse(Object.fromEntries(params));
+    return parsed.success ? { kind: "workspace", filters: parsed.data } : null;
+  }
+  const allowed = ["id", "limit", "search", "after"];
+  if (provided.some(key => !allowed.includes(key))) return null;
   const id = params.get("id");
   if (id !== null) return provided.length === 1 && idFormat.safeParse(id).success ? { kind: "detail", id } : null;
   const limit = params.get("limit") ?? "30";
@@ -75,6 +93,22 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
     const { items, subtotalMinor, discountMinor, deliveryMinor, taxMinor, ...summaryFields } = row;
     const order = orderSummary(summaryFields);
     return { ...order, subtotalMinor, discountMinor, deliveryMinor, taxMinor, items };
+  }
+  if (query.kind === "workspace") {
+    const { q, sku, from, to, creator } = query.filters;
+    const contains = (value: string) => ({ contains: value.replace(/[\\%_]/g, "\\$&"), mode: "insensitive" as const });
+    const start = from && new Date(from + "T00:00:00.000+06:00");
+    const end = to && new Date(to + "T23:59:59.999+06:00");
+    const orders = await db.order.findMany({
+      where: { ...scope,
+        ...(q && { reference: contains(q) }),
+        ...(sku && { items: { every: firstParty, some: { ...firstParty, sku: contains(sku) } } }),
+        ...((start || end) && { createdAt: { ...(start && { gte: start }), ...(end && { lte: end }) } }),
+        ...(creator && { shopperId: creator === "USER" ? { not: null } : null }),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: workspaceLimit + 1, select: workspaceSummary,
+    });
+    return { workspaceOrders: orders.length > workspaceLimit ? [] : orders.map(orderSummary), tooMany: orders.length > workspaceLimit };
   }
 
   const { limit, search, after } = query;

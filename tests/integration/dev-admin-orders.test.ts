@@ -85,6 +85,16 @@ test("the stored order projection includes only first-party BD test orders and p
   assert.deepEqual(result.items, [{ productName: "Test item", sku: variants[0], variantName: "Fixture", quantity: 1,
     unitPriceMinor: 1000, unitDiscountMinor: 0, lineTotalMinor: 1000 }]);
   assert.equal(result.totalMinor, 1500);
-  assert.deepEqual(result.payment, { method: "COD", status: "AWAITING_COLLECTION" });
+  assert.deepEqual(result.payment, { method: "COD", status: "AWAITING_COLLECTION", amountMinor: 1500, collectedAt: null });
   assert.doesNotMatch(JSON.stringify(result), /Private|private@example|01700000000/);
+
+  const workspace = await query({ view: "workspace", q: prefix.toUpperCase(), sku: variants[0], creator: "GUEST",
+    from: "2026-11-17", to: "2026-11-17" });
+  assert.ok(workspace && "workspaceOrders" in workspace && workspace.workspaceOrders);
+  assert.deepEqual(workspace.workspaceOrders.map(row => row.id), expected);
+  assert.equal(workspace.workspaceOrders[0].items[0].sku, variants[0]);
+  const emptyDay = await query({ view: "workspace", q: prefix, to: "2026-11-16" });
+  assert.deepEqual(emptyDay, { workspaceOrders: [], tooMany: false });
+  const unmatchedSku = await query({ view: "workspace", q: prefix, sku: "%" });
+  assert.deepEqual(unmatchedSku, { workspaceOrders: [], tooMany: false });
 });

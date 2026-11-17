@@ -40,4 +40,8 @@ test("the query exposes bounded reference search and validates cursor and order 
   for (const value of ["limit=51", "limit=0", "after=malformed", "search=@email", "source=prod", "limit=1&limit=2", `id=${id}&limit=5`]) {
     assert.equal(query(value), null);
   }
+  assert.deepEqual(query("view=workspace&q=BD-&from=2026-11-16&to=2026-11-17&creator=GUEST"),
+    { kind: "workspace", filters: { view: "workspace", q: "BD-", from: "2026-11-16", to: "2026-11-17", creator: "GUEST" } });
+  for (const value of ["view=workspace&creator=owner", "view=workspace&from=2026-11-18&to=2026-11-17",
+    "view=workspace&from=2026-02-31", "view=workspace&sku=first&sku=second"]) assert.equal(query(value), null);
 });

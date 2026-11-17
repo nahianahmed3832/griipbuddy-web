@@ -1,3 +1,5 @@
+location ^~ /api/internal/ { return 404; }
+location ^~ /bd/api/internal/ { return 404; }
 location / {
     client_max_body_size 10m;
     limit_req zone=griipbuddy_dev_marketplace_writes burst=90 nodelay;
