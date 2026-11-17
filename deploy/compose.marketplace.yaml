@@ -1,0 +1,53 @@
+name: griipbuddy-marketplace-dev
+services:
+  db:
+    image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: griipbuddy_marketplace_dev
+      POSTGRES_PASSWORD: ${MARKETPLACE_ADMIN_PASSWORD:?}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -q -U postgres -d griipbuddy_marketplace_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    mem_limit: 384m
+    logging: &logs
+      driver: json-file
+      options: {max-size: 10m, max-file: "2"}
+  app:
+    image: griipbuddy-marketplace-dev:${APP_REVISION:?}
+    restart: unless-stopped
+    env_file: /opt/griipbuddy-marketplace-dev/app.env
+    environment:
+      APP_REVISION: ${APP_REVISION}
+      GRIIP_FIRST_PARTY_STOREFRONT: "1"
+      MARKETPLACE_PAYPAL_US_TEST_SHIPPING_MINOR: ${MARKETPLACE_PAYPAL_US_TEST_SHIPPING_MINOR:-695}
+    ports:
+      - "127.0.0.1:4401:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [database, gateway]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, node, "-e", "fetch('http://127.0.0.1:3000/marketplace/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    mem_limit: 640m
+    logging: *logs
+volumes:
+  postgres:
+networks:
+  database:
+    internal: true
+  gateway:
+    ipam:
+      config:
+        - subnet: ${MARKETPLACE_GATEWAY_SUBNET:-10.236.46.0/28}

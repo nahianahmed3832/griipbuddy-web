@@ -1,0 +1,1073 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MarketCode {
+  bd
+  us
+  ca
+}
+
+enum CurrencyCode {
+  BDT
+  USD
+  CAD
+}
+
+enum CollectionSelection {
+  CURATED
+  NEW
+  FEATURED
+}
+
+enum PublicationState {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum TaxTreatment {
+  MERCHANDISE_RATE
+}
+
+enum OrderStatus {
+  PLACED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  COD
+  PAYPAL
+  SSLCOMMERZ
+  BKASH
+  NAGAD
+  ROCKET
+}
+
+enum PaymentStatus {
+  AWAITING_COLLECTION
+  COLLECTED
+  VOIDED
+  PAID
+  REFUND_PENDING
+  REFUNDED
+  AWAITING_VERIFICATION
+}
+
+enum CodRemittanceStatus {
+  DISCREPANCY
+  MATCHED
+}
+
+enum PayPalCheckoutState {
+  CREATING
+  APPROVAL
+  CAPTURING
+  COMPLETED
+  CANCELLED
+}
+
+enum PrepaidCheckoutState {
+  PREPARING
+  AWAITING_PAYMENT
+  PAID
+  CLOSED
+}
+
+enum FulfillmentStatus {
+  UNFULFILLED
+  PACKING
+  READY_TO_SHIP
+  SHIPPED
+  DELIVERED
+}
+
+enum SellerPreparationStatus {
+  PREPARING
+  READY
+  HANDED_OFF
+}
+
+enum FulfillmentEventType {
+  ORDER_PLACED
+  STATUS_CHANGED
+  ORDER_CANCELLED
+}
+
+enum StaffRole {
+  OWNER
+  PACKER
+}
+
+enum AuditAction {
+  STAFF_CREATED
+  STAFF_REVOKED
+  FULFILLMENT_CHANGED
+  ORDER_CANCELLED
+  CASH_COLLECTION_RECORDED
+  STOCK_CHANGED
+  PRICE_CHANGED
+  PRODUCT_SAVED
+  TAXONOMY_SAVED
+  MARKET_SETTINGS_CHANGED
+  MERCHANDISING_REVIEW
+  COUPON_CHANGED
+  MARKETPLACE_GRANT_CHANGED
+  BD_REFUSED_PARCEL_RECEIVED
+  BD_RETURN_CASE_RECEIVED
+  BD_CASE_REFUND_CONFIRMED
+  MANUAL_PAYMENT_APPROVED
+  MANUAL_PAYMENT_DECLINED
+}
+
+model Department {
+  id          String    @id
+  slug        String    @unique
+  name        String
+  shortName   String
+  description String
+  imageSrc    String
+  imageAlt    String
+  position    Int
+  parentId    String?
+  parent      Department?  @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children    Department[] @relation("DepartmentTree")
+  products    Product[]
+
+  @@index([parentId, position])
+}
+
+model Product {
+  id             String              @id
+  slug           String              @unique
+  departmentId   String
+  department     Department          @relation(fields: [departmentId], references: [id])
+  name           String
+  brand          String?             @db.VarChar(70)
+  description    String
+  shortDescription String?
+  specifications Json
+  keywords       String[]
+  addedOn        DateTime            @db.Date
+  position       Int
+  newArrival     Boolean             @default(false)
+  featured       Boolean             @default(false)
+  active         Boolean             @default(true)
+  publication    PublicationState    @default(DRAFT)
+  demo           Boolean             @default(false)
+  revision       Int                 @default(0)
+  personalizationPrompt String? @db.VarChar(180)
+  personalizationRequired Boolean @default(false)
+  images         ProductImage[]
+  variants       Variant[]
+  collections    CollectionProduct[]
+  marketplaceShopId String? @db.Uuid
+  marketplaceShop MarketplaceShop? @relation(fields: [marketplaceShopId], references: [id], onDelete: Restrict)
+  favorites ShopperFavorite[]
+  savedIn ShopperListItem[]
+  reviews ShopperReview[]
+
+  @@index([departmentId])
+  @@index([publication, position])
+  @@index([marketplaceShopId, publication])
+}
+
+model CatalogMedia {
+  id        String   @id @db.Char(64)
+  data      Bytes
+  createdAt DateTime @default(now())
+}
+
+model MerchandisingCandidate {
+  id              String   @id @db.Char(64)
+  productId       String
+  source          Json
+  sourceVersion   String   @db.Char(64)
+  draft           Json
+  baseline        Json?
+  baseRevision    Int?
+  revision        Int      @default(1)
+  decision        String   @default("pending")
+  approval        Json?
+  ownsDraft       Boolean  @default(false)
+  catalogRevision Int?
+  stagedRevision  Int?
+  publishedAt     DateTime?
+  launch          Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([updatedAt])
+  @@index([productId, ownsDraft])
+}
+
+model ProductImage {
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  position  Int
+  src       String
+  alt       String
+
+  @@id([productId, position])
+  @@index([src])
+}
+
+model Variant {
+  id        String        @id
+  sku       String        @unique
+  gtin      String?       @db.VarChar(14)
+  mpn       String?       @db.VarChar(70)
+  identifiersNotAssigned Boolean @default(false)
+  productId String
+  product   Product       @relation(fields: [productId], references: [id])
+  options   Json
+  label     String
+  imageSrc  String?
+  imageAlt  String?
+  position  Int
+  active    Boolean       @default(true)
+  inventory Inventory?
+  offers    MarketOffer[]
+  purchases OrderItem[]
+
+  @@index([productId])
+  @@index([imageSrc])
+}
+
+model Collection {
+  id          String              @id
+  slug        String              @unique
+  name        String
+  description String
+  selection   CollectionSelection @default(CURATED)
+  position    Int
+  imageSrc    String?
+  imageAlt    String?
+  products    CollectionProduct[]
+}
+
+model CollectionProduct {
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, productId])
+  @@index([productId])
+}
+
+model MarketOffer {
+  variantId          String
+  variant            Variant      @relation(fields: [variantId], references: [id])
+  marketId           MarketCode
+  currency           CurrencyCode
+  amountMinor        Int
+  eligible           Boolean      @default(true)
+  discountMinor      Int?
+  discountStartsAt   DateTime?
+  discountEndsAt     DateTime?
+
+  @@id([variantId, marketId])
+  @@index([marketId, eligible])
+}
+
+// Available units at the single stock location. All markets reference the same row.
+model Inventory {
+  variantId String   @id
+  variant   Variant  @relation(fields: [variantId], references: [id])
+  available Int
+  updatedAt DateTime @updatedAt
+}
+
+model CheckoutPolicy {
+  marketId       MarketCode   @id
+  countryCode    String       @db.Char(2)
+  currency       CurrencyCode
+  enabled        Boolean      @default(false)
+  codEnabled     Boolean      @default(false)
+  revision       Int          @default(0)
+  taxTreatment   TaxTreatment?
+  taxBasisPoints Int?
+  taxLabel       String?
+  deliveryZones  DeliveryZone[]
+}
+
+model DeliveryZone {
+  marketId      MarketCode
+  policy        CheckoutPolicy @relation(fields: [marketId], references: [marketId])
+  district      String
+  districtLabel String
+  method        String
+  label         String
+  chargeMinor   Int?
+  guidance      String?
+  codEligible   Boolean        @default(true)
+  revision      Int            @default(0)
+  enabled       Boolean        @default(true)
+
+  @@id([marketId, district, method])
+}
+
+model CheckoutAttempt {
+  id          String   @id @db.Uuid
+  guestKey    String   @db.VarChar(64)
+  requestHash String   @db.VarChar(64)
+  createdAt   DateTime @default(now())
+  abandonedAt DateTime?
+  recoveredCart Json?
+  order       Order?
+  paypal      PayPalCheckout?
+  prepaid     PrepaidCheckout?
+}
+
+model PayPalCheckout {
+  attemptId       String              @id @db.Uuid
+  attempt         CheckoutAttempt     @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  state           PayPalCheckoutState @default(CREATING)
+  checkout        Json?
+  quote           Json?
+  shopperId       String?
+  providerOrderId String?             @unique
+  approvalUrl     String?
+  captureId       String?             @unique
+  captureStartedAt DateTime?
+  refundId        String?             @unique
+  refundStartedAt DateTime?
+  refundActorId   String?
+  expiresAt       DateTime
+
+  @@index([state, expiresAt])
+}
+
+model PrepaidCheckout {
+  attemptId           String               @id @db.Uuid
+  attempt             CheckoutAttempt      @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  providerId          String               @unique @db.VarChar(30)
+  state               PrepaidCheckoutState @default(PREPARING)
+  checkout            Json?
+  quote               Json?
+  marketplaceShopIds  Json?
+  shopperId           String?
+  direct              Boolean              @default(false)
+  couponCode          String?              @db.VarChar(32)
+  redirectUrl         String?
+  bankTransactionId   String?              @unique
+  expiresAt           DateTime
+
+  @@index([state, expiresAt])
+  @@index([couponCode, state])
+}
+
+model Order {
+  id                String            @id @default(uuid()) @db.Uuid
+  reference         String            @unique
+  attemptId         String            @unique @db.Uuid
+  attempt           CheckoutAttempt   @relation(fields: [attemptId], references: [id])
+  marketId          MarketCode
+  currency          CurrencyCode
+  status            OrderStatus       @default(PLACED)
+  fulfillmentStatus FulfillmentStatus @default(UNFULFILLED)
+  customerName      String
+  phone             String
+  email             String?
+  district          String
+  districtLabel     String
+  locality          String
+  address           String
+  postalCode        String?
+  deliveryMethod    String
+  deliveryLabel     String
+  deliveryGuidance  String?
+  taxLabel          String
+  subtotalMinor     Int
+  discountMinor     Int
+  deliveryMinor     Int
+  taxMinor          Int
+  totalMinor        Int
+  returnTerms       Json?
+  carrier           String?
+  trackingReference String?
+  cancelledAt       DateTime?
+  // Null identifies historical rows whose test/live classification is unknown.
+  measurementTest   Boolean?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  items             OrderItem[]
+  payment           Payment?
+  events            FulfillmentEvent[]
+  codRemittances    CodRemittance[]
+  sellerFulfillments MarketplaceSellerFulfillment[]
+  measurement       MeasurementOrder?
+  shopperId         String?
+  shopper           Shopper? @relation(fields: [shopperId], references: [id], onDelete: SetNull)
+  gift              Boolean @default(false)
+  giftNote          String?
+  couponCode        String?           @db.VarChar(32)
+  couponDiscountMinor Int             @default(0)
+  prepaidDiscountMinor Int            @default(0)
+  requests          ShopperRequest[]
+  reviews           ShopperReview[]
+  cases             OrderCase[]
+  bangladeshShipment BangladeshShipment?
+  bangladeshRefusedParcelReceipt BangladeshRefusedParcelReceipt?
+
+  @@index([createdAt, id])
+  @@index([status, fulfillmentStatus, createdAt])
+  @@index([shopperId, createdAt])
+  @@index([couponCode])
+}
+
+enum MeasurementKind {
+  PRODUCT_VIEW
+  CART_ADD
+  CHECKOUT_START
+}
+
+model MeasurementJourney {
+  id        String   @id @db.VarChar(64)
+  test      Boolean
+  grantedAt DateTime @default(now())
+  expiresAt DateTime
+  events    MeasurementEvent[]
+  orders    MeasurementOrder[]
+
+  @@index([expiresAt])
+}
+
+model MeasurementEvent {
+  id        String             @id @db.VarChar(64)
+  journeyId String             @db.VarChar(64)
+  journey   MeasurementJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  kind      MeasurementKind
+  marketId  MarketCode
+  productId String?            @db.VarChar(100)
+  variantId String?            @db.VarChar(100)
+  quantity  Int?
+  campaign  String?            @db.VarChar(64)
+  at        DateTime           @default(now())
+
+  @@index([journeyId, marketId, kind, at])
+  @@index([at, id])
+}
+
+model MeasurementOrder {
+  orderId   String             @id @db.Uuid
+  order     Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  journeyId String             @db.VarChar(64)
+  journey   MeasurementJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+
+  @@index([journeyId])
+}
+
+model OrderItem {
+  id                String       @id @default(uuid()) @db.Uuid
+  orderId           String       @db.Uuid
+  order             Order        @relation(fields: [orderId], references: [id])
+  variantId         String
+  variant           Variant      @relation(fields: [variantId], references: [id])
+  productName       String
+  sku               String
+  variantName       String
+  quantity          Int
+  unitPriceMinor    Int
+  unitDiscountMinor Int
+  lineTotalMinor    Int
+  couponDiscountMinor Int @default(0)
+  prepaidDiscountMinor Int @default(0)
+  currency          CurrencyCode
+  marketplaceShopId String? @db.Uuid
+  personalization   String  @default("") @db.VarChar(120)
+  returnCaseLines   OrderCaseReturnLine[]
+  issueCases        OrderCase[] @relation("CaseIssueItem")
+
+  @@unique([orderId, variantId, personalization])
+  @@index([marketplaceShopId, orderId])
+}
+
+model Payment {
+  orderId        String        @id @db.Uuid
+  order          Order         @relation(fields: [orderId], references: [id])
+  method         PaymentMethod
+  status         PaymentStatus @default(AWAITING_COLLECTION)
+  amountMinor    Int
+  currency       CurrencyCode
+  collectedAt    DateTime?
+  collectedById  String?
+  collectedBy    User?         @relation("PaymentCollector", fields: [collectedById], references: [id])
+  createdAt      DateTime      @default(now())
+  manualProof    BangladeshManualProof?
+}
+
+model BangladeshManualProof {
+  orderId               String        @id @db.Uuid
+  payment               Payment       @relation(fields: [orderId], references: [orderId])
+  method                PaymentMethod
+  recipient             String
+  test                  Boolean
+  payerPhone            String?
+  submittedTransaction String?
+  receipt               Bytes?
+  submittedAt           DateTime      @default(now())
+  reviewedAt            DateTime?
+  reviewNote            String?
+  verifiedTransaction   String?
+
+  @@unique([method, test, verifiedTransaction])
+}
+
+enum BangladeshShipmentStatus {
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  REFUSED
+}
+
+enum BangladeshShipmentSource {
+  MANUAL
+  DEV_SIMULATOR
+}
+
+model BangladeshShipment {
+  orderId           String                   @id @db.Uuid
+  order             Order                    @relation(fields: [orderId], references: [id])
+  carrier           String                   @db.VarChar(60)
+  trackingReference String                   @db.VarChar(80)
+  status            BangladeshShipmentStatus
+  source            BangladeshShipmentSource
+  statusUpdatedAt   DateTime                 @default(now())
+  events            BangladeshShipmentEvent[]
+}
+
+model BangladeshShipmentEvent {
+  orderId    String                   @db.Uuid
+  shipment   BangladeshShipment       @relation(fields: [orderId], references: [orderId])
+  status     BangladeshShipmentStatus
+  actorId    String
+  evidence   String?                  @db.VarChar(200)
+  recordedAt DateTime                 @default(now())
+
+  @@id([orderId, status])
+}
+
+model CodRemittance {
+  orderId            String              @db.Uuid
+  order              Order               @relation(fields: [orderId], references: [id])
+  attempt            Int
+  status             CodRemittanceStatus
+  reference          String              @db.VarChar(80)
+  expectedGrossMinor Int
+  grossMinor         Int
+  deductionsMinor    Int
+  netMinor           Int
+  actorId            String?
+  actor              User?               @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt          DateTime            @default(now())
+
+  @@id([orderId, attempt])
+  @@index([status, orderId])
+}
+
+model FulfillmentEvent {
+  id          String               @id @default(uuid()) @db.Uuid
+  orderId     String               @db.Uuid
+  order       Order                @relation(fields: [orderId], references: [id])
+  actorId     String?
+  actor       User?                @relation("FulfillmentActor", fields: [actorId], references: [id])
+  type        FulfillmentEventType
+  status      FulfillmentStatus
+  createdAt   DateTime             @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model StaffAccess {
+  userId    String    @id
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      StaffRole
+  marketIds MarketCode[] @default([bd, us])
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+}
+
+model AuditEvent {
+  id         String      @id @default(uuid()) @db.Uuid
+  actorId    String?
+  actor      User?       @relation("AuditActor", fields: [actorId], references: [id])
+  action     AuditAction
+  target     String
+  changes    Json
+  createdAt  DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([target, createdAt])
+}
+
+// Better Auth's credential, session, and verification schema.
+model User {
+  id            String             @id
+  name          String
+  email         String             @unique
+  emailVerified Boolean            @default(false)
+  image         String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  staff         StaffAccess?
+  collections   Payment[]          @relation("PaymentCollector")
+  codRemittances CodRemittance[]
+  fulfillment   FulfillmentEvent[] @relation("FulfillmentActor")
+  audit         AuditEvent[]       @relation("AuditActor")
+  caseEvents    OrderCaseEvent[]
+  refusedParcelReceipts BangladeshRefusedParcelReceipt[]
+  returnCaseReceipts OrderCase[] @relation("ReturnCaseReceiver")
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@unique([providerId, accountId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model RateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+
+  @@map("rateLimit")
+}
+
+model RequestQuota {
+  key       String   @id @db.Char(64)
+  resetsAt  DateTime
+  hits      Int
+
+  @@index([resetsAt])
+}
+
+enum ShopperMailStatus {
+  CAPTURED
+  SENDING
+  SENT
+  FAILED
+}
+
+model ShopperMailRecord {
+  id          String            @id @default(uuid()) @db.Uuid
+  deliveryKey String?           @unique @db.VarChar(180)
+  kind        String            @db.VarChar(32)
+  status      ShopperMailStatus
+  recipient   String?           @db.VarChar(254)
+  subject     String?           @db.VarChar(160)
+  text        String?
+  createdAt   DateTime          @default(now())
+
+  @@index([recipient, createdAt])
+  @@index([status, createdAt])
+}
+
+model Shopper {
+  id String @id
+  name String
+  email String @unique
+  emailVerified Boolean @default(false)
+  phoneNumber String? @unique
+  phoneNumberVerified Boolean @default(false)
+  image String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sessions ShopperSession[]
+  accounts ShopperIdentity[]
+  favorites ShopperFavorite[]
+  lists ShopperList[]
+  follows ShopperFollow[]
+  orders Order[]
+  shop MarketplaceShop?
+  reviews ShopperReview[]
+  requests ShopperRequest[]
+  addresses ShopperAddress[]
+  marketProfiles ShopperMarketProfile[]
+  accountEvents ShopperAccountEvent[]
+}
+
+model ShopperMarketProfile {
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  marketId MarketCode
+  displayName String? @db.VarChar(65)
+  language String @default("en") @db.VarChar(2)
+  marketingOptIn Boolean @default(false)
+  updatedAt DateTime @updatedAt
+
+  @@id([shopperId, marketId])
+}
+
+model ShopperAccountEvent {
+  id String @id @default(uuid()) @db.Uuid
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  marketId MarketCode
+  action String
+  createdAt DateTime @default(now())
+
+  @@index([shopperId, marketId, createdAt])
+}
+
+model ShopperSession {
+  id String @id
+  token String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId String
+  user Shopper @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ShopperIdentity {
+  id String @id
+  accountId String
+  providerId String
+  userId String
+  user Shopper @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken String?
+  refreshToken String?
+  idToken String?
+  accessTokenExpiresAt DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope String?
+  password String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model ShopperVerification {
+  id String @id
+  identifier String
+  value String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model MarketplaceCoupon {
+  code         String @id @db.VarChar(32)
+  shopId       String? @db.Uuid
+  shop         MarketplaceShop? @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  kind         String
+  value        Int
+  minimumMinor Int @default(0)
+  useLimit     Int?
+  enabled      Boolean @default(true)
+  endsAt       DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([shopId])
+}
+
+model MarketplaceShop {
+  id String @id @default(uuid()) @db.Uuid
+  ownerId String? @unique
+  owner Shopper? @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  slug String @unique
+  name String
+  announcement String
+  about String
+  published Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  listings Product[]
+  followers ShopperFollow[]
+  coupons MarketplaceCoupon[]
+  requests ShopperRequest[]
+  fulfillments MarketplaceSellerFulfillment[]
+  marketGrants MarketplaceShopMarket[]
+}
+
+enum MarketplaceMarketStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
+model MarketplaceShopMarket {
+  shopId String @db.Uuid
+  shop MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  marketId MarketCode
+  status MarketplaceMarketStatus @default(PENDING)
+  requestedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([shopId, marketId])
+  @@index([marketId, status])
+}
+
+model MarketplaceSellerFulfillment {
+  orderId   String                  @db.Uuid
+  order     Order                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopId    String                  @db.Uuid
+  shop      MarketplaceShop          @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  status    SellerPreparationStatus
+  updatedAt DateTime                @updatedAt
+
+  @@id([orderId, shopId])
+  @@index([shopId])
+}
+
+model ShopperFavorite {
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([shopperId, productId])
+  @@index([shopperId, createdAt])
+}
+
+model ShopperList {
+  id String @id @default(uuid()) @db.Uuid
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  name String
+  registry Boolean @default(false)
+  public Boolean @default(false)
+  createdAt DateTime @default(now())
+  items ShopperListItem[]
+
+  @@index([shopperId, createdAt])
+}
+
+model ShopperListItem {
+  listId String @db.Uuid
+  list ShopperList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([listId, productId])
+  @@index([listId, createdAt])
+}
+
+model ShopperFollow {
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  shopId String @db.Uuid
+  shop MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([shopperId, shopId])
+}
+
+model ShopperReview {
+  id String @id @default(uuid()) @db.Uuid
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  orderId String @db.Uuid
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  stars Int
+  text String
+  visible Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orderId, productId])
+  @@index([productId, visible, createdAt])
+}
+
+model ShopperRequest {
+  id String @id @default(uuid()) @db.Uuid
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Restrict)
+  shopId String @db.Uuid
+  shop MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  orderId String? @db.Uuid
+  order Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  subject String
+  closed Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages ShopperMessage[]
+
+  @@index([shopperId, updatedAt])
+  @@index([shopId, updatedAt])
+}
+
+model ShopperMessage {
+  id String @id @default(uuid()) @db.Uuid
+  requestId String @db.Uuid
+  request ShopperRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fromShop Boolean @default(false)
+  text String
+  createdAt DateTime @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+model ShopperAddress {
+  id String @id @default(uuid()) @db.Uuid
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  marketId MarketCode @default(bd)
+  isDefault Boolean @default(false)
+  label String
+  details Json
+  createdAt DateTime @default(now())
+
+  @@index([shopperId, createdAt])
+  @@index([shopperId, marketId, isDefault, createdAt], map: "ShopperAddress_owner_market_default_created_idx")
+}
+
+enum OrderCaseKind {
+  RETURN
+  DISPUTE
+  CANCEL
+}
+
+enum OrderCaseStatus {
+  OPEN
+  IN_REVIEW
+  RETURN_APPROVED
+  DECLINED
+  RESOLVED
+  WITHDRAWN
+  RETURN_RECEIVED
+}
+
+model OrderCase {
+  id        String          @id @default(uuid()) @db.Uuid
+  orderId   String          @db.Uuid
+  order     Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  kind      OrderCaseKind
+  reason    String?         @db.VarChar(32)
+  issueItemId String?       @db.Uuid
+  issueItem OrderItem?      @relation("CaseIssueItem", fields: [issueItemId], references: [id], onDelete: SetNull)
+  status    OrderCaseStatus @default(OPEN)
+  revision  Int            @default(0)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  events    OrderCaseEvent[]
+  attachment OrderCaseAttachment?
+  returnLines OrderCaseReturnLine[]
+  refundAmountMinor Int?
+  refundMethod String?       @db.VarChar(60)
+  refundReference String?    @db.VarChar(80)
+  refundConfirmedAt DateTime?
+  returnReceivedAt DateTime?
+  returnReceivedById String?
+  returnReceivedBy User? @relation("ReturnCaseReceiver", fields: [returnReceivedById], references: [id], onDelete: SetNull)
+  returnDisposition BangladeshReturnDisposition?
+
+  @@index([orderId, updatedAt])
+  @@index([status, updatedAt])
+  @@unique([orderId, refundMethod, refundReference])
+}
+
+model OrderCaseAttachment {
+  caseId    String    @id @db.Uuid
+  orderCase OrderCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  data      Bytes
+}
+
+enum BangladeshReturnDisposition {
+  RESTOCK
+  HOLD
+}
+
+model BangladeshRefusedParcelReceipt {
+  orderId       String                     @id @db.Uuid
+  order         Order                      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  receivedAt    DateTime                   @default(now())
+  receivedById  String?
+  receivedBy    User?                      @relation(fields: [receivedById], references: [id], onDelete: SetNull)
+  disposition   BangladeshReturnDisposition
+  restockedUnits Int
+  note          String                     @db.VarChar(500)
+}
+
+model OrderCaseReturnLine {
+  caseId      String    @db.Uuid
+  orderCase   OrderCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  orderItemId String    @db.Uuid
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  quantity    Int
+
+  @@id([caseId, orderItemId])
+  @@index([orderItemId])
+}
+
+model OrderCaseEvent {
+  id        String          @id @default(uuid()) @db.Uuid
+  caseId    String          @db.Uuid
+  orderCase OrderCase       @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  status    OrderCaseStatus
+  note      String?
+  actorId   String?
+  shopperActorId String?
+  refundConfirmed Boolean @default(false)
+  actor     User?           @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  revision  Int
+  createdAt DateTime       @default(now())
+
+  @@unique([caseId, revision])
+}

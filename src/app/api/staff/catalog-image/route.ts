@@ -1,0 +1,23 @@
+import { getStaff } from "@/lib/staff/access";
+import { storeCatalogImage, uploadLimit } from "@/lib/staff/catalog-media";
+import { OperationError } from "@/lib/staff/operations";
+import { privateHeaders, readBody, sameOrigin } from "@/lib/db/http";
+import { consumeQuota, reportFailure } from "@/lib/db/observability";
+
+export async function POST(request: Request) {
+  const fail = (message: string, status: number) => Response.json({ message }, { status, headers: privateHeaders });
+  if (!sameOrigin(request)) return fail("Use the product editor to upload images.", 403);
+  try {
+    const staff = await getStaff();
+    if (staff?.role !== "OWNER") return fail("Owner access is required.", 403);
+    if (!await consumeQuota("image.upload", staff.id, 50, 600)) return fail("Too many uploads. Try again in a few minutes.", 429);
+    const data = await readBody(request, uploadLimit);
+    if (!data) return fail("Upload a still JPEG, PNG, or WebP image up to 4 MB.", 413);
+    const src = await storeCatalogImage(staff.id, data, request.headers.get("content-type") ?? "");
+    return Response.json({ src }, { status: 201, headers: privateHeaders });
+  } catch (error) {
+    if (error instanceof OperationError) return fail(error.message, 422);
+    reportFailure("media.upload", undefined, error);
+    return fail("The upload could not be saved. Try again.", 503);
+  }
+}

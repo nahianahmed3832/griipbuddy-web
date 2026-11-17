@@ -1,0 +1,39 @@
+.account-order-list .account-order-row {
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  align-items: start;
+  gap: .75rem 1.25rem;
+}
+
+.account-order-primary,
+.account-order-row dl {
+  display: grid;
+  gap: .35rem;
+}
+
+.account-order-primary time,
+.account-order-row dt {
+  color: var(--color-muted);
+  font-size: .85rem;
+}
+
+.account-order-items {
+  display: grid;
+  gap: .15rem;
+  font-size: .9rem;
+  overflow-wrap: anywhere;
+}
+
+.account-order-row dd {
+  margin: 0;
+  font-weight: 650;
+}
+
+@media (max-width: 540px) {
+  .account-order-list .account-order-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-order-row dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

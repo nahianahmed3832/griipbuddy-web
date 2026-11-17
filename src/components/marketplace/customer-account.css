@@ -1,0 +1,47 @@
+.customer-account {
+  display: grid;
+  gap: 1.25rem;
+  max-width: 58rem;
+}
+.customer-account__intro,
+.customer-account__cards,
+.customer-account__stack {
+  display: grid;
+  gap: .8rem;
+  min-width: 0;
+}
+.customer-account__intro p,
+.customer-account__intro h1 {
+  margin: 0;
+}
+.customer-account__intro a {
+  justify-self: start;
+  padding-block: .4rem;
+  text-decoration: underline;
+  text-underline-offset: .18em;
+}
+.customer-account__nav {
+  display: flex;
+  gap: .35rem .8rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line, #dedad4);
+  padding-bottom: .65rem;
+}
+.customer-account__nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding-inline: .35rem;
+}
+.customer-account__nav a[aria-current="page"] {
+  text-decoration: underline;
+  text-underline-offset: .25em;
+  font-weight: 700;
+}
+.customer-account__cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+}
+.customer-account .commerce-panel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

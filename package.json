@@ -1,0 +1,59 @@
+{
+  "name": "griipbuddy-storefront",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.18.0 || >=24"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3100",
+    "build": "next build",
+    "start": "node scripts/start-local.mjs",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "test": "node --test tests/*.test.ts",
+    "test:e2e": "playwright test",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "staff:create": "tsx scripts/create-staff.ts",
+    "staff:revoke": "tsx scripts/revoke-staff.ts",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build",
+    "test:integration": "tsx --test --test-concurrency=1 tests/integration/*.test.ts",
+    "test:e2e:database": "GRIIPBUDDY_ENV_FILE=.env.test playwright test"
+  },
+  "dependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "better-auth": "1.7.22",
+    "csv-parse": "7.0.3",
+    "dotenv": "18.0.10",
+    "lucide-react": "1.70.0",
+    "next": "16.4.6",
+    "nodemailer": "10.3.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "sharp": "0.35.5",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@next/eslint-plugin-next": "16.4.1",
+    "@playwright/test": "1.65.0",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "eslint": "10.14.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "postcss": "8.5.32",
+    "prisma": "7.10.1",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2"
+  }
+}

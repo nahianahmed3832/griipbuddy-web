@@ -1,0 +1,10 @@
+.acquisition { display: grid; gap: 16px; min-width: 0; }
+.acquisition > .commerce-intro { margin-bottom: 4px; }
+.acquisition-table,
+.acquisition-payload { overflow: auto; min-width: 0; max-width: 100%; }
+.acquisition-table table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.acquisition-table :is(th, td) { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--color-line); }
+.acquisition-table th { background: var(--color-surface); white-space: nowrap; }
+.acquisition-table td:first-child { min-width: 150px; }
+.acquisition-table tr:last-child td { border-bottom: 0; }
+.acquisition-payload { padding: 14px; border: 1px solid var(--color-line); border-radius: 8px; }
