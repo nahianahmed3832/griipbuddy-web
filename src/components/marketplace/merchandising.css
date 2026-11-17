@@ -45,8 +45,6 @@
     --sale-paper: var(--sale-cream-paper);
     background: var(--sale-burgundy);
   }
-
-  .mp-cms-mobile-title { display: none; }
 }
 
 .mp-sale-message { display: grid; justify-items: start; gap: 10px; }
@@ -178,15 +176,6 @@
   .mp-sale-products { grid-template-columns: minmax(0, 1fr); }
   .mp-sale-product + .mp-sale-product { display: none; }
   .mp-sale-photo { aspect-ratio: 1.02; }
-
-  .mp-home--desktop-sale {
-    display: flex;
-    flex-direction: column;
-    reading-flow: flex-visual;
-  }
-
-  .mp-home--desktop-sale .mp-home-cms { order: -1; }
-  .mp-sale-banner--desktop-only, .mp-cms-desktop-title { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

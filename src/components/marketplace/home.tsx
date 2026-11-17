@@ -27,7 +27,8 @@ export async function MarketplaceHome({ market, departments, products }: { marke
   const region = regional ? market.id : undefined;
   const href = (path: string) => marketStoreHref(path, region);
   const adminContent = market.id === "bd" ? await readAdminContent() : null;
-  const customHero = adminContent?.content?.hero_section?.some(slide =>
+  const bangladeshStorefront = regional && market.id === "bd";
+  const customHero = !bangladeshStorefront && adminContent?.content?.hero_section?.some(slide =>
     adminMedia(slide.video_url) || adminMedia(slide.thumbnail_url));
   const models = catalogDevices(products);
   const availableDepartments = stockedDepartments(departments, products.map(product => product.departmentId));
@@ -51,11 +52,9 @@ export async function MarketplaceHome({ market, departments, products }: { marke
   const deals = available.filter(card => discountPercentage(card) > 0)
     .sort((first, second) => discountPercentage(second) - discountPercentage(first)).slice(0, 6);
   const topDeal = deals[0];
-  const bangladeshDesktop = regional && market.id === "bd";
-  const saleBeforeCms = Boolean(bangladeshDesktop && customHero && topDeal);
   const cms = adminContent && (
     <AdminHomeContent data={adminContent} market={market} departments={departments} products={products}
-      regional={regional} saleBeforeCms={saleBeforeCms} />
+      regional={regional} showPromotionalMedia={!bangladeshStorefront} />
   );
   const end = topDeal?.promotion?.endsAt;
   const remaining = topDeal?.promotion?.remainingSeconds ?? 0;
@@ -68,11 +67,10 @@ export async function MarketplaceHome({ market, departments, products }: { marke
     ...departmentTiles.slice(1, 4),
   ];
   return <>
-    <div className={saleBeforeCms ? "shell mp-home mp-home--desktop-sale" : "shell mp-home"}>
-      {!saleBeforeCms && cms}
-      {(!customHero || saleBeforeCms) && (topDeal ? <section
-        className={saleBeforeCms ? "mp-sale-banner mp-sale-banner--desktop-only" : "mp-sale-banner"}
-        data-market={market.id} data-classic-desktop={bangladeshDesktop || undefined} aria-labelledby="mp-sale-heading">
+    <div className="shell mp-home">
+      {!bangladeshStorefront && cms}
+      {!customHero && (topDeal ? <section className="mp-sale-banner"
+        data-market={market.id} data-classic-desktop={bangladeshStorefront || undefined} aria-labelledby="mp-sale-heading">
         <div className="mp-sale-message">
           <p>{market.id === "bd" ? "Bangladesh sale" : "US sale"}</p>
           <h1 id="mp-sale-heading">Up to {discountPercentage(topDeal)}% off</h1>
@@ -87,7 +85,7 @@ export async function MarketplaceHome({ market, departments, products }: { marke
         <div className="mp-sale-products">
           {deals.slice(0, 2).map(card => <Link key={card.id} href={productHref(card, region)} className="mp-sale-product">
             <span className="mp-sale-photo"><TileImage image={card.image} responsive={regional}
-              sizes="(max-width: 730px) 40vw, 22vw" priority={!saleBeforeCms && card.id === topDeal.id}/></span>
+              sizes="(max-width: 730px) 40vw, 22vw" priority={card.id === topDeal.id}/></span>
             <span className="mp-sale-price"><strong>{formatMoney(card.priceMinor, market)}</strong> <del>{formatMoney(card.regularMinor!, market)}</del></span>
             <span className="sr-only">{card.name}</span>
           </Link>)}
@@ -113,7 +111,7 @@ export async function MarketplaceHome({ market, departments, products }: { marke
         {deals.length > 4 ? <ProductRail><ProductGrid cards={deals} market={market} regional={regional} activity={activity}/></ProductRail>
           : <ProductGrid cards={deals} market={market} regional={regional} activity={activity}/>}
       </section>}
-      {saleBeforeCms && <div className="mp-home-cms">{cms}</div>}
+      {bangladeshStorefront && cms}
       <RecentlyViewed market={market} regional={regional}/>
       {models.length > 0 && <section className="mp-home-section" aria-labelledby="mp-models-heading">
         <div className="mp-section-heading"><h2 id="mp-models-heading">Shop by phone model</h2><Link href={href("/shop")}>Browse all <ArrowRight size={17} aria-hidden="true"/></Link></div>
