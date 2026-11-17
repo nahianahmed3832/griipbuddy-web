@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "../../generated/prisma/client.ts";
 import type { DbReader } from "../db/client.ts";
-import { bangladeshTrackingHistory } from "../commerce/bangladesh-shipment.ts";
+import { bangladeshStaffTrackingHistory } from "../commerce/bangladesh-shipment.ts";
 import { storeShop } from "../marketplace/constants.ts";
 import { hybridDemoMode } from "../release-config.ts";
 
@@ -45,7 +45,8 @@ const workspaceSummary = {
 } satisfies Prisma.OrderSelect;
 const detail = {
   ...workspaceSummary, subtotalMinor: true, discountMinor: true, deliveryMinor: true, taxMinor: true,
-  bangladeshShipment: bangladeshTrackingHistory,
+  bangladeshShipment: bangladeshStaffTrackingHistory,
+  bangladeshRefusedParcelReceipt: { select: { ...workspaceSummary.bangladeshRefusedParcelReceipt.select, note: true } },
   payment: { select: { ...workspaceSummary.payment.select, manualProof: {
     select: { test: true, reviewedAt: true, submittedTransaction: true },
   } } },
