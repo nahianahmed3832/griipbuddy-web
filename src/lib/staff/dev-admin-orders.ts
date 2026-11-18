@@ -39,7 +39,8 @@ const itemSnapshot = {
 } satisfies Prisma.OrderItemSelect;
 const currentReturnCases = { kind: "RETURN", OR: [{ status: { in: ["OPEN", "IN_REVIEW", "RETURN_APPROVED"] } }, { returnReceivedAt: { not: null } }] } satisfies Prisma.OrderCaseWhereInput;
 const workspaceSummary = {
-  ...summary, payment: { select: { method: true, status: true, amountMinor: true, collectedAt: true } },
+  ...summary, shippingWarehouseId: true, shippingWarehouseName: true,
+  payment: { select: { method: true, status: true, amountMinor: true, collectedAt: true } },
   bangladeshShipment: { select: { status: true, carrier: true, trackingReference: true } },
   bangladeshRefusedParcelReceipt: { select: { receivedAt: true, disposition: true, restockedUnits: true } },
   items: { orderBy: { id: "asc" }, select: itemSnapshot },
@@ -73,12 +74,14 @@ const reportingSummary = {
 } satisfies Prisma.OrderSelect;
 
 type Cursor = { createdAt: Date; id: string };
+const warehouseIds = z.string().max(499).regex(/^[a-f0-9]{24}(,[a-f0-9]{24})*$/).transform(value => [...new Set(value.split(","))]);
 const workspace = z.object({
   view: z.literal("workspace"), q: z.string().trim().max(100).optional(), sku: z.string().trim().max(100).optional(),
+  locations: warehouseIds.optional(),
   from: z.iso.date().optional(), to: z.iso.date().optional(), creator: z.enum(["USER", "GUEST"]).optional(),
 }).strict().refine(value => !value.from || !value.to || value.from <= value.to);
 const reporting = z.object({
-  view: z.literal("reporting"), from: z.iso.date().optional(), to: z.iso.date().optional(), active: z.literal("1").optional(),
+  view: z.literal("reporting"), locations: warehouseIds.optional(), from: z.iso.date().optional(), to: z.iso.date().optional(), active: z.literal("1").optional(),
 }).strict().refine(value => !value.from || !value.to || value.from <= value.to);
 type OrderQuery = { kind: "detail"; id: string } | { kind: "list"; limit: number; search: string; after?: Cursor } |
   { kind: "workspace"; filters: z.infer<typeof workspace> } | { kind: "reporting"; filters: z.infer<typeof reporting> };
@@ -133,12 +136,13 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
     return { ...order, subtotalMinor, discountMinor, deliveryMinor, taxMinor, items, manualPayment };
   }
   if (query.kind === "workspace") {
-    const { q, sku, from, to, creator } = query.filters;
+    const { q, sku, from, to, creator, locations } = query.filters;
     const contains = (value: string) => ({ contains: value.replace(/[\\%_]/g, "\\$&"), mode: "insensitive" as const });
     const start = from && new Date(from + "T00:00:00.000+06:00");
     const end = to && new Date(to + "T23:59:59.999+06:00");
     const orders = await db.order.findMany({
       where: { ...devAdminOrderScope,
+        ...(locations && { shippingWarehouseId: { in: locations } }),
         ...(q && { reference: contains(q) }),
         ...(sku && { items: { every: firstParty, some: { ...firstParty, sku: contains(sku) } } }),
         ...((start || end) && { createdAt: { ...(start && { gte: start }), ...(end && { lte: end }) } }),
@@ -150,7 +154,7 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
   }
 
   if (query.kind === "reporting") {
-    const { from, to, active } = query.filters;
+    const { from, to, active, locations } = query.filters;
     const range = { ...(from && { gte: new Date(from + "T00:00:00.000+06:00") }),
       ...(to && { lte: new Date(to + "T23:59:59.999+06:00") }) };
     const dated: Prisma.OrderWhereInput[] = from || to ? [
@@ -165,7 +169,7 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
       { cases: { some: { kind: "RETURN", status: { in: ["OPEN", "IN_REVIEW", "RETURN_APPROVED"] } } } },
     ] : [];
     const matched = [...dated, ...current];
-    const rows = await db.order.findMany({ where: { ...devAdminOrderScope, ...(matched.length && { OR: matched }) },
+    const rows = await db.order.findMany({ where: { ...devAdminOrderScope, ...(locations && { shippingWarehouseId: { in: locations } }), ...(matched.length && { OR: matched }) },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: workspaceLimit + 1, select: reportingSummary });
     return { reportOrders: rows.length > workspaceLimit ? [] : rows.map(orderSummary), tooMany: rows.length > workspaceLimit };
   }

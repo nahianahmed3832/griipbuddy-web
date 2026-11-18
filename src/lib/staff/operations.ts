@@ -12,7 +12,7 @@ import { isManualPaymentMethod } from "../commerce/manual-payment-methods.ts";
 import { notifyOrder } from "../commerce/order-notifications.ts";
 import { hybridDemoMode, hybridStoreMode } from "../release-config.ts";
 import { devAdminOrderScope } from "./dev-admin-orders.ts";
-import type { DevAdminFulfillmentOperator } from "./dev-admin-order-proof.ts";
+import { devAdminWarehouse, type DevAdminFulfillmentOperator } from "./dev-admin-order-proof.ts";
 
 export class OperationError extends Error {
   constructor(message: string, readonly status = 409) { super(message); }
@@ -102,6 +102,9 @@ export async function lockFulfillmentOrder(tx: Prisma.TransactionClient, actor: 
   }
   if (process.env.COMMERCE_MODE !== "staging" || !hybridDemoMode() || returns && !actor.canReturn) deny();
   const order = await lockedOrder(tx, orderId, devAdminOrderScope);
+  if (actor.assignedWarehouseId && order.shippingWarehouseId && order.shippingWarehouseId !== actor.assignedWarehouseId) {
+    throw new OperationError("Order not found.", 404);
+  }
   // The service account has no credentials or staff access. It identifies the signed admin actor in audit records.
   const actorId = `editable-admin:${actor.id}`;
   const email = `${actor.id}@editable-admin.invalid`;
@@ -115,6 +118,7 @@ const fulfillmentInput = z.object({
   next: z.enum(["PACKING", "READY_TO_SHIP", "SHIPPED", "DELIVERED"]),
   carrier: z.string().optional(), trackingReference: z.string().optional(),
   simulate: z.boolean().optional(),
+  warehouse: devAdminWarehouse.optional(),
 });
 
 export async function advanceFulfillment(actor: FulfillmentActor, orderId: string, input: unknown) {
@@ -135,7 +139,18 @@ export async function advanceFulfillment(actor: FulfillmentActor, orderId: strin
     if (simulate && (next !== "SHIPPED" || !devShipmentAvailable(order))) throw new OperationError("The demo courier is available only for test orders.");
     const tracking = shipment.safeParse(simulate ? demoHandoff() : parsed.data);
     if (next === "SHIPPED" && !tracking.success) throw new OperationError("Enter a carrier and a tracking reference before shipping.");
-    const fields = next === "SHIPPED" && tracking.success ? tracking.data : {};
+    const warehouse = parsed.data.warehouse;
+    if (typeof actor !== "string" && next === "SHIPPED" &&
+      (!warehouse || actor.assignedWarehouseId && warehouse.id !== actor.assignedWarehouseId)) {
+      throw new OperationError("Choose an available shipping warehouse.");
+    }
+    if (warehouse && (typeof actor === "string" || next !== "SHIPPED" || order.shippingWarehouseId)) {
+      throw new OperationError("Shipping warehouse is recorded once at dispatch.");
+    }
+    const fields = next === "SHIPPED" && tracking.success ? {
+      ...tracking.data,
+      ...(warehouse && { shippingWarehouseId: warehouse.id, shippingWarehouseName: warehouse.name }),
+    } : {};
     await tx.order.update({ where: { id: orderId }, data: { fulfillmentStatus: next, ...fields } });
     if (next === "SHIPPED" && tracking.success && order.marketId === "bd" && hybridStoreMode()) {
       await tx.bangladeshShipment.create({

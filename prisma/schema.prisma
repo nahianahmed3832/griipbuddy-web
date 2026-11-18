@@ -392,6 +392,8 @@ model Order {
   returnTerms       Json?
   carrier           String?
   trackingReference String?
+  shippingWarehouseId   String? @db.VarChar(24)
+  shippingWarehouseName String? @db.VarChar(120)
   cancelledAt       DateTime?
   // Null identifies historical rows whose test/live classification is unknown.
   measurementTest   Boolean?
@@ -420,6 +422,7 @@ model Order {
   @@index([status, fulfillmentStatus, createdAt])
   @@index([shopperId, createdAt])
   @@index([couponCode])
+  @@index([shippingWarehouseId, createdAt])
 }
 
 enum MeasurementKind {
