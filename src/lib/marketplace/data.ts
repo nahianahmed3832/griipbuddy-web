@@ -68,6 +68,9 @@ export function shopperOrders(shopperId: string | undefined, guestKey: string | 
     ...(guestKey ? [{ shopperId: null, attempt: { guestKey } }] : []),
   ] }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 40,
   select: { ...accountOrderSummary, items: { take: 3, orderBy: { sku: "asc" }, select: { productName: true, quantity: true } },
+    cases: { where: { kind: { in: ["CANCEL", "RETURN", "EXCHANGE"] } },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: 2,
+      select: { id: true, kind: true, status: true, refundConfirmedAt: true } },
     _count: { select: { items: true } } } });
 }
 

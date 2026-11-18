@@ -58,6 +58,37 @@
   text-underline-offset: .25em;
 }
 
+.account-order-actions {
+  display: grid;
+  gap: .4rem;
+  margin-top: .35rem;
+  overflow-wrap: anywhere;
+}
+
+.account-order-actions a {
+  width: fit-content;
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+#order-support,
+#refund-progress {
+  scroll-margin-top: 6rem;
+}
+
+.after-sales-items,
+.after-sales-item {
+  min-width: 0;
+}
+
+.after-sales-item legend {
+  overflow-wrap: anywhere;
+}
+
+.after-sales-items .after-sales-item {
+  margin-top: .75rem;
+}
+
 @media (max-width: 540px) {
   .account-order-list .account-order-row {
     grid-template-columns: minmax(0, 1fr);

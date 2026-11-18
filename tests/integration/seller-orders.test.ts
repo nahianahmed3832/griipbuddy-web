@@ -4,6 +4,7 @@ import { after, test } from "node:test";
 import "../../scripts/load-env.ts";
 import { getDb } from "../../src/lib/db/client.ts";
 import { requireLocalDatabase } from "../../src/lib/db/local.ts";
+import { executeOrderCase } from "../../src/lib/marketplace/cases.ts";
 import { sellerOrderRange } from "../../src/lib/marketplace/seller-order-range.ts";
 import {
   advanceSellerPreparation, sellerOrderPage, sellerOrdersCsv, sellerShop, SellerOrderError, staffSellerPreparation,
@@ -90,7 +91,14 @@ test("seller reporting and handoff remain scoped for a mixed-shop order", async 
     ]);
     assert.deepEqual(retries, [{ status: "PREPARING" }, { status: "PREPARING" }]);
     await advanceSellerPreparation(ownerA, { orderId, next: "READY" });
+    const shopper = { id: buyer, role: "shopper", market: "bd" } as const;
+    const cancellation = { action: "open", kind: "CANCEL", orderId, note: "Cancel this mixed-shop fixture." } as const;
+    const request = await executeOrderCase(shopper, cancellation);
+    assert.equal((await db.orderCase.findUniqueOrThrow({ where: { id: request.id } })).status, "OPEN");
+    await assert.rejects(advanceSellerPreparation(ownerA, { orderId, next: "HANDED_OFF" }), /cancellation request/);
+    await executeOrderCase(shopper, { action: "withdraw", caseId: request.id, revision: 0 });
     await advanceSellerPreparation(ownerA, { orderId, next: "HANDED_OFF" });
+    await assert.rejects(executeOrderCase(shopper, cancellation), { status: 409 });
     const staffView = await staffSellerPreparation(orderId, [shopA, shopB]);
     assert.equal(staffView[0]?.fulfillments[0]?.status, "HANDED_OFF");
     assert.deepEqual(staffView[1]?.fulfillments, []);

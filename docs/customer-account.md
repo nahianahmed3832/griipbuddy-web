@@ -24,6 +24,13 @@ The historical service reads a dedicated synthetic Mongo fixture over a private 
 
 The Android `ordersPreview` build opens this same URL. The earlier orders and recovery controls are available only with the isolated bridge and captured mail enabled. An approved historical export is required to exercise the hub with actual legacy records.
 
+### Bangladesh after-sales in staging
+
+- Open an owned purchase in My Orders and select **Manage order**. Eligible first-party, unpaid COD orders cancel immediately before packing. Other eligible unshipped orders go to support review. Paid cancellations show the approved refund after staff accept the request.
+- For eligible delivered items, choose the quantity to return or exchange. Exchanges offer available variants at the same price. Staff record return instructions, inspect the items they receive, and add the replacement tracking reference when they ship it.
+- My Orders links to the case timeline. Refunds show the approved amount, any payout problem, and the confirmed amount, method and date once staff verify the payout. Staging uses synthetic payment references and manual confirmation.
+- Earlier orders and pre-orders from the historical bridge use the support link on the order details. After-sales actions use the same mobile website routes.
+
 ## Data and integrations
 
 - Better Auth supplies the stable `Shopper.id` and shopper sessions. Bangladesh and US on the same dev origin share the shopper login. Seller Center already uses the shopper identity and existing seller-market approvals. Staff sessions use their own identity and permissions. Distinct production storefront hosts need a shared issuer or approved session exchange before cross-host sign-in can be validated.

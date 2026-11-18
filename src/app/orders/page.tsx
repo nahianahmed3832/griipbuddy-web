@@ -19,10 +19,11 @@ import { currentAccountLanguage } from "@/lib/marketplace/account-language-serve
 import { getShopper } from "@/lib/marketplace/auth";
 import { bdLegacyAccess } from "@/lib/marketplace/bd-order-hub";
 import { bdOrderHubConfig, legacyCursor, legacyOrderHistory } from "@/lib/marketplace/bd-order-hub-bridge";
+import { caseKindLabel, caseProgressLabel } from "@/lib/marketplace/case-language";
 import { shopperOrders } from "@/lib/marketplace/data";
 import { orderRecoveryEnabled } from "@/lib/commerce/order-recovery";
 import { reportFailure } from "@/lib/db/observability";
-import type { BangladeshShipmentStatus, FulfillmentStatus, OrderStatus, PaymentMethod, PaymentStatus } from "@/generated/prisma/enums";
+import type { BangladeshShipmentStatus, FulfillmentStatus, OrderCaseKind, OrderCaseStatus, OrderStatus, PaymentMethod, PaymentStatus } from "@/generated/prisma/enums";
 import "./order-history.css";
 
 export const metadata = { title: "My orders", robots: { index: false, follow: false }, referrer: "no-referrer" };
@@ -36,11 +37,13 @@ type OrderListEntry = {
   marketId?: MarketId;
   currency?: Currency;
   totalMinor?: number;
+  shopperId?: string | null;
   items?: { productName: string; quantity: number }[];
   _count?: { items: number };
   payment?: { amountMinor: number; currency: Currency; method: PaymentMethod; status: PaymentStatus } | null;
   bangladeshShipment?: { status: BangladeshShipmentStatus } | null;
   bangladeshRefusedParcelReceipt?: { receivedAt: Date } | null;
+  cases?: { id: string; kind: OrderCaseKind; status: OrderCaseStatus; refundConfirmedAt: Date | null }[];
 };
 
 export default async function CustomerOrdersPage({ searchParams }: {
@@ -115,11 +118,13 @@ export default async function CustomerOrdersPage({ searchParams }: {
           }
           const { order } = entry;
           const marketId = order.marketId ?? active.id;
+          const orderPath = "/orders/" + order.id;
+          const showAfterSales = marketId === "bd" && shopper && shopper.id === order.shopperId;
           const cashDue = order.currency ? cashDueOnDelivery({ ...order, marketId, currency: order.currency, payment: order.payment ?? null }) : null;
           const extra = (order._count?.items ?? 0) - (order.items?.length ?? 0);
           return <li className="staff-order-row commerce-panel account-order-row" key={order.id}>
             <div className="account-order-primary">
-              <Link className="staff-order-ref" href={href("/orders/" + order.id)}>{order.reference}
+              <Link className="staff-order-ref" href={href(orderPath)}>{order.reference}
                 <span className="sr-only"> {t("View order", "অর্ডার দেখুন")}</span>
               </Link>
               <time dateTime={order.createdAt.toISOString()}>{customerOrderDate(order.createdAt, marketId, language)}</time>
@@ -127,6 +132,16 @@ export default async function CustomerOrdersPage({ searchParams }: {
                 {order.items.map((item, index) => <li key={item.productName + index}>{item.productName} × {number.format(item.quantity)}</li>)}
                 {extra > 0 && <li>{t("More items", "আরও পণ্য")} · {number.format(extra)}</li>}
               </ul>}
+              {showAfterSales && <div className="account-order-actions">
+                <Link href={href(orderPath + "#order-support")}>{t("Manage order", "অর্ডার পরিচালনা করুন")}</Link>
+                {order.cases?.map(request => {
+                  const refund = request.refundConfirmedAt || request.status === "REFUND_APPROVED" || request.status === "REFUND_FAILED";
+                  return <Link key={request.id} href={href(orderPath + "/cases/" + request.id + (refund ? "#refund-progress" : ""))}>
+                    {refund ? t("Track refund", "টাকা ফেরত ট্র্যাক করুন") : caseKindLabel(language, request.kind)}
+                    {" · "}{caseProgressLabel(language, request)}
+                  </Link>;
+                })}
+              </div>}
             </div>
             <dl>
               <div><dt>{t("Delivery", "ডেলিভারি")}</dt><dd>{customerOrderStatus(order, language)}</dd></div>

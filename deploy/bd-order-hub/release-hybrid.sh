@@ -105,6 +105,13 @@ docker exec griipbuddy-hybrid-demo-app-1 node -e '
   if (origin !== "http://bd-order-hub-api:38100") process.exit(1);
   fetch(origin + "/health", { signal: AbortSignal.timeout(5000) }).then(r => process.exit(r.status === 204 ? 0 : 1)).catch(() => process.exit(1));
 '
+origin=https://dev.griipbuddy.com
+direct_status=$(curl --silent --show-error --max-time 10 -H "Origin: $origin" -H 'Content-Type: application/json' \
+  --data '{}' -o /dev/null -w '%{http_code}' http://127.0.0.1:4402/api/marketplace/bd-orders)
+if [[ "$direct_status" != 401 ]]; then
+  printf 'Direct staging order recovery returned HTTP %s instead of 401.\n' "$direct_status" >&2
+  false
+fi
 
 if ! cmp -s "$nginx_candidate" "$site"; then
   nginx_attempted=1
@@ -113,14 +120,22 @@ if ! cmp -s "$nginx_candidate" "$site"; then
   systemctl reload nginx
 fi
 rm -f "$nginx_candidate"
-origin=https://dev.griipbuddy.com
-dev=(curl --silent --show-error --max-time 10 --resolve dev.griipbuddy.com:443:127.0.0.1)
-health=$("${dev[@]}" -f "$origin/api/health")
-[[ "$health" == *"\"revision\":\"$revision\""* && "$health" == *'"orderIntake":"test-only"'* ]]
-"${dev[@]}" -f "$origin/bd/orders" > /dev/null
-api_status=$("${dev[@]}" -H "Origin: $origin" -H 'Content-Type: application/json' \
-  --data '{}' -o /dev/null -w '%{http_code}' "$origin/api/marketplace/bd-orders")
-[[ "$api_status" =~ ^(400|401|403|422)$ ]]
+dev=(curl --silent --show-error --max-time 5 --resolve dev.griipbuddy.com:443:127.0.0.1)
+api_status=000
+for attempt in {1..10}; do
+  health=$("${dev[@]}" -f "$origin/api/health") || health=""
+  if [[ "$health" == *"\"revision\":\"$revision\""* && "$health" == *'"orderIntake":"test-only"'* ]] &&
+     "${dev[@]}" -f "$origin/bd/orders" > /dev/null; then
+    api_status=$("${dev[@]}" -H "Origin: $origin" -H 'Content-Type: application/json' \
+      --data '{}' -o /dev/null -w '%{http_code}' "$origin/api/marketplace/bd-orders") || api_status=000
+    if [[ "$api_status" == 401 ]]; then break; fi
+  fi
+  sleep 1
+done
+if [[ "$api_status" != 401 ]]; then
+  printf 'Dev ingress recovery smoke did not pass. Last HTTP status %s.\n' "$api_status" >&2
+  false
+fi
 ln -s "$release" "$root/.current.$revision"
 mv -Tf "$root/.current.$revision" "$root/current"
 trap - ERR

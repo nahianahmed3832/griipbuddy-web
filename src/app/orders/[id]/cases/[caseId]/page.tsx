@@ -8,9 +8,10 @@ import { currentMarket } from "@/lib/market-server";
 import { accountText } from "@/lib/marketplace/account-language";
 import { currentAccountLanguage } from "@/lib/marketplace/account-language-server";
 import { getShopper } from "@/lib/marketplace/auth";
-import { caseKindLabel, caseStatusLabel } from "@/lib/marketplace/case-language";
+import { caseKindLabel, caseProgressLabel } from "@/lib/marketplace/case-language";
 import { buyerOrderCase } from "@/lib/marketplace/cases";
 import { hybridDemoMode, marketplaceMode } from "@/lib/release-config";
+import "../../../order-history.css";
 
 export async function generateMetadata() {
   return { title: accountText(await currentAccountLanguage(), "Order case", "অর্ডার সহায়তা") };
@@ -34,13 +35,13 @@ export default async function BuyerCasePage({ params }: { params: Promise<{ id: 
       { label: orderCase.order.reference, href: orderHref("/orders/" + id) }, { label }]} />
     <div className="commerce-intro">
       <h1 className="display-type">{label}</h1>
-      <p>{t("Order", "অর্ডার")} {orderCase.order.reference} · {caseStatusLabel(language, orderCase.status)}</p>
+      <p>{t("Order", "অর্ডার")} {orderCase.order.reference} · {caseProgressLabel(language, orderCase)}</p>
+      {orderCase.kind === "CANCEL" && orderCase.status === "RESOLVED" && <p>{t("This order has been cancelled.", "এই অর্ডারটি বাতিল হয়েছে।")}</p>}
       <p>{t("Case reference", "অনুরোধ নম্বর")} <span className="break-all">{caseId}</span></p>
     </div>
     <div className="commerce-stack">
       <CaseHistory orderCase={orderCase} language={language} />
-      <ShopperCaseActions orderCase={{ id: orderCase.id, kind: orderCase.kind, status: orderCase.status, revision: orderCase.revision, returnLineCount: 0 }}
-        market={market.id} language={language} />
+      <ShopperCaseActions orderCase={orderCase} market={market.id} language={language} />
     </div>
   </div>;
 }

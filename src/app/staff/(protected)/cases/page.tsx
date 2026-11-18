@@ -25,7 +25,7 @@ export default async function OrderCasesPage({ searchParams }: { searchParams: P
   return (<>
     <div className="commerce-intro">
       <h1 className="display-type">Order cases</h1>
-      <p>Review return requests and disputes from shoppers.</p>
+      <p>Review shopper requests and follow returns, exchanges, and refunds.</p>
     </div>
     <nav className="staff-filters" aria-label="Case filters">
       <Link href={pageLink(1, false)} aria-current={!all ? "page" : undefined}>Active cases</Link>

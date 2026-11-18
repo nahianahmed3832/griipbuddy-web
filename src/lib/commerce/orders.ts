@@ -382,6 +382,7 @@ const shopperOrderDetails = {
   ...orderDetails,
   bangladeshShipment: bangladeshTrackingHistory,
   bangladeshRefusedParcelReceipt: { select: { receivedAt: true } },
+  sellerFulfillments: { where: { status: "HANDED_OFF" }, select: { status: true } },
 } satisfies Prisma.OrderInclude;
 
 export type SavedOrder = Prisma.OrderGetPayload<{ include: typeof shopperOrderDetails }>;

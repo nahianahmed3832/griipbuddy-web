@@ -20,6 +20,11 @@ function reject(message: string, status: number, language: AccountLanguage = "en
   return Response.json({ message: caseErrorLabel(language, message) }, { status, headers: privateHeaders });
 }
 
+function refreshInventory() {
+  revalidatePath("/staff/catalog/inventory");
+  revalidatePath("/", "layout");
+}
+
 async function readCaseRequest(request: Request): Promise<{ payload: unknown; photo?: File }> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.startsWith("multipart/form-data;")) return { payload: await readJson(request, 8192) };
@@ -78,10 +83,8 @@ export async function POST(request: Request) {
       if (staff.role !== "OWNER") return reject("You don’t have permission for that action.", 403);
       if (!await consumeQuota("marketplace.cases.owner", staff.id, 90, 300)) return reject("Too many actions. Try again shortly.", 429);
       const data = await executeOrderCase({ id: staff.id, role: "owner", market: requestedMarket ?? undefined }, command);
-      if (command.action === "receive" && command.disposition === "RESTOCK") {
-        revalidatePath("/staff/catalog/inventory");
-        revalidatePath("/", "layout");
-      }
+      if (command.action === "approve-cancellation" || command.action === "ship-exchange" ||
+        command.action === "receive" && command.disposition === "RESTOCK") refreshInventory();
       return Response.json({ data }, { headers: privateHeaders });
     }
 
@@ -95,6 +98,7 @@ export async function POST(request: Request) {
     const market = requestedMarket ?? (await currentMarket()).id;
     const image = photo ? (await encodeCatalogImage(Buffer.from(await photo.arrayBuffer()), photo.type)).data : undefined;
     const data = await executeOrderCase({ id: shopper.id, role: "shopper", market }, command, image);
+    if (command.action === "open" && command.kind === "CANCEL" && market === "bd") refreshInventory();
     return Response.json({ data }, { status: opening ? 201 : 200, headers: privateHeaders });
   } catch (error) {
     if (error instanceof OrderCaseError) return reject(error.message, error.status, language);

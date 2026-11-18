@@ -27,6 +27,7 @@ import { isManualPaymentMethod } from "@/lib/commerce/manual-payment-methods";
 import { accountText } from "@/lib/marketplace/account-language";
 import { currentAccountLanguage } from "@/lib/marketplace/account-language-server";
 import { uuid } from "@/lib/commerce/checkout-types";
+import "../order-history.css";
 
 export const metadata: Metadata = { title: "Your order", robots: { index: false, follow: false }, referrer: "no-referrer" };
 
@@ -112,6 +113,9 @@ export default async function ConfirmationPage({ params, searchParams }: {
         </h1>
         <p>{t("Order reference", "অর্ডার নম্বর")} <strong>{order.reference}</strong></p>
         <p><time dateTime={order.createdAt.toISOString()}>{customerOrderDate(order.createdAt, order.marketId, language, true)}</time></p>
+        {owned && order.marketId === "bd" && <a className="text-link" href="#order-support">
+          {t("Manage this order", "এই অর্ডার পরিচালনা করুন")}
+        </a>}
         {usSandbox && <p>United States · PayPal sandbox</p>}
       </div>
       <div className="commerce-layout">
@@ -184,7 +188,7 @@ export default async function ConfirmationPage({ params, searchParams }: {
               <summary>{t("Return terms for this order", "এই অর্ডারের ফেরতের শর্ত")}</summary>
               <p lang={termsLanguage}>{returnTerms.summary[termsLanguage]}</p>
             </details>}
-            {owned && <p><a className="text-link" href="#order-support">{t("Request help or a return", "সহায়তা বা রিটার্নের অনুরোধ করুন")}</a></p>}
+            {owned && order.marketId !== "bd" && <p><a className="text-link" href="#order-support">{t("Request help or a return", "সহায়তা বা রিটার্নের অনুরোধ করুন")}</a></p>}
             <p><a href={"mailto:" + store.supportEmail + "?subject=" + encodeURIComponent("Order " + order.reference)}>{t("Email GriipBuddy", "GriipBuddy-কে ইমেইল করুন")}</a>
               {" "}{t("or read the", "অথবা পড়ুন")}{" "}<Link href={orderHref("/help/returns")}>{t("cancellation, return and refund information", "অর্ডার বাতিল, রিটার্ন ও টাকা ফেরতের তথ্য")}</Link>.</p>
             <p><Link href={orderHref("/orders")}>{t("Your recent orders", "সাম্প্রতিক অর্ডার")}</Link></p>

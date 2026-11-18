@@ -5,6 +5,7 @@ import "../../scripts/load-env.ts";
 import { GET, POST } from "../../src/app/api/internal/dev-admin-orders/route.ts";
 import { getDb } from "../../src/lib/db/client.ts";
 import { requireLocalDatabase } from "../../src/lib/db/local.ts";
+import { executeOrderCase } from "../../src/lib/marketplace/cases.ts";
 import type { DevAdminOrderCommand } from "../../src/lib/staff/dev-admin-order-proof.ts";
 
 requireLocalDatabase("griipbuddy_test");
@@ -16,6 +17,7 @@ test("signed editable admin contact, notes and split return workflow use the sam
   const warehouse = "a".repeat(24);
   const operator = { id: suffix.replaceAll("-", "").slice(0, 24), name: "Fixture Operator", canReturn: true, assignedWarehouseId: warehouse };
   const actorId = "editable-admin:" + operator.id;
+  const ownerId = "hybrid-fixture-owner-" + suffix;
   const orders: string[] = [];
   const attempts: string[] = [];
   const now = new Date();
@@ -24,19 +26,22 @@ test("signed editable admin contact, notes and split return workflow use the sam
   const readToken = "2".repeat(64);
 
   t.after(async () => {
-    await db.auditEvent.deleteMany({ where: { actorId } });
+    await db.auditEvent.deleteMany({ where: { actorId: { in: [actorId, ownerId] } } });
     await db.orderCase.deleteMany({ where: { orderId: { in: orders } } });
     await db.orderItem.deleteMany({ where: { orderId: { in: orders } } });
     await db.payment.deleteMany({ where: { orderId: { in: orders } } });
     await db.order.deleteMany({ where: { id: { in: orders } } });
     await db.checkoutAttempt.deleteMany({ where: { id: { in: attempts } } });
-    await db.user.deleteMany({ where: { id: actorId } });
+    await db.staffAccess.deleteMany({ where: { userId: ownerId } });
+    await db.user.deleteMany({ where: { id: { in: [actorId, ownerId] } } });
     await db.inventory.deleteMany({ where: { variantId: suffix } });
     await db.variant.deleteMany({ where: { id: suffix } });
     await db.product.deleteMany({ where: { id: suffix } });
     await db.department.deleteMany({ where: { id: suffix } });
   });
 
+  await db.user.create({ data: { id: ownerId, email: ownerId + "@example.test", name: "Fixture Owner",
+    staff: { create: { role: "OWNER", marketIds: ["bd"] } } } });
   await db.department.create({ data: { id: suffix, slug: suffix, name: "Fixture", shortName: "Fixture", description: "",
     imageSrc: "/fixture.png", imageAlt: "Fixture", position: 0 } });
   await db.product.create({ data: { id: suffix, slug: suffix, departmentId: suffix, name: "Fixture", description: "",
@@ -133,4 +138,17 @@ test("signed editable admin contact, notes and split return workflow use the sam
   await expectStatus(send(delivered, { ...receipt, caseId: damaged.id, disposition: "HOLD" }), 200);
   assert.equal((await db.inventory.findUniqueOrThrow({ where: { variantId: suffix } })).available, 8);
   assert.equal((await db.orderCase.findUniqueOrThrow({ where: { id: caseId } })).refundAmountMinor, 10000);
+
+  await executeOrderCase({ id: ownerId, role: "owner", market: "bd" }, { action: "approve-refund",
+    caseId: damaged.id, revision: 3, amountMinor: 18000, note: "Approve the held return payout." });
+  const approved = (await (await read(delivered)).json()).operations.cases.find((entry: { id: string }) => entry.id === damaged.id);
+  assert.equal(approved.status, "REFUND_APPROVED");
+  assert.equal(approved.refundAmountMinor, 18000);
+  await expectStatus(send(delivered, { ...refund, caseId: damaged.id, revision: 4, amountMinor: 18001, reference: "approved-" + suffix }), 409);
+  await expectStatus(send(delivered, { ...refund, caseId: damaged.id, revision: 4, amountMinor: 18000 }), 409);
+  await expectStatus(send(delivered, { ...refund, caseId: damaged.id, revision: 4, amountMinor: 18000, reference: "approved-" + suffix }), 200);
+  const completed = await db.orderCase.findUniqueOrThrow({ where: { id: damaged.id } });
+  assert.equal(completed.status, "RESOLVED");
+  assert.equal(completed.refundAmountMinor, 18000);
+  assert(completed.refundConfirmedAt);
 });

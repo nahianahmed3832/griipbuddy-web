@@ -1,11 +1,19 @@
 import { Prisma } from "../../generated/prisma/client.ts";
 import type { MarketId } from "../../config/markets.ts";
+import { variantQuantities } from "../cart/model.ts";
 import { restoreBangladeshInventory } from "../commerce/bangladesh-returns.ts";
 import { purchaseCaseOptions } from "../commerce/order-return-terms.ts";
 import { getDb, type DbReader } from "../db/client.ts";
-import { authorize, lockFulfillmentOrder, OperationError } from "../staff/operations.ts";
+import { authorize, cancelLockedUnshippedOrder, lockFulfillmentOrder, lockProductEdits, OperationError } from "../staff/operations.ts";
 import type { DevAdminFulfillmentOperator, DevAdminOrderCommand } from "../staff/dev-admin-order-proof.ts";
-import { activeCaseStatuses, caseActorRole, mayRequestCancellation, mayRequestReturn, mayWithdrawCase, ownerCaseTransitions, type CaseCommand } from "./case-policy.ts";
+import { eligibleExchangeVariants, exchangeSource, type ExchangeSource } from "./case-exchange.ts";
+import {
+  activeCaseStatuses, caseActorRole, mayCancelBangladeshOrderImmediately, mayRequestBangladeshCancellation, mayRequestCancellation,
+  mayRequestExchange, mayRequestReturn, mayWithdrawCase, ownerCaseTransitions, paidBangladeshCancellationAmount,
+  pendingCancellationStatuses, type CaseCommand,
+} from "./case-policy.ts";
+
+export { exchangeVariantsForPurchase } from "./case-exchange.ts";
 
 export class OrderCaseError extends Error {
   constructor(message: string, public status: number) {
@@ -16,16 +24,28 @@ export class OrderCaseError extends Error {
 type CaseActor = { role: "shopper" | "owner"; id: string; market?: MarketId };
 type DevAdminCaseActor = { role: "dev-admin"; operator: DevAdminFulfillmentOperator; orderId: string; market: "bd" };
 type CaseOperator = CaseActor | DevAdminCaseActor;
-type DevAdminCaseCommand = Extract<DevAdminOrderCommand, { action: "open-return" | "review-return" | "receive-return" | "confirm-return-refund" }>;
+type DevAdminCaseCommand = Extract<DevAdminOrderCommand, {
+  action: "open-return" | "review-return" | "receive-return" | "confirm-return-refund";
+}>;
 type OpenCommand = Extract<CaseCommand, { action: "open" }>;
 type ReceiveCommand = Extract<CaseCommand, { action: "receive" }>;
-type RefundCommand = Extract<CaseCommand, { action: "confirm-refund" }>;
-type UpdateCommand = Exclude<CaseCommand, OpenCommand | ReceiveCommand | RefundCommand>;
+type RefundCommand = Extract<CaseCommand, { action: "approve-refund" | "confirm-refund" | "fail-refund" }>;
+type CancellationCommand = Extract<CaseCommand, { action: "approve-cancellation" }>;
+type ExchangeCommand = Extract<CaseCommand, { action: "ship-exchange" }>;
+type UpdateCommand = Exclude<CaseCommand, OpenCommand | ReceiveCommand | RefundCommand | CancellationCommand | ExchangeCommand>;
 
-const summaryFields = { id: true, kind: true, status: true, updatedAt: true, reason: true } satisfies Prisma.OrderCaseSelect;
+const summaryFields = { id: true, kind: true, status: true, updatedAt: true, reason: true,
+  refundAmountMinor: true, refundConfirmedAt: true } satisfies Prisma.OrderCaseSelect;
 const orderReference = { id: true, reference: true, marketId: true } satisfies Prisma.OrderSelect;
 const recentFirst = [{ updatedAt: "desc" }, { id: "desc" }] satisfies Prisma.OrderCaseOrderByWithRelationInput[];
 const returnLineItem = { id: true, productName: true, variantName: true, personalization: true } satisfies Prisma.OrderItemSelect;
+const merchandiseKinds = ["RETURN", "EXCHANGE"] as const;
+const cancellationOrder = {
+  id: true, marketId: true, status: true, fulfillmentStatus: true, totalMinor: true,
+  trackingReference: true, shippingWarehouseId: true, bangladeshShipment: { select: { orderId: true } },
+  payment: { select: { method: true, status: true, amountMinor: true, currency: true } },
+  sellerFulfillments: { where: { status: "HANDED_OFF" }, select: { status: true } },
+} satisfies Prisma.OrderSelect;
 export type OrderCaseSummary = Prisma.OrderCaseGetPayload<{ select: typeof summaryFields }>;
 
 function shopperCaseWhere(orderId: string, shopperId: string, marketId?: MarketId): Prisma.OrderCaseWhereInput {
@@ -91,8 +111,8 @@ const detailFields = {
   order: { select: { ...orderReference, currency: true } },
   issueItem: { select: returnLineItem },
   attachment: { select: { caseId: true } },
-  refundAmountMinor: true, refundMethod: true, refundConfirmedAt: true,
-  returnLines: { select: { quantity: true, orderItem: { select: returnLineItem } }, orderBy: { orderItemId: "asc" } },
+  refundMethod: true, replacementCarrier: true, replacementTrackingReference: true,
+  returnLines: { select: { quantity: true, replacementVariantName: true, orderItem: { select: returnLineItem } }, orderBy: { orderItemId: "asc" } },
   events: {
     orderBy: { revision: "asc" },
     select: { status: true, note: true, revision: true, createdAt: true, shopperActorId: true, refundConfirmed: true },
@@ -107,27 +127,45 @@ export function buyerOrderCase(shopperId: string, orderId: string, caseId: strin
 const refundFields = {
   id: true, kind: true, status: true, revision: true, returnReceivedAt: true,
   refundAmountMinor: true, refundMethod: true, refundReference: true, refundConfirmedAt: true,
-  order: { select: { id: true, marketId: true, subtotalMinor: true, discountMinor: true, taxMinor: true, totalMinor: true,
-    payment: { select: { status: true, amountMinor: true, currency: true } } } },
+  order: { select: { ...cancellationOrder, subtotalMinor: true, discountMinor: true, taxMinor: true } },
   returnLines: { select: { quantity: true, orderItem: { select: { quantity: true, lineTotalMinor: true } } } },
 } satisfies Prisma.OrderCaseSelect;
 type RefundCase = Prisma.OrderCaseGetPayload<{ select: typeof refundFields }>;
 
-function canRecordRefund(orderCase: RefundCase) {
-  return orderCase.kind === "RETURN" && (orderCase.status === "RETURN_RECEIVED" || orderCase.status === "RESOLVED") &&
-    Boolean(orderCase.returnReceivedAt) && !orderCase.refundConfirmedAt && orderCase.order.marketId === "bd" && orderCase.returnLines.length > 0;
+function receivedMerchandise(orderCase: RefundCase) {
+  return merchandiseKinds.some(kind => kind === orderCase.kind) && Boolean(orderCase.returnReceivedAt) && orderCase.returnLines.length > 0;
+}
+
+function refundActions(orderCase: RefundCase, maxRefundMinor: number) {
+  const available = orderCase.order.marketId === "bd" && !orderCase.refundConfirmedAt && maxRefundMinor > 0;
+  const approved = orderCase.refundAmountMinor;
+  const received = receivedMerchandise(orderCase);
+  return {
+    canApproveRefund: available && (
+      received && orderCase.status === "RETURN_RECEIVED" ||
+      orderCase.status === "REFUND_FAILED" && approved !== null && approved <= maxRefundMinor),
+    canConfirmRefund: available && (
+      orderCase.status === "REFUND_APPROVED" && approved !== null && approved <= maxRefundMinor ||
+      received && orderCase.kind === "RETURN" && ["RETURN_RECEIVED", "RESOLVED"].includes(orderCase.status)),
+  };
 }
 
 async function refundLimit(db: DbReader, orderCase: RefundCase) {
   const { order, returnLines } = orderCase;
   const payment = order.payment;
-  if (!payment || payment.currency !== "BDT" || (payment.status !== "COLLECTED" && payment.status !== "PAID")) return 0;
+  if (order.marketId !== "bd" || !payment || payment.currency !== "BDT") return 0;
+  if (orderCase.kind === "CANCEL") {
+    return order.status === "CANCELLED" && payment.status === "REFUND_PENDING" && order.totalMinor === payment.amountMinor ? payment.amountMinor : 0;
+  }
+  if (!receivedMerchandise(orderCase) || (payment.status !== "COLLECTED" && payment.status !== "PAID")) return 0;
   // Stored line totals already include discounts. Apply the item's share of tax and exclude delivery.
   const merchandiseMinor = returnLines.reduce((total, line) => total +
     Math.floor(line.orderItem.lineTotalMinor * line.quantity / line.orderItem.quantity), 0);
   const orderMerchandiseMinor = order.subtotalMinor - order.discountMinor;
   const taxMinor = orderMerchandiseMinor > 0 ? Number(BigInt(order.taxMinor) * BigInt(merchandiseMinor) / BigInt(orderMerchandiseMinor)) : 0;
-  const prior = await db.orderCase.aggregate({ where: { orderId: order.id, refundConfirmedAt: { not: null } }, _sum: { refundAmountMinor: true } });
+  const prior = await db.orderCase.aggregate({ where: { orderId: order.id, id: { not: orderCase.id },
+    OR: [{ refundConfirmedAt: { not: null } }, { status: { in: ["REFUND_APPROVED", "REFUND_FAILED"] } }],
+  }, _sum: { refundAmountMinor: true } });
   const remaining = Math.min(payment.amountMinor, order.totalMinor) - (prior._sum.refundAmountMinor ?? 0);
   return Math.max(0, Math.min(merchandiseMinor + taxMinor, remaining));
 }
@@ -139,54 +177,90 @@ export async function staffOrderCase(actorId: string, caseId: string, marketId?:
   const orderCase = await db.orderCase.findFirst({ where: { id: caseId, order: { marketId: marketId ?? { in: marketIds } } }, select: {
     ...detailFields, ...refundFields, refundReference: true, returnDisposition: true,
     order: { select: { ...detailFields.order.select, ...refundFields.order.select } },
-    returnLines: { ...detailFields.returnLines, select: { quantity: true, orderItem: { select: {
+    returnLines: { ...detailFields.returnLines, select: { ...detailFields.returnLines.select, orderItem: { select: {
       ...returnLineItem, ...refundFields.returnLines.select.orderItem.select,
     } } } },
   } });
   if (!orderCase) return null;
-  const maxRefundMinor = canRecordRefund(orderCase) ? await refundLimit(db, orderCase) : 0;
-  return { ...orderCase, maxRefundMinor };
+  const limit = orderCase.refundConfirmedAt ? 0 : await refundLimit(db, orderCase);
+  const maxRefundMinor = orderCase.refundAmountMinor === null ? limit : Math.min(limit, orderCase.refundAmountMinor);
+  const canApproveCancellation = orderCase.kind === "CANCEL" && pendingCancellationStatuses.some(status => status === orderCase.status) &&
+    mayRequestBangladeshCancellation(orderCase.order);
+  return { ...orderCase, maxRefundMinor, ...refundActions(orderCase, limit), canApproveCancellation,
+    cancellationRefundMinor: canApproveCancellation ? paidBangladeshCancellationAmount(orderCase.order) : 0,
+    canShipExchange: orderCase.kind === "EXCHANGE" && orderCase.status === "RETURN_RECEIVED" && receivedMerchandise(orderCase),
+  };
 }
 
-async function lockCaseOrder(tx: Prisma.TransactionClient, actor: CaseOperator, caseId: string) {
-  if (actor.role === "dev-admin") {
-    const { actorId } = await lockFulfillmentOrder(tx, actor.operator, actor.orderId, { returns: true, bangladeshOnly: true });
-    return { orderId: actor.orderId, actorId };
+async function lockDevAdminReturn(tx: Prisma.TransactionClient, actor: DevAdminCaseActor, caseId?: string) {
+  const { actorId } = await lockFulfillmentOrder(tx, actor.operator, actor.orderId, { returns: true, bangladeshOnly: true });
+  if (caseId && !await tx.orderCase.findUnique({ where: { id: caseId, orderId: actor.orderId, kind: "RETURN" }, select: { id: true } })) {
+    throw new OrderCaseError("Case not found.", 404);
   }
-  await authorize(tx, actor.id, true, actor.market);
-  const found = await tx.orderCase.findFirst({ where: { id: caseId, order: { marketId: actor.market } }, select: { orderId: true } });
-  if (!found) throw new OrderCaseError("Case not found.", 404);
-  await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${found.orderId}::uuid FOR UPDATE`;
-  return { orderId: found.orderId, actorId: actor.id };
+  return actorId;
 }
 
-async function confirmRefund(actor: CaseOperator, command: RefundCommand) {
+function ownerCaseTransaction<T>(actor: CaseOperator, caseId: string, work: (tx: Prisma.TransactionClient, actorId: string) => Promise<T>) {
   return getDb().$transaction(async tx => {
-    const { orderId, actorId } = await lockCaseOrder(tx, actor, command.caseId);
-    const orderCase = await tx.orderCase.findUnique({ where: { id: command.caseId, orderId }, select: refundFields });
+    if (actor.role === "dev-admin") return work(tx, await lockDevAdminReturn(tx, actor, caseId));
+    await authorize(tx, actor.id, true, actor.market);
+    const found = await tx.orderCase.findFirst({ where: { id: caseId, order: { marketId: actor.market } },
+      select: { orderId: true, order: { select: { marketId: true } } } });
+    if (!found) throw new OrderCaseError("Case not found.", 404);
+    await authorize(tx, actor.id, true, found.order.marketId);
+    await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${found.orderId}::uuid FOR UPDATE`;
+    return work(tx, actor.id);
+  });
+}
+
+async function progressRefund(actor: CaseOperator, command: RefundCommand) {
+  return ownerCaseTransaction(actor, command.caseId, async (tx, actorId) => {
+    const orderCase = await tx.orderCase.findUnique({ where: { id: command.caseId }, select: refundFields });
     if (!orderCase) throw new OrderCaseError("Case not found.", 404);
-    if (actor.role !== "dev-admin") await authorize(tx, actorId, true, orderCase.order.marketId);
-    if (orderCase.refundConfirmedAt && orderCase.refundAmountMinor === command.amountMinor &&
+    if (command.action === "confirm-refund" && orderCase.refundConfirmedAt && orderCase.refundAmountMinor === command.amountMinor &&
         orderCase.refundMethod === command.method && orderCase.refundReference === command.reference) return { id: orderCase.id };
     if (orderCase.revision !== command.revision) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
-    if (command.confirmed !== true || !canRecordRefund(orderCase)) {
-      throw new OrderCaseError("Confirm the refund after the returned items are received and the payout is complete.", 409);
-    }
-    if (command.amountMinor < 1 || !Number.isInteger(command.amountMinor) || command.amountMinor > await refundLimit(tx, orderCase)) {
+    const limit = await refundLimit(tx, orderCase);
+    const actions = refundActions(orderCase, limit);
+    const approved = orderCase.refundAmountMinor;
+    const action = command.action;
+    const allowed = action === "approve-refund" ? actions.canApproveRefund
+      : action === "confirm-refund" ? command.confirmed === true && actions.canConfirmRefund
+        : actions.canConfirmRefund && orderCase.status === "REFUND_APPROVED";
+    if (!allowed) throw new OrderCaseError("This refund action is unavailable for the current case status.", 409);
+    if ("amountMinor" in command && (command.amountMinor < 1 || !Number.isInteger(command.amountMinor) || command.amountMinor > limit)) {
       throw new OrderCaseError("The refund exceeds the amount paid for these items.", 409);
     }
-    const duplicate = await tx.orderCase.findFirst({ where: { orderId, id: { not: orderCase.id },
-      refundMethod: command.method, refundReference: command.reference }, select: { id: true } });
-    if (duplicate) throw new OrderCaseError("That refund reference is already recorded for this order.", 409);
+    if ("amountMinor" in command && approved !== null && command.amountMinor !== approved) {
+      throw new OrderCaseError("Use the approved refund amount for this case.", 409);
+    }
+    if (action === "confirm-refund" && await tx.orderCase.findFirst({
+      where: { orderId: orderCase.order.id, id: { not: orderCase.id }, refundMethod: command.method, refundReference: command.reference },
+      select: { id: true },
+    })) throw new OrderCaseError("That refund reference is already recorded for this order.", 409);
+    const status = action === "approve-refund" ? "REFUND_APPROVED"
+      : action === "fail-refund" ? "REFUND_FAILED"
+        : orderCase.status === "REFUND_APPROVED" ? "RESOLVED" : orderCase.status;
     const revision = orderCase.revision + 1;
-    const result = await tx.orderCase.updateMany({ where: { id: orderCase.id, revision: orderCase.revision }, data: {
-      revision, refundAmountMinor: command.amountMinor, refundMethod: command.method,
+    const fields = action === "confirm-refund" ? {
+      refundAmountMinor: command.amountMinor, refundMethod: command.method,
       refundReference: command.reference, refundConfirmedAt: new Date(),
+    } : action === "approve-refund" ? { refundAmountMinor: command.amountMinor } : {};
+    const result = await tx.orderCase.updateMany({ where: { id: orderCase.id, revision: orderCase.revision }, data: {
+      revision, status, ...fields,
     } });
     if (result.count !== 1) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
-    await tx.orderCaseEvent.create({ data: { caseId: orderCase.id, status: orderCase.status, revision, actorId, refundConfirmed: true } });
-    await tx.auditEvent.create({ data: { actorId, action: "BD_CASE_REFUND_CONFIRMED", target: orderCase.id, changes: {
-      orderId: orderCase.order.id, marketId: "bd", amountMinor: command.amountMinor, currency: "BDT", outcome: "confirmed",
+    if (action === "confirm-refund" && orderCase.kind === "CANCEL") {
+      const payment = await tx.payment.updateMany({ where: { orderId: orderCase.order.id, status: "REFUND_PENDING" },
+        data: { status: "REFUNDED" } });
+      if (payment.count !== 1) throw new OrderCaseError("The order payment changed. Refresh the page and try again.", 409);
+    }
+    await tx.orderCaseEvent.create({ data: { caseId: orderCase.id, status, revision, actorId,
+      refundConfirmed: action === "confirm-refund", ...("note" in command && { note: command.note }),
+    } });
+    const audit = action === "confirm-refund" ? "BD_CASE_REFUND_CONFIRMED" : action === "approve-refund" ? "BD_CASE_REFUND_APPROVED" : "BD_CASE_REFUND_FAILED";
+    await tx.auditEvent.create({ data: { actorId, action: audit, target: orderCase.id, changes: {
+      orderId: orderCase.order.id, marketId: "bd", amountMinor: "amountMinor" in command ? command.amountMinor : approved, currency: "BDT",
     } } });
     return { id: orderCase.id };
   });
@@ -216,13 +290,65 @@ export async function listOrderCases(actorId: string, includeClosed: boolean, pa
   return { rows: rows.slice(0, queuePageSize), hasNext: rows.length > queuePageSize };
 }
 
+async function exchangeSelections(db: DbReader, lines: readonly {
+  orderItem: ExchangeSource;
+  quantity: number;
+  replacementVariantId?: string | null;
+}[]) {
+  if (!lines.length) throw new OrderCaseError("Choose the item and replacement size or color for this exchange.", 400);
+  const options = await eligibleExchangeVariants(db, lines.map(line => line.orderItem));
+  const choices = lines.map(line => {
+    const replacement = options.get(line.orderItem.id)?.find(option => option.id === line.replacementVariantId);
+    if (!replacement) throw new OrderCaseError("A selected replacement size or color is no longer eligible for exchange.", 409);
+    return { ...line, replacement };
+  });
+  const quantities = variantQuantities(choices.map(line => ({ variantId: line.replacement.id, quantity: line.quantity })));
+  if (choices.some(({ replacement }) => (quantities.get(replacement.id) ?? 0) > replacement.available)) {
+    throw new OrderCaseError("There isn’t enough stock for the selected replacements.", 409);
+  }
+  return { choices, quantities };
+}
+
+async function approveCancellation(actor: CaseActor, command: CancellationCommand) {
+  return ownerCaseTransaction(actor, command.caseId, async tx => {
+    const orderCase = await tx.orderCase.findUnique({ where: { id: command.caseId }, select: {
+      id: true, kind: true, status: true, revision: true, order: { select: { ...cancellationOrder,
+        items: { select: { variantId: true, quantity: true } } } },
+    } });
+    if (!orderCase) throw new OrderCaseError("Case not found.", 404);
+    const order = orderCase.order;
+    if (orderCase.kind !== "CANCEL") throw new OrderCaseError("Only a cancellation request can cancel this order.", 409);
+    if (order.status === "CANCELLED" && (["REFUND_APPROVED", "REFUND_FAILED", "RESOLVED"] as const).some(status => status === orderCase.status)) {
+      return { id: orderCase.id };
+    }
+    if (orderCase.revision !== command.revision) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
+    if (!pendingCancellationStatuses.some(status => status === orderCase.status) || !mayRequestBangladeshCancellation(order)) {
+      throw new OrderCaseError("Only an unshipped Bangladesh order with a verified payment or unpaid COD can be cancelled.", 409);
+    }
+    const refundAmount = paidBangladeshCancellationAmount(order);
+    await cancelLockedUnshippedOrder(tx, order, { actorId: actor.id, paymentStatus: refundAmount > 0 ? "REFUND_PENDING" : "VOIDED" });
+    const status = refundAmount > 0 ? "REFUND_APPROVED" : "RESOLVED";
+    const revision = command.revision + 1;
+    const result = await tx.orderCase.updateMany({ where: { id: orderCase.id, revision: command.revision }, data: {
+      status, revision, ...(refundAmount > 0 && { refundAmountMinor: refundAmount }),
+    } });
+    if (result.count !== 1) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
+    await tx.orderCaseEvent.create({ data: { caseId: orderCase.id, status, revision, actorId: actor.id, note: command.note } });
+    if (refundAmount > 0) {
+      await tx.auditEvent.create({ data: { actorId: actor.id, action: "BD_CASE_REFUND_APPROVED", target: orderCase.id, changes: {
+        orderId: order.id, marketId: "bd", amountMinor: refundAmount, currency: "BDT",
+      } } });
+    }
+    return { id: orderCase.id };
+  });
+}
+
 async function openOrderCase(actor: CaseOperator, command: OpenCommand, photo?: Uint8Array<ArrayBuffer>) {
   return getDb().$transaction(async tx => {
     const { orderId, kind, note, lines, reason, issueItemId } = command;
     let actorId: string;
     if (actor.role === "dev-admin") {
-      const locked = await lockFulfillmentOrder(tx, actor.operator, orderId, { returns: true, bangladeshOnly: true });
-      actorId = locked.actorId;
+      actorId = await lockDevAdminReturn(tx, actor);
     } else {
       actorId = actor.id;
       const marketScope = actor.market ? Prisma.sql`AND "marketId" = ${actor.market}::"MarketCode"` : Prisma.empty;
@@ -230,44 +356,76 @@ async function openOrderCase(actor: CaseOperator, command: OpenCommand, photo?: 
     }
     const order = await tx.order.findFirst({
       where: { id: orderId, ...(actor.role !== "dev-admin" && { shopperId: actorId }), marketId: actor.market },
-      select: { status: true, fulfillmentStatus: true, marketId: true, returnTerms: true, items: { select: { id: true, quantity: true } } },
+      select: { ...cancellationOrder, returnTerms: true, items: { select: { ...exchangeSource, quantity: true } } },
     });
     if (!order) throw new OrderCaseError("Order not found.", 404);
     const options = purchaseCaseOptions(order);
+    const merchandise = merchandiseKinds.some(merchandiseKind => merchandiseKind === kind);
     if (kind === "RETURN") {
       if (options.returnRequest === "support") {
         throw new OrderCaseError("Contact support to discuss a return for this order.", 409);
       }
       if (!mayRequestReturn(order)) throw new OrderCaseError("A return can be requested after delivery.", 409);
     }
-    if (kind === "CANCEL" && (!options.onlineCancellation || !mayRequestCancellation(order))) {
-      throw new OrderCaseError("This order can no longer be cancelled online. Ask support for help.", 409);
+    if (kind === "EXCHANGE" && !mayRequestExchange(order)) {
+      throw new OrderCaseError("An exchange can only be requested for an eligible delivered Bangladesh order.", 409);
+    }
+    if (kind === "CANCEL") {
+      if (order.marketId === "bd" && order.status === "CANCELLED") {
+        const completed = await tx.orderCase.findFirst({ where: { orderId, kind, status: { in: ["RESOLVED", "REFUND_APPROVED", "REFUND_FAILED"] } },
+          orderBy: recentFirst, select: { id: true } });
+        if (completed) return completed;
+      }
+      if (!options.onlineCancellation || !(order.marketId === "bd" ? mayRequestBangladeshCancellation(order) : mayRequestCancellation(order))) {
+        throw new OrderCaseError("This order can no longer be cancelled online. Ask support for help.", 409);
+      }
     }
     if (issueItemId && (kind !== "DISPUTE" || !order.items.some(item => item.id === issueItemId))) {
       throw new OrderCaseError("Choose an item from this order.", 400);
     }
     const existingCase = await tx.orderCase.findFirst({
-      where: { orderId, kind, status: { in: [...activeCaseStatuses] } }, select: { id: true },
+      where: { orderId, kind: merchandise ? { in: [...merchandiseKinds] } : kind, status: { in: [...activeCaseStatuses] } }, select: { id: true },
     });
-    if (existingCase) throw new OrderCaseError("An active case of this type already exists for this order.", 409);
-    if (options.returnRequest === "item" && kind === "RETURN") {
-      if (!lines?.length) throw new OrderCaseError("Choose the item and quantity you want to return.", 400);
+    if (existingCase) {
+      if (kind === "CANCEL") return existingCase;
+      throw new OrderCaseError("An active request already exists for this order.", 409);
+    }
+    let selectedLines: Prisma.OrderCaseReturnLineCreateManyOrderCaseInput[] | undefined;
+    if (options.returnRequest === "item" && merchandise) {
+      if (!lines?.length) throw new OrderCaseError("Choose the item and quantity for this request.", 400);
       if (await completedUnitemizedReturn(tx, orderId)) {
         throw new OrderCaseError("Contact GriipBuddy about this order’s previous return before opening another request.", 409);
       }
-      const eligible = new Map(order.items.map(item => [item.id, item.quantity]));
-      const received = await receivedQuantities(tx, orderId);
-      if (lines.some(line => line.quantity > (eligible.get(line.orderItemId) ?? 0) - (received.get(line.orderItemId) ?? 0))) {
-        throw new OrderCaseError("One of the selected quantities is no longer available to return.", 409);
+      if (kind === "RETURN" && lines.some(line => line.replacementVariantId !== undefined)) {
+        throw new OrderCaseError("Choose an exchange to request a replacement.", 400);
       }
+      const eligible = new Map(order.items.map(item => [item.id, item]));
+      const received = await receivedQuantities(tx, orderId);
+      const selected = lines.map(line => {
+        const orderItem = eligible.get(line.orderItemId);
+        if (!orderItem || line.quantity > orderItem.quantity - (received.get(line.orderItemId) ?? 0)) {
+          throw new OrderCaseError("One of the selected quantities is no longer available to return.", 409);
+        }
+        return { ...line, orderItem };
+      });
+      selectedLines = kind === "EXCHANGE"
+        ? (await exchangeSelections(tx, selected)).choices.map(({ orderItem, quantity, replacement }) => ({
+          orderItemId: orderItem.id, quantity, replacementVariantId: replacement.id, replacementVariantName: replacement.label,
+        }))
+        : lines.map(({ orderItemId, quantity }) => ({ orderItemId, quantity }));
     } else if (lines) {
       throw new OrderCaseError("This request does not accept item selection.", 400);
     }
+    const immediate = actor.role !== "dev-admin" && kind === "CANCEL" && mayCancelBangladeshOrderImmediately(order);
+    if (immediate) await cancelLockedUnshippedOrder(tx, order, { shopperId: actorId });
     return tx.orderCase.create({
-      data: { orderId, kind, reason, issueItemId, events: { create: { status: "OPEN", note, revision: 0,
-        ...(actor.role === "dev-admin" ? { actorId } : { shopperActorId: actorId }) } },
+      data: { orderId, kind, reason, issueItemId,
+        ...(immediate && { status: "RESOLVED", revision: 1 }),
+        events: { create: [{ status: "OPEN", note, revision: 0,
+          ...(actor.role === "dev-admin" ? { actorId } : { shopperActorId: actorId }) },
+          ...(immediate ? [{ status: "RESOLVED" as const, revision: 1, shopperActorId: actorId }] : [])] },
         ...(photo && { attachment: { create: { data: photo } } }),
-        ...(lines && { returnLines: { createMany: { data: lines } } }) },
+        ...(selectedLines && { returnLines: { createMany: { data: selectedLines } } }) },
       select: { id: true },
     });
   });
@@ -275,8 +433,7 @@ async function openOrderCase(actor: CaseOperator, command: OpenCommand, photo?: 
 
 async function updateOrderCase(actor: CaseOperator, command: UpdateCommand) {
   return getDb().$transaction(async tx => {
-    const actorId = actor.role === "dev-admin"
-      ? (await lockCaseOrder(tx, actor, command.caseId)).actorId : actor.id;
+    const actorId = actor.role === "dev-admin" ? await lockDevAdminReturn(tx, actor, command.caseId) : actor.id;
     if (actor.role === "owner") await authorize(tx, actorId, true, actor.market);
     const where = { id: command.caseId, ...(actor.role === "dev-admin" && { orderId: actor.orderId, kind: "RETURN" as const }),
       order: { ...(actor.role === "shopper" && { shopperId: actorId }), marketId: actor.market } };
@@ -309,10 +466,9 @@ async function updateOrderCase(actor: CaseOperator, command: UpdateCommand) {
 
 async function receiveOrderCase(actor: CaseOperator, command: ReceiveCommand) {
   if (command.confirmed !== true) throw new OrderCaseError("Confirm receipt of the physical items first.", 400);
-  return getDb().$transaction(async tx => {
-    const { orderId, actorId } = await lockCaseOrder(tx, actor, command.caseId);
+  return ownerCaseTransaction(actor, command.caseId, async (tx, actorId) => {
     const orderCase = await tx.orderCase.findUnique({
-      where: { id: command.caseId, orderId },
+      where: { id: command.caseId },
       select: {
         id: true, kind: true, status: true, revision: true, returnReceivedAt: true,
         order: { select: { id: true, status: true, fulfillmentStatus: true, marketId: true } },
@@ -322,11 +478,10 @@ async function receiveOrderCase(actor: CaseOperator, command: ReceiveCommand) {
       },
     });
     if (!orderCase) throw new OrderCaseError("Case not found.", 404);
-    if (actor.role !== "dev-admin") await authorize(tx, actorId, true, orderCase.order.marketId);
     if (orderCase.revision !== command.revision) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
-    if (orderCase.kind !== "RETURN" || orderCase.status !== "RETURN_APPROVED" || orderCase.returnReceivedAt ||
+    if (!merchandiseKinds.some(kind => kind === orderCase.kind) || orderCase.status !== "RETURN_APPROVED" || orderCase.returnReceivedAt ||
         orderCase.order.marketId !== "bd" || !mayRequestReturn(orderCase.order) || !orderCase.returnLines.length) {
-      throw new OrderCaseError("Only an approved item return for a delivered Bangladesh order can be received.", 409);
+      throw new OrderCaseError("Only an approved return or exchange for a delivered Bangladesh order can be received.", 409);
     }
     const received = await receivedQuantities(tx, orderCase.order.id);
     const lines = orderCase.returnLines;
@@ -362,11 +517,60 @@ async function receiveOrderCase(actor: CaseOperator, command: ReceiveCommand) {
   });
 }
 
+async function shipExchange(actor: CaseActor, command: ExchangeCommand) {
+  return ownerCaseTransaction(actor, command.caseId, async tx => {
+    const orderCase = await tx.orderCase.findUnique({ where: { id: command.caseId }, select: {
+      id: true, status: true, kind: true, revision: true, returnReceivedAt: true, replacementCarrier: true, replacementTrackingReference: true,
+      order: { select: { id: true, status: true, fulfillmentStatus: true, returnTerms: true, marketId: true } },
+      returnLines: { select: { quantity: true, replacementVariantId: true, replacementVariantName: true,
+        orderItem: { select: { ...exchangeSource, orderId: true } } } },
+    } });
+    if (!orderCase) throw new OrderCaseError("Case not found.", 404);
+    if (orderCase.kind === "EXCHANGE" && orderCase.replacementCarrier === command.carrier &&
+        orderCase.replacementTrackingReference === command.trackingReference) return { id: orderCase.id };
+    if (orderCase.revision !== command.revision) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
+    if (orderCase.kind !== "EXCHANGE" || orderCase.status !== "RETURN_RECEIVED" || !orderCase.returnReceivedAt ||
+        !mayRequestExchange(orderCase.order) || !orderCase.returnLines.length ||
+        orderCase.returnLines.some(line => line.orderItem.orderId !== orderCase.order.id)) {
+      throw new OrderCaseError("Receive the original items before dispatching their replacements.", 409);
+    }
+    const variants = await tx.variant.findMany({
+      where: { id: { in: orderCase.returnLines.map(line => line.orderItem.variantId) } }, select: { productId: true },
+    });
+    for (const productId of [...new Set(variants.map(variant => variant.productId))].sort()) await lockProductEdits(tx, productId);
+    const { choices, quantities } = await exchangeSelections(tx, orderCase.returnLines);
+    if (choices.some((choice, index) => choice.replacement.label !== orderCase.returnLines[index].replacementVariantName)) {
+      throw new OrderCaseError("A selected replacement has changed since the request. Confirm the next step with the shopper.", 409);
+    }
+    const stock = [...quantities].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    for (const [variantId, quantity] of stock) {
+      const result = await tx.inventory.updateMany({ where: { variantId, available: { gte: quantity } }, data: { available: { decrement: quantity } } });
+      if (result.count !== 1) throw new OrderCaseError("A replacement just sold out. No shipment or stock change was saved.", 409);
+    }
+    const status = "EXCHANGE_SHIPPED";
+    const revision = command.revision + 1;
+    const result = await tx.orderCase.updateMany({ where: { id: orderCase.id, revision: command.revision }, data: {
+      status, revision, replacementCarrier: command.carrier, replacementTrackingReference: command.trackingReference,
+    } });
+    if (result.count !== 1) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
+    await tx.orderCaseEvent.create({ data: { caseId: orderCase.id, status, revision, actorId: actor.id, note: command.note } });
+    await tx.auditEvent.create({
+      data: { actorId: actor.id, action: "BD_EXCHANGE_SHIPPED", target: orderCase.id, changes: {
+        orderId: orderCase.order.id, marketId: "bd", carrier: command.carrier, trackingReference: command.trackingReference,
+        replacements: stock.map(([variantId, quantity]) => ({ variantId, quantity })),
+      } },
+    });
+    return { id: orderCase.id };
+  });
+}
+
 export function executeOrderCase(actor: CaseActor, command: CaseCommand, photo?: Uint8Array<ArrayBuffer>) {
   if (actor.role !== caseActorRole(command.action)) throw new OrderCaseError("You don’t have permission for that action.", 403);
   if (command.action === "open") return openOrderCase(actor, command, photo);
   if (command.action === "receive") return receiveOrderCase(actor, command);
-  if (command.action === "confirm-refund") return confirmRefund(actor, command);
+  if (command.action === "approve-cancellation") return approveCancellation(actor, command);
+  if (command.action === "approve-refund" || command.action === "confirm-refund" || command.action === "fail-refund") return progressRefund(actor, command);
+  if (command.action === "ship-exchange") return shipExchange(actor, command);
   return updateOrderCase(actor, command);
 }
 
@@ -377,6 +581,6 @@ export function executeDevAdminReturn(operator: DevAdminFulfillmentOperator, ord
     case "open-return": return openOrderCase(actor, { ...command, action: "open", kind: "RETURN", orderId });
     case "review-return": return updateOrderCase(actor, { ...command, action: "review" });
     case "receive-return": return receiveOrderCase(actor, { ...command, action: "receive" });
-    case "confirm-return-refund": return confirmRefund(actor, { ...command, action: "confirm-refund" });
+    case "confirm-return-refund": return progressRefund(actor, { ...command, action: "confirm-refund" });
   }
 }

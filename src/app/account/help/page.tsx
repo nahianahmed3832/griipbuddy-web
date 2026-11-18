@@ -9,7 +9,7 @@ import { currentMarket } from "@/lib/market-server";
 import { accountText } from "@/lib/marketplace/account-language";
 import { currentAccountLanguage } from "@/lib/marketplace/account-language-server";
 import { getShopper } from "@/lib/marketplace/auth";
-import { caseKindLabel, caseStatusLabel } from "@/lib/marketplace/case-language";
+import { caseKindLabel, caseProgressLabel } from "@/lib/marketplace/case-language";
 import { casesForShopper } from "@/lib/marketplace/cases";
 import { hybridDemoMode, marketplaceMode } from "@/lib/release-config";
 
@@ -36,7 +36,7 @@ export default async function AccountHelp() {
         {!cases.length ? <p>{t("There are no requests for this country yet.", "এই দেশে এখনো কোনো অনুরোধ নেই।")}</p> :
           <ul className="customer-account__stack">{cases.map(item => <li key={item.id}>
             <Link href={href(`/orders/${item.order.id}/cases/${item.id}`)}>{t("Request for order", "অর্ডারের জন্য অনুরোধ")} {item.order.reference}</Link>
-            {" · "}<span>{caseKindLabel(language, item.kind)} · {caseStatusLabel(language, item.status)}</span>{" · "}<time dateTime={item.updatedAt.toISOString()}>
+            {" · "}<span>{caseKindLabel(language, item.kind)} · {caseProgressLabel(language, item)}</span>{" · "}<time dateTime={item.updatedAt.toISOString()}>
               {customerOrderDate(item.updatedAt, market.id, language)}</time>
           </li>)}</ul>}
       </section>}
