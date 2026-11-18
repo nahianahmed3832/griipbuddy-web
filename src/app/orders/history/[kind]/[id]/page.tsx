@@ -69,6 +69,8 @@ export default async function HistoricalOrderPage({ params }: { params: Promise<
     </section>}
     <section className="commerce-panel">
       <h2>{t("Help with this order", "এই অর্ডারে সহায়তা")}</h2>
+      <p>{t("For changes, returns, exchanges or refunds on this earlier purchase, contact support with the order reference.",
+        "আগের এই কেনাকাটা পরিবর্তন, ফেরত, বদল বা টাকা ফেরতের জন্য অর্ডার নম্বরসহ সহায়তা দলের সঙ্গে যোগাযোগ করুন।")}</p>
       <a href={`mailto:${store.supportEmail}?subject=${encodeURIComponent(`Order ${order.reference}`)}`}>{store.supportEmail}</a>
     </section>
   </div>;

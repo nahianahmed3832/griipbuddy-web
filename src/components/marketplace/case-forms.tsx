@@ -2,13 +2,12 @@
 
 import { useState, type FormEvent } from "react";
 import type { MarketId } from "@/config/markets";
-import { formatMoney, markets } from "@/config/markets";
 import { marketStoreHref } from "@/config/regional-path";
 import { storefrontPath } from "@/config/storefront-path";
 import type { OrderCaseKind, OrderCaseStatus } from "@/generated/prisma/enums";
 import { accountText, type AccountLanguage } from "@/lib/marketplace/account-language";
 import { caseKindLabel, caseReasonLabel } from "@/lib/marketplace/case-language";
-import { activeCaseStatuses, caseReasons, caseStatusLabels, mayWithdrawCase, ownerCaseTransitions } from "@/lib/marketplace/case-policy";
+import { activeCaseStatuses, caseReasons, mayWithdrawCase } from "@/lib/marketplace/case-policy";
 import { MarketplaceForm, useMarketplaceSubmission } from "./action-form";
 
 const caseEndpoint = (market: MarketId, language: AccountLanguage = "en") =>
@@ -32,51 +31,84 @@ async function submitCase(command: object, photo: File | null, endpoint: string,
 }
 
 type SupportItem = { id: string; productName: string; variantName: string; personalization: string };
+type Replacement = { id: string; label: string; sku: string; available: number };
+type ReturnItem = SupportItem & { quantity: number; replacements?: readonly Replacement[] };
+type ExchangeItem = ReturnItem & { replacements: readonly Replacement[] };
 
-export function OpenOrderCase({ orderId, available, returnItems, items, language, market, routingMarket, initialItemId }: {
+export function OpenOrderCase({ orderId, available, returnItems, exchangeItems, items, language, market, routingMarket, initialItemId, immediateCancellation }: {
   orderId: string; available: readonly OrderCaseKind[]; market: MarketId; routingMarket?: MarketId; language: AccountLanguage;
-  items: readonly SupportItem[]; returnItems?: readonly (SupportItem & { quantity: number })[];
+  items: readonly SupportItem[]; returnItems?: readonly ReturnItem[]; exchangeItems?: readonly ExchangeItem[];
   initialItemId?: string;
+  immediateCancellation?: boolean;
 }) {
-  const [choice, setChoice] = useState(available[0]);
+  const [choice, setChoice] = useState<OrderCaseKind>(initialItemId ? "DISPUTE" : available[0]);
   const kind = available.includes(choice) ? choice : available[0];
   const state = useMarketplaceSubmission();
+  const [selectionError, setSelectionError] = useState("");
   const t = (en: string, bn: string) => accountText(language, en, bn);
+  const merchandise = kind === "EXCHANGE" ? exchangeItems : kind === "RETURN" ? returnItems : undefined;
+  const immediate = kind === "CANCEL" && immediateCancellation;
+  const actionLabel = (value: OrderCaseKind) => value === "CANCEL" && immediateCancellation
+    ? t("Cancel order", "অর্ডার বাতিল করুন") : value === "EXCHANGE" ? t("Request an exchange", "পণ্য বদলের অনুরোধ করুন")
+      : value === "RETURN" ? t("Request a return", "পণ্য ফেরতের অনুরোধ করুন") : caseKindLabel(language, value);
 
   function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const photo = form.get("photo");
+    setSelectionError("");
+    const lines = merchandise?.flatMap(item => {
+      const quantity = Number(form.get("quantity-" + item.id));
+      if (quantity <= 0) return [];
+      const replacement = form.get("replacement-" + item.id);
+      return [{ orderItemId: item.id, quantity, ...(typeof replacement === "string" && replacement && { replacementVariantId: replacement }) }];
+    });
+    if (lines && !lines.length) {
+      setSelectionError(t("Choose at least one item and quantity.", "অন্তত একটি পণ্য ও পরিমাণ বেছে নিন।"));
+      return;
+    }
+    if (kind === "EXCHANGE" && lines?.some(line => !line.replacementVariantId)) {
+      setSelectionError(t("Choose a replacement for every item you want to exchange.", "প্রতিটি বদলের পণ্যের জন্য একটি বিকল্প বেছে নিন।"));
+      return;
+    }
     const command = {
       action: "open", orderId, kind, note: form.get("note"), reason: form.get("reason"),
       ...(kind === "DISPUTE" && form.get("item") && { issueItemId: form.get("item") }),
-      ...(kind === "RETURN" && returnItems && {
-        lines: returnItems.flatMap(item => {
-          const quantity = Number(form.get("quantity-" + item.id));
-          return quantity > 0 ? [{ orderItemId: item.id, quantity }] : [];
-        }),
-      }),
+      ...(lines && { lines }),
     };
     void state.submit(() => submitCase(command, photo instanceof File ? photo : null, caseEndpoint(market, language), language),
-      t("Your request was submitted.", "আপনার অনুরোধ জমা হয়েছে।"),
+      immediate ? t("Cancellation saved.", "বাতিলের তথ্য সংরক্ষণ হয়েছে।") : t("Your request was submitted.", "আপনার অনুরোধ জমা হয়েছে।"),
       ({ id }) => marketStoreHref("/orders/" + orderId + "/cases/" + id, routingMarket));
   }
 
   return <details open={initialItemId ? true : undefined}>
     <summary>{t("Start a request", "নতুন অনুরোধ করুন")}</summary>
-    <form className="mp-form" onSubmit={send}>
+    <form className="mp-form" method="post" onSubmit={send}>
       <label>{t("Request type", "অনুরোধের ধরন")}
-        <select name="kind" value={kind} onChange={event => setChoice(event.target.value as OrderCaseKind)} required>
-          {available.map(item => <option key={item} value={item}>{caseKindLabel(language, item)}</option>)}
+        <select name="kind" value={kind} onChange={event => { setChoice(event.target.value as OrderCaseKind); setSelectionError(""); }} required>
+          {available.map(item => <option key={item} value={item}>{actionLabel(item)}</option>)}
         </select>
       </label>
-      {kind === "RETURN" && returnItems && <fieldset>
-        <legend>{t("Items to return", "ফেরত দেওয়ার পণ্য")}</legend>
-        <p>{t("Enter a quantity for each item you want to return.", "প্রতিটি পণ্যের জন্য কতটি ফেরত দিতে চান তা লিখুন।")}</p>
-        {returnItems.map(item => <label key={item.id}>
-          {item.productName} · {item.variantName}{item.personalization && " · " + item.personalization} ({t("up to", "সর্বোচ্চ")} {item.quantity})
-          <input type="number" name={"quantity-" + item.id} min={0} max={item.quantity} step={1} defaultValue={0} />
-        </label>)}
+      {kind === "CANCEL" && <p>{immediate
+        ? t("This unpaid order will be cancelled immediately.", "এই অপরিশোধিত অর্ডারটি সঙ্গে সঙ্গে বাতিল হবে।")
+        : t("Support will review your cancellation. You can follow the decision and any refund here.", "সহায়তা দল বাতিলের অনুরোধ পর্যালোচনা করবে। সিদ্ধান্ত ও প্রযোজ্য টাকা ফেরতের অবস্থা এখানে দেখুন।")}</p>}
+      {merchandise && <fieldset className="after-sales-items" key={kind}>
+        <legend>{kind === "EXCHANGE" ? t("Items to exchange", "বদল করার পণ্য") : t("Items to return", "ফেরত দেওয়ার পণ্য")}</legend>
+        {kind === "EXCHANGE" && <p>{t("Choose a same-price replacement that is in stock.", "একই দামের স্টকে থাকা বদলি পণ্য বেছে নিন।")}</p>}
+        {merchandise.map(item => <fieldset className="after-sales-item" key={item.id}>
+          <legend>{item.productName} · {item.variantName}{item.personalization && " · " + item.personalization}</legend>
+          <label>{t("Quantity", "পরিমাণ")} ({t("up to", "সর্বোচ্চ")} {item.quantity})
+            <input type="number" name={"quantity-" + item.id} min={0} max={item.quantity} step={1} defaultValue={0} />
+          </label>
+          {item.replacements && <label>{t("Replacement option", "বদলি পণ্য")}
+            <select name={"replacement-" + item.id} defaultValue="">
+              <option value="">{t("Choose an option", "একটি বিকল্প বেছে নিন")}</option>
+              {item.replacements.map(variant => <option key={variant.id} value={variant.id}>
+                {variant.label} · {variant.sku} ({variant.available} {t("in stock", "স্টকে")})
+              </option>)}
+            </select>
+          </label>}
+        </fieldset>)}
       </fieldset>}
       {kind === "DISPUTE" && items.length > 0 && <label>{t("Which item needs help?", "কোন পণ্য নিয়ে সহায়তা দরকার?")}
         <select name="item" defaultValue={initialItemId ?? ""}>
@@ -98,15 +130,17 @@ export function OpenOrderCase({ orderId, available, returnItems, items, language
         <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" />
         <small>{t("JPEG, PNG or WebP, up to 4 MB.", "JPEG, PNG বা WebP, সর্বোচ্চ ৪ এমবি।")}</small>
       </label>}
+      {immediate && <label><input type="checkbox" required /> {t("I want to cancel this order.", "আমি এই অর্ডারটি বাতিল করতে চাই।")}</label>}
       <button type="submit" className="button button--primary" disabled={state.pending}>
-        {state.pending ? t("Submitting…", "জমা হচ্ছে…") : t("Submit request", "অনুরোধ জমা দিন")}
+        {state.pending ? t("Submitting…", "জমা হচ্ছে…") : immediate ? t("Cancel order", "অর্ডার বাতিল করুন") : t("Submit request", "অনুরোধ জমা দিন")}
       </button>
+      {selectionError && <p role="alert">{selectionError}</p>}
       {state.feedback}
     </form>
   </details>;
 }
 
-type CaseState = { id: string; revision: number; kind: OrderCaseKind; status: OrderCaseStatus; returnLineCount: number };
+type CaseState = { id: string; revision: number; status: OrderCaseStatus };
 
 export function ShopperCaseActions({ orderCase, market, language }: { orderCase: CaseState; market: MarketId; language: AccountLanguage }) {
   const t = (en: string, bn: string) => accountText(language, en, bn);
@@ -128,77 +162,4 @@ export function ShopperCaseActions({ orderCase, market, language }: { orderCase:
       />
     </details>}
   </>;
-}
-
-export function ReviewOrderCase({ orderCase, market }: { orderCase: CaseState; market: MarketId }) {
-  const endpoint = caseEndpoint(market);
-  const hasReturnLines = orderCase.returnLineCount > 0;
-  const options = ownerCaseTransitions(orderCase.kind, orderCase.status, hasReturnLines);
-  if (orderCase.kind === "RETURN" && orderCase.status === "RETURN_APPROVED" && hasReturnLines) {
-    return <section className="commerce-panel">
-      <h2>Receive returned items</h2>
-      <p>Match the physical items and quantities to this case. Handle any refund separately before resolving the case.</p>
-      <MarketplaceForm endpoint={endpoint} label="Record return receipt" success="Return receipt recorded."
-        fields={<>
-          <label>Stock decision
-            <select name="disposition" required defaultValue="">
-              <option value="" disabled>Choose after inspection</option>
-              <option value="RESTOCK">Restock all returned items that are complete and sellable</option>
-              <option value="HOLD">Hold damaged or uncertain items for review</option>
-            </select>
-          </label>
-          <label><input name="confirmed" type="checkbox" value="yes" required /> I received and inspected every item listed in this case.</label>
-        </>}
-        command={form => ({ action: "receive", caseId: orderCase.id, revision: orderCase.revision,
-          disposition: form.get("disposition"), confirmed: form.get("confirmed") === "yes" })}
-      />
-    </section>;
-  }
-  if (!options.length) return null;
-  return <section className="commerce-panel">
-    <h2>Review case</h2>
-    {orderCase.kind === "CANCEL" && <p>Open the original order above to cancel it using the existing staff controls, then resolve this request.</p>}
-    <MarketplaceForm endpoint={endpoint} label="Save case update" success="Case updated." reset
-      fields={<>
-        <label>New status
-          <select name="status" required>
-            {options.map(status => <option key={status} value={status}>{caseStatusLabels[status]}</option>)}
-          </select>
-        </label>
-        <label>Message to shopper<textarea name="note" rows={4} minLength={3} maxLength={1500} required /></label>
-        {options.includes("RETURN_APPROVED") && <p>Include return instructions when you approve a return.</p>}
-        {orderCase.status === "RETURN_RECEIVED" && <p>Confirm any required refund before resolving the case.</p>}
-      </>}
-      command={form => ({ action: "review", caseId: orderCase.id, revision: orderCase.revision, status: form.get("status"), note: form.get("note") })}
-    />
-  </section>;
-}
-
-export function StaffCaseReply({ orderCase, market }: { orderCase: CaseState; market: MarketId }) {
-  if (!activeCaseStatuses.some(status => status === orderCase.status)) return null;
-  return <section className="commerce-panel">
-    <h2>Reply to shopper</h2>
-    <MarketplaceForm endpoint={caseEndpoint(market)} label="Send reply" success="Reply sent." reset
-      fields={<label>Message<textarea name="note" required minLength={3} maxLength={1500} rows={3} /></label>}
-      command={form => ({ action: "respond", caseId: orderCase.id, revision: orderCase.revision, note: form.get("note") })} />
-  </section>;
-}
-
-export function ConfirmCaseRefund({ orderCase, limitMinor }: { orderCase: CaseState; limitMinor: number }) {
-  if (limitMinor < 1) return null;
-  return <section className="commerce-panel">
-    <h2>Record a completed refund</h2>
-    <p>Only record a refund after the payout is complete. Maximum for these returned items is {formatMoney(limitMinor, markets.bd)}.</p>
-    <MarketplaceForm endpoint={caseEndpoint("bd")} label="Confirm completed refund" success="Refund confirmation recorded."
-      fields={<>
-        <label>Amount refunded (BDT)<input name="amount" type="number" min="0.01" max={limitMinor / 100} step="0.01" required /></label>
-        <label>Method used<input name="method" minLength={2} maxLength={60} required /></label>
-        <label>Confirmation reference<input name="reference" minLength={2} maxLength={80} required /></label>
-        <label><input name="confirmed" type="checkbox" value="yes" required /> I verified the completed payout and amount.</label>
-      </>}
-      command={form => ({ action: "confirm-refund", caseId: orderCase.id, revision: orderCase.revision,
-        amountMinor: Math.round(Number(form.get("amount")) * 100), method: form.get("method"), reference: form.get("reference"),
-        confirmed: form.get("confirmed") === "yes" })}
-    />
-  </section>;
 }

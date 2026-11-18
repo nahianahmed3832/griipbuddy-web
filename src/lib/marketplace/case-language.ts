@@ -4,6 +4,7 @@ import { caseKindLabels, caseStatusLabels, type CaseReason } from "./case-policy
 
 const banglaKinds: Record<OrderCaseKind, string> = {
   RETURN: "ফেরতের অনুরোধ",
+  EXCHANGE: "বদলের অনুরোধ",
   DISPUTE: "অর্ডার নিয়ে সহায়তা",
   CANCEL: "বাতিলের অনুরোধ",
 };
@@ -13,6 +14,9 @@ const banglaStatuses: Record<OrderCaseStatus, string> = {
   IN_REVIEW: "পর্যালোচনা চলছে",
   RETURN_APPROVED: "ফেরত অনুমোদিত",
   RETURN_RECEIVED: "ফেরত পণ্য গ্রহণ করা হয়েছে",
+  EXCHANGE_SHIPPED: "বদলি পণ্য পাঠানো হয়েছে",
+  REFUND_APPROVED: "টাকা ফেরতের অপেক্ষায়",
+  REFUND_FAILED: "টাকা ফেরতে সমস্যা হয়েছে",
   DECLINED: "অনুরোধ অনুমোদিত হয়নি",
   RESOLVED: "সমাধান হয়েছে",
   WITHDRAWN: "অনুরোধ প্রত্যাহার করা হয়েছে",
@@ -35,6 +39,12 @@ export function caseStatusLabel(language: AccountLanguage, status: OrderCaseStat
   return accountText(language, caseStatusLabels[status], banglaStatuses[status]);
 }
 
+export function caseProgressLabel(language: AccountLanguage, { status, refundConfirmedAt }: {
+  status: OrderCaseStatus; refundConfirmedAt?: Date | null;
+}) {
+  return refundConfirmedAt ? accountText(language, "Refund confirmed", "টাকা ফেরত নিশ্চিত হয়েছে") : caseStatusLabel(language, status);
+}
+
 export function caseReasonLabel(language: AccountLanguage, reason: string) {
   if (!Object.hasOwn(reasons, reason)) return reason;
   return accountText(language, ...reasons[reason as CaseReason]);
@@ -49,11 +59,15 @@ const errors: Record<string, string> = {
   "Order not found.": "অর্ডারটি পাওয়া যায়নি।",
   "Case not found.": "অনুরোধটি পাওয়া যায়নি।",
   "A return can be requested after delivery.": "ডেলিভারির পরে ফেরতের অনুরোধ করা যায়।",
+  "An exchange can only be requested for an eligible delivered Bangladesh order.": "যোগ্য বাংলাদেশি অর্ডার ডেলিভারির পর পণ্য বদলের অনুরোধ করা যায়।",
   "Contact support to discuss a return for this order.": "এই অর্ডার ফেরত দেওয়ার বিষয়ে সহায়তা দলের সঙ্গে যোগাযোগ করুন।",
   "This order can no longer be cancelled online. Ask support for help.": "এই অর্ডারটি এখন অনলাইনে বাতিল করা যাবে না। সহায়তার জন্য যোগাযোগ করুন।",
   "Choose an item from this order.": "এই অর্ডার থেকে একটি পণ্য বেছে নিন।",
   "An active case of this type already exists for this order.": "এই অর্ডারে একই ধরনের একটি অনুরোধ ইতিমধ্যে চালু আছে।",
+  "An active request already exists for this order.": "এই অর্ডারের জন্য একটি অনুরোধ ইতিমধ্যে চালু আছে।",
   "Choose the item and quantity you want to return.": "ফেরত দিতে চান এমন পণ্য ও পরিমাণ বেছে নিন।",
+  "Choose the item and quantity for this request.": "এই অনুরোধের জন্য পণ্য ও পরিমাণ বেছে নিন।",
+  "Choose a replacement for every item you want to exchange.": "প্রতিটি বদলের পণ্যের জন্য একটি বিকল্প বেছে নিন।",
   "Contact GriipBuddy about this order’s previous return before opening another request.": "নতুন অনুরোধ করার আগে এই অর্ডারের আগের ফেরত নিয়ে GriipBuddy-এর সঙ্গে যোগাযোগ করুন।",
   "One of the selected quantities is no longer available to return.": "বেছে নেওয়া একটি পরিমাণ এখন ফেরত দেওয়া যাবে না।",
   "This request does not accept item selection.": "এই অনুরোধে পণ্য বেছে নেওয়া যায় না।",

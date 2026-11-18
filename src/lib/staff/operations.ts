@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Prisma } from "../../generated/prisma/client.ts";
+import type { FulfillmentStatus } from "../../generated/prisma/enums.ts";
 import { markets, type MarketId } from "../../config/markets.ts";
 import { validVariantId } from "../cart/model.ts";
 import { getDb, type DbReader } from "../db/client.ts";
@@ -11,6 +12,7 @@ import { nextBangladeshTrackingStatuses } from "../commerce/bangladesh-shipment-
 import { isManualPaymentMethod } from "../commerce/manual-payment-methods.ts";
 import { notifyOrder } from "../commerce/order-notifications.ts";
 import { hybridDemoMode, hybridStoreMode } from "../release-config.ts";
+import { pendingCancellationStatuses } from "../marketplace/case-policy.ts";
 import { devAdminOrderScope } from "./dev-admin-orders.ts";
 import { devAdminWarehouse, type DevAdminFulfillmentOperator } from "./dev-admin-order-proof.ts";
 
@@ -128,6 +130,11 @@ export async function advanceFulfillment(actor: FulfillmentActor, orderId: strin
   await getDb().$transaction(async (tx) => {
     const { order, actorId } = await lockFulfillmentOrder(tx, actor, orderId);
     if (order.status !== "PLACED") throw new OperationError("This order is cancelled.");
+    if (next === "SHIPPED" && order.marketId === "bd" && await tx.orderCase.findFirst({
+      where: { orderId, kind: "CANCEL", status: { in: [...pendingCancellationStatuses] } }, select: { id: true },
+    })) {
+      throw new OperationError("Review the open cancellation request before dispatching this order.");
+    }
     if (order.payment.method !== "COD" && order.payment.status !== "PAID") {
       throw new OperationError("This prepaid order cannot move through packing while payment is incomplete or a refund is pending.");
     }
@@ -212,17 +219,24 @@ export async function recordBangladeshTracking(actor: FulfillmentActor, orderId:
   if (changed && typeof actor === "string") await notifyOrder(orderId, ({ OUT_FOR_DELIVERY: "out-for-delivery", DELIVERED: "delivered", REFUSED: "refused" } as const)[status]);
 }
 
-async function cancelUnshipped(tx: Prisma.TransactionClient, actorId: string, order: Awaited<ReturnType<typeof lockedOrder>>) {
+export async function cancelLockedUnshippedOrder(tx: Prisma.TransactionClient, order: {
+  id: string;
+  fulfillmentStatus: FulfillmentStatus;
+  items: readonly { variantId: string; quantity: number }[];
+}, { actorId = null, shopperId, paymentStatus = "VOIDED" }: {
+  actorId?: string | null; shopperId?: string; paymentStatus?: "VOIDED" | "REFUND_PENDING";
+}) {
   const items = [...order.items].sort((a, b) => a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0);
   for (const item of items) {
     await tx.inventory.update({ where: { variantId: item.variantId }, data: { available: { increment: item.quantity } } });
   }
   await tx.order.update({ where: { id: order.id }, data: { status: "CANCELLED", cancelledAt: new Date() } });
-  await tx.payment.update({ where: { orderId: order.id }, data: { status: "VOIDED" } });
+  await tx.payment.update({ where: { orderId: order.id }, data: { status: paymentStatus } });
   await tx.fulfillmentEvent.create({
     data: { orderId: order.id, actorId, status: order.fulfillmentStatus, type: "ORDER_CANCELLED" },
   });
-  await tx.auditEvent.create({ data: { actorId, action: "ORDER_CANCELLED", target: order.id, changes: { restoredLines: items.length } } });
+  await tx.auditEvent.create({ data: { actorId, action: "ORDER_CANCELLED", target: order.id,
+    changes: { restoredLines: items.length, ...(shopperId && { shopperId }), paymentStatus } } });
 }
 
 export async function staffManualPayment(actorId: string, orderId: string) {
@@ -277,7 +291,7 @@ export async function reviewManualPayment(actor: FulfillmentActor, orderId: stri
         await tx.payment.update({ where: { orderId }, data: { status: "PAID", collectedAt: reviewedAt, collectedById: actorId } });
       } else {
         await tx.bangladeshManualProof.update({ where: { orderId }, data: { reviewedAt, reviewNote: decision.note } });
-        await cancelUnshipped(tx, actorId, order);
+        await cancelLockedUnshippedOrder(tx, order, { actorId });
       }
       await tx.auditEvent.create({ data: {
         actorId, target: orderId, action: decision.approve ? "MANUAL_PAYMENT_APPROVED" : "MANUAL_PAYMENT_DECLINED",
@@ -302,7 +316,7 @@ export async function cancelOrder(actor: FulfillmentActor, orderId: string) {
     if (!canCancelFrom.includes(order.fulfillmentStatus) || order.payment.status !== "AWAITING_COLLECTION") {
       throw new OperationError("Only unshipped orders awaiting collection can be cancelled.");
     }
-    await cancelUnshipped(tx, actorId, order);
+    await cancelLockedUnshippedOrder(tx, order, { actorId });
   });
 }
 

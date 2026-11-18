@@ -121,6 +121,9 @@ enum AuditAction {
   BD_REFUSED_PARCEL_RECEIVED
   BD_RETURN_CASE_RECEIVED
   BD_CASE_REFUND_CONFIRMED
+  BD_CASE_REFUND_APPROVED
+  BD_CASE_REFUND_FAILED
+  BD_EXCHANGE_SHIPPED
   MANUAL_PAYMENT_APPROVED
   MANUAL_PAYMENT_DECLINED
 }
@@ -1021,6 +1024,7 @@ enum OrderCaseKind {
   RETURN
   DISPUTE
   CANCEL
+  EXCHANGE
 }
 
 enum OrderCaseStatus {
@@ -1031,6 +1035,9 @@ enum OrderCaseStatus {
   RESOLVED
   WITHDRAWN
   RETURN_RECEIVED
+  EXCHANGE_SHIPPED
+  REFUND_APPROVED
+  REFUND_FAILED
 }
 
 model OrderCase {
@@ -1052,6 +1059,8 @@ model OrderCase {
   refundMethod String?       @db.VarChar(60)
   refundReference String?    @db.VarChar(80)
   refundConfirmedAt DateTime?
+  replacementCarrier String? @db.VarChar(60)
+  replacementTrackingReference String? @db.VarChar(80)
   returnReceivedAt DateTime?
   returnReceivedById String?
   returnReceivedBy User? @relation("ReturnCaseReceiver", fields: [returnReceivedById], references: [id], onDelete: SetNull)
@@ -1103,6 +1112,8 @@ model OrderCaseReturnLine {
   orderItemId String    @db.Uuid
   orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
   quantity    Int
+  replacementVariantId String?
+  replacementVariantName String?
 
   @@id([caseId, orderItemId])
   @@index([orderItemId])

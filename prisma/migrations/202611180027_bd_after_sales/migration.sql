@@ -1,0 +1,15 @@
+ALTER TYPE "OrderCaseKind" ADD VALUE 'EXCHANGE';
+ALTER TYPE "OrderCaseStatus" ADD VALUE 'EXCHANGE_SHIPPED';
+ALTER TYPE "OrderCaseStatus" ADD VALUE 'REFUND_APPROVED';
+ALTER TYPE "OrderCaseStatus" ADD VALUE 'REFUND_FAILED';
+ALTER TYPE "AuditAction" ADD VALUE 'BD_CASE_REFUND_APPROVED';
+ALTER TYPE "AuditAction" ADD VALUE 'BD_CASE_REFUND_FAILED';
+ALTER TYPE "AuditAction" ADD VALUE 'BD_EXCHANGE_SHIPPED';
+
+ALTER TABLE "OrderCase"
+  ADD COLUMN "replacementCarrier" VARCHAR(60),
+  ADD COLUMN "replacementTrackingReference" VARCHAR(80);
+
+ALTER TABLE "OrderCaseReturnLine"
+  ADD COLUMN "replacementVariantId" TEXT,
+  ADD COLUMN "replacementVariantName" TEXT;

@@ -1,9 +1,10 @@
 import { Prisma } from "../../generated/prisma/client.ts";
-import type { FulfillmentStatus, OrderStatus } from "../../generated/prisma/enums.ts";
+import type { FulfillmentStatus, MarketCode, OrderStatus } from "../../generated/prisma/enums.ts";
 import { getDb } from "../db/client.ts";
 import type { SellerOrderRange } from "./seller-order-range.ts";
 import { nextSellerPreparation, sellerPaymentAllowsPreparation, sellerPreparationInput, sellerPreparationLabels } from "./seller-preparation.ts";
 import { fulfillmentLabels } from "../commerce/labels.ts";
+import { pendingCancellationStatuses } from "./case-policy.ts";
 
 const pageSize = 20;
 const csvLimit = 10_000;
@@ -83,8 +84,8 @@ export async function advanceSellerPreparation(shopperId: string, input: unknown
   return getDb().$transaction(async tx => {
     // Use the same Order row lock as staff fulfillment and cancellation.
     // It also serializes simultaneous requests from the same seller.
-    const [order] = await tx.$queryRaw<{ shopId: string; status: OrderStatus; fulfillmentStatus: FulfillmentStatus }[]>`
-      SELECT s."id" AS "shopId", o."status", o."fulfillmentStatus"
+    const [order] = await tx.$queryRaw<{ shopId: string; status: OrderStatus; fulfillmentStatus: FulfillmentStatus; marketId: MarketCode }[]>`
+      SELECT s."id" AS "shopId", o."status", o."fulfillmentStatus", o."marketId"
       FROM "Order" o
       JOIN "MarketplaceShop" s ON s."ownerId" = ${shopperId}
       WHERE o."id" = ${orderId}::uuid
@@ -104,6 +105,9 @@ export async function advanceSellerPreparation(shopperId: string, input: unknown
     if (nextSellerPreparation(order.status, order.fulfillmentStatus, previous?.status ?? null) !== next) {
       throw new SellerOrderError(409, "That step is no longer available. Refresh the order and try again.");
     }
+    if (next === "HANDED_OFF" && order.marketId === "bd" && await tx.orderCase.findFirst({
+      where: { orderId, kind: "CANCEL", status: { in: [...pendingCancellationStatuses] } }, select: { id: true },
+    })) throw new SellerOrderError(409, "Wait for the cancellation request to be reviewed before handing off this order.");
     return tx.marketplaceSellerFulfillment.upsert({
       where,
       create: { ...key, status: next },

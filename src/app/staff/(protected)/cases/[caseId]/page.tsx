@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
-import { ConfirmCaseRefund, ReviewOrderCase, StaffCaseReply } from "@/components/marketplace/case-forms";
 import { CaseHistory } from "@/components/marketplace/case-panels";
+import { StaffCaseActions } from "@/components/marketplace/staff-case-forms";
 import { Breadcrumbs } from "@/components/store-ui";
 import { isMarketId, markets } from "@/config/markets";
 import { caseKindLabels, caseStatusLabels } from "@/lib/marketplace/case-policy";
@@ -20,11 +20,14 @@ export default async function StaffCasePage({ params, searchParams }: { params: 
   const orderCase = await staffOrderCase(staff.id, caseId, market);
   if (!orderCase) notFound();
   const label = caseKindLabels[orderCase.kind];
-  const { id, kind, status, revision, returnLines } = orderCase;
-  const formState = { id, kind, status, revision, returnLineCount: returnLines.length };
+  const { id, kind, status, revision, returnLines, canApproveCancellation, cancellationRefundMinor, canApproveRefund,
+    canConfirmRefund, canShipExchange, maxRefundMinor, refundAmountMinor } = orderCase;
+  const formState = { id, kind, status, revision, returnLineCount: returnLines.length,
+    orderCancelled: orderCase.order.status === "CANCELLED", canApproveCancellation, cancellationRefundMinor,
+    canApproveRefund, canConfirmRefund, canShipExchange, maxRefundMinor, refundAmountMinor };
 
   return (<>
-    <Breadcrumbs items={[{ label: "Order cases", href: "/staff/cases" }, { label }]} />
+    <Breadcrumbs items={[{ label: "Order cases", href: `/staff/cases?market=${orderCase.order.marketId}` }, { label }]} />
     <div className="commerce-intro">
       <h1 className="display-type">{label}</h1>
       <p>Order <Link href={`/staff/orders/${orderCase.order.id}`}>{orderCase.order.reference}</Link> · {markets[orderCase.order.marketId].name} · {caseStatusLabels[orderCase.status]}</p>
@@ -41,9 +44,7 @@ export default async function StaffCasePage({ params, searchParams }: { params: 
         </section>
       )}
       {orderCase.refundReference && <p className="commerce-panel">Payout confirmation reference · {orderCase.refundReference}</p>}
-      <ConfirmCaseRefund orderCase={formState} limitMinor={orderCase.maxRefundMinor} />
-      <ReviewOrderCase orderCase={formState} market={orderCase.order.marketId} />
-      <StaffCaseReply orderCase={formState} market={orderCase.order.marketId} />
+      <StaffCaseActions orderCase={formState} market={orderCase.order.marketId} />
     </div>
   </>);
 }

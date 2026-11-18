@@ -37,7 +37,7 @@ export function MarketplaceForm<T>({ fields, label, success, command, navigate, 
     const form = event.currentTarget;
     if (await state.submit(() => marketplaceRequest<T>(command(new FormData(form)), endpoint), success, navigate) && reset) form.reset();
   }
-  return <form className="mp-form" onSubmit={save}>
+  return <form className="mp-form" method="post" onSubmit={save}>
     {fields}<button type="submit" className={fields ? "button button--primary" : "button button--outline"} disabled={state.pending}>
       {state.pending ? pendingLabel : label}
     </button>{state.feedback}

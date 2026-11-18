@@ -60,6 +60,7 @@ test("private order cases restore only physically received items once and leave 
     await assert.rejects(executeOrderCase(other, { ...base, kind: "DISPUTE" }), { status: 404 });
     const cancel = { ...base, kind: "CANCEL", reason: "CHANGED_MIND" } as const;
     await assert.rejects(executeOrderCase({ ...buyer, market: "us" }, cancel), { status: 404 });
+    await advanceFulfillment(packerAccess.userId, orderId, { next: "PACKING" });
     const cancellation = await executeOrderCase({ ...buyer, market: "bd" }, cancel);
     await executeOrderCase(owner, { action: "review", caseId: cancellation.id, revision: 0, status: "IN_REVIEW", note: "Checking packing status." });
     await assert.rejects(executeOrderCase(owner, { action: "review", caseId: cancellation.id, revision: 1, status: "RESOLVED", note: "This would be premature." }), { status: 409 });
@@ -90,7 +91,6 @@ test("private order cases restore only physically received items once and leave 
     await executeOrderCase(buyer, { action: "withdraw", caseId: dispute.id, revision: 2 });
     assert.equal((await buyerOrderCase(buyerId, orderId, dispute.id))?.status, "WITHDRAWN");
 
-    await advanceFulfillment(packerAccess.userId, orderId, { next: "PACKING" });
     await advanceFulfillment(packerAccess.userId, orderId, { next: "READY_TO_SHIP" });
     await advanceFulfillment(packerAccess.userId, orderId, { next: "SHIPPED", carrier: "Test courier", trackingReference: suffix });
     await assert.rejects(executeOrderCase(buyer, cancel), { status: 409 });
