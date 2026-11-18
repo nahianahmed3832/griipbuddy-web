@@ -104,6 +104,7 @@ export function CheckoutView({ choices, manualChoices = [], manualMethods = [], 
   const cartChanged = Boolean(review && JSON.stringify([...items].sort(compareCartItems)) !==
     JSON.stringify([...review.input.items].sort(compareCartItems)));
   const confirmed = review && !cartChanged ? review : null;
+  const testWallet = manualMethods.find(wallet => wallet.test && wallet.method === payment);
   useCheckoutMeasurement(ready && activeChoices.length > 0 && items.length > 0 && !locked);
 
   function clearProof() {
@@ -351,6 +352,9 @@ export function CheckoutView({ choices, manualChoices = [], manualMethods = [], 
                 <small>{wallet.test ? "Test wallet payment" : "Pay the BDT total by wallet transfer."}</small></span>
             </label>
           ))}
+          {!confirmed && testWallet && <p className="commerce-muted">
+            Test recipient <strong>{testWallet.recipient}</strong>. Do not transfer real money. Select <strong>Review order</strong> to continue.
+          </p>}
         </fieldset>
         {directPersonalization && <fieldset className="commerce-panel commerce-form" disabled={busy}>
           <legend className="sr-only">Personalization</legend>
@@ -394,7 +398,8 @@ export function CheckoutView({ choices, manualChoices = [], manualMethods = [], 
           <h2>{manualPaymentLabels[confirmed.quote.manualPayment.method]} payment</h2>
           {confirmed.quote.manualPayment.test ? <>
             <p><strong>Test checkout. Do not transfer real money.</strong></p>
-            <p>Example receiving number <strong>{confirmed.quote.manualPayment.recipient}</strong>. Use a sample receipt or test transaction details.</p>
+            <p>Use <strong>{confirmed.quote.manualPayment.recipient}</strong> as the test recipient.</p>
+            <p>Enter a sample payer phone number and transaction ID, or upload a sample receipt. Then select <strong>Submit order for verification</strong>.</p>
           </> : <p>Send <strong>{formatMoney(confirmed.quote.totalMinor, market)}</strong> to
             <strong> {confirmed.quote.manualPayment.recipient}</strong> using your wallet, then share your proof below.</p>}
           <label>Proof of payment<select value={proofKind} onChange={event => { clearProof(); setProofKind(event.target.value === "receipt" ? "receipt" : "transaction"); }}>
