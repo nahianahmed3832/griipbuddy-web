@@ -1,12 +1,13 @@
 "use client";
 
+import { MapPin, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { markets, type MarketId } from "@/config/markets";
 import { northAmericanAddressProfiles } from "@/config/address-profiles";
 import { storefrontPath } from "@/config/storefront-path";
 import type { AddressCommand, SavedAddress } from "@/lib/marketplace/address-command";
-import { accountText, type AccountLanguage } from "@/lib/marketplace/account-language";
+import { accountMarketName, accountText, type AccountLanguage } from "@/lib/marketplace/account-language";
 
 type AddressAction = Omit<Extract<AddressCommand, { action: "create-address" }>, "marketId"> |
   Omit<Extract<AddressCommand, { action: "update-address" }>, "marketId"> |
@@ -54,7 +55,7 @@ function useAddressChange(marketId: MarketId, language: AccountLanguage) {
       setPending(false);
     }
   }
-  return { change, pending, status, addressSnapshot };
+  return { change, pending, status, addressSnapshot, clearStatus: () => setStatus(undefined) };
 }
 
 const districtNames: Readonly<Record<string, string>> = { dhaka: "ঢাকা", chattogram: "চট্টগ্রাম", gazipur: "গাজীপুর", narayanganj: "নারায়ণগঞ্জ" };
@@ -62,9 +63,9 @@ export function addressDistrictName(district: District, language: AccountLanguag
   return accountText(language, district.label, districtNames[district.id] ?? district.label);
 }
 
-function AddressForm({ row, marketId, districts, pending, language, onSave, onCancel }: {
+function AddressForm({ row, marketId, districts, pending, language, error, onSave, onCancel }: {
   row?: SavedAddress; marketId: MarketId; districts: readonly District[]; pending: boolean; language: AccountLanguage;
-  onSave: (command: AddressAction) => Promise<boolean>; onCancel?: () => void;
+  error?: string; onSave: (command: AddressAction) => Promise<boolean>; onCancel: () => void;
 }) {
   const t = (en: string, bn: string) => accountText(language, en, bn);
   const bd = row?.marketId === "bd" ? row.details : null;
@@ -92,7 +93,7 @@ function AddressForm({ row, marketId, districts, pending, language, onSave, onCa
     }
   }
 
-  return <form className="mp-form" onSubmit={submit}>
+  return <form className="mp-form customer-address__form" onSubmit={submit}>
     <fieldset className="commerce-form" disabled={pending}>
       <legend className="sr-only">{row ? t("Edit address", "ঠিকানা সম্পাদনা করুন") : t("Add an address", "ঠিকানা যোগ করুন")}</legend>
       <label>{t("Address label", "ঠিকানার নাম")}<input name="label" defaultValue={row?.label} placeholder={t("Home", "বাসা")}
@@ -110,16 +111,16 @@ function AddressForm({ row, marketId, districts, pending, language, onSave, onCa
         </select></label>
         <label>{t("Area or upazila", "এলাকা বা উপজেলা")}<input name="locality" defaultValue={bd?.locality}
           autoComplete="shipping address-level2" minLength={2} maxLength={100} required /></label>
-        <label>{t("House and street", "বাড়ি ও রাস্তার ঠিকানা")}<input name="address" defaultValue={bd?.address}
+        <label className="customer-address__wide">{t("House and street", "বাড়ি ও রাস্তার ঠিকানা")}<input name="address" defaultValue={bd?.address}
           autoComplete="shipping street-address" minLength={5} maxLength={240} required /></label>
         <label>{t("Postal code (optional)", "পোস্টকোড (ঐচ্ছিক)")}<input name="postalCode" defaultValue={bd?.postalCode}
           autoComplete="shipping postal-code" inputMode="numeric" pattern="[0-9০-৯]{4}" maxLength={4} /></label>
         <label>{t("Landmark (optional)", "কাছের পরিচিত স্থান (ঐচ্ছিক)")}<input name="landmark" defaultValue={bd?.landmark} maxLength={120} /></label>
         <label>{t("Alternate phone (optional)", "বিকল্প মোবাইল নম্বর (ঐচ্ছিক)")}<input name="alternatePhone" defaultValue={bd?.alternatePhone}
           type="tel" maxLength={28} /></label>
-        <label>{t("Delivery instructions (optional)", "ডেলিভারির নির্দেশনা (ঐচ্ছিক)")}<input name="instructions" defaultValue={bd?.instructions} maxLength={180} /></label>
+        <label className="customer-address__wide">{t("Delivery instructions (optional)", "ডেলিভারির নির্দেশনা (ঐচ্ছিক)")}<input name="instructions" defaultValue={bd?.instructions} maxLength={180} /></label>
       </> : <>
-        <label>Street address<input name="addressLine1" defaultValue={northAmerica?.addressLine1} autoComplete="shipping address-line1"
+        <label className="customer-address__wide">Street address<input name="addressLine1" defaultValue={northAmerica?.addressLine1} autoComplete="shipping address-line1"
           minLength={5} maxLength={120} required /></label>
         <label>Apartment or suite (optional)<input name="addressLine2" defaultValue={northAmerica?.addressLine2}
           autoComplete="shipping address-line2" maxLength={120} /></label>
@@ -131,9 +132,10 @@ function AddressForm({ row, marketId, districts, pending, language, onSave, onCa
         <label>{profile.postalLabel}<input name="postalCode" defaultValue={northAmerica?.postalCode} autoComplete="shipping postal-code"
           maxLength={profile.postalLength} inputMode={profile.postalNumeric ? "numeric" : "text"} pattern={profile.postalPattern} required /></label>
       </>}
-      <div className="mp-panel-links">
-        <button type="submit" className="button button--primary">{t("Save address", "ঠিকানা সংরক্ষণ করুন")}</button>
-        {onCancel && <button type="button" className="button button--outline" onClick={onCancel}>{t("Cancel", "বাতিল")}</button>}
+      {error && <p className="customer-address__wide" role="alert">{error}</p>}
+      <div className="customer-address__wide customer-address__submit">
+        <button type="button" className="button button--outline" onClick={onCancel}>{t("Cancel", "বাতিল")}</button>
+        <button type="submit" className="button button--primary">{pending ? t("Saving…", "সংরক্ষণ হচ্ছে…") : t("Save address", "ঠিকানা সংরক্ষণ করুন")}</button>
       </div>
     </fieldset>
   </form>;
@@ -143,51 +145,91 @@ export function AddressBook({ marketId, language, addresses, districts }: {
   marketId: MarketId; language: AccountLanguage; addresses: readonly SavedAddress[]; districts: readonly District[];
 }) {
   const t = (en: string, bn: string) => accountText(language, en, bn);
-  const [editing, setEditing] = useState<string>();
+  const dialogTitle = useId();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [editor, setEditor] = useState<{ row?: SavedAddress }>();
   const [removing, setRemoving] = useState<string>();
-  const { change, pending, status, addressSnapshot } = useAddressChange(marketId, language);
+  const { change, pending, status, addressSnapshot, clearStatus } = useAddressChange(marketId, language);
   const displayAddresses = addressSnapshot ?? addresses;
   const available = markets[marketId].addressProfile !== "district" || districts.length > 0;
+
+  function openEditor(row?: SavedAddress) {
+    clearStatus();
+    setRemoving(undefined);
+    setEditor({ row });
+    dialog.current?.showModal();
+  }
+
   async function save(command: AddressAction) {
     const ok = await change(command, t("Address saved.", "ঠিকানা সংরক্ষণ করা হয়েছে।"));
-    if (ok) setEditing(undefined);
+    if (ok) dialog.current?.close();
     return ok;
   }
 
   return <>
-    {status && <p className="commerce-message" role={status.error ? "alert" : "status"}>{status.text}</p>}
-    {!displayAddresses.length && <p>{t("You have no saved addresses in this country.", "এই দেশে আপনার কোনো সংরক্ষিত ঠিকানা নেই।")}</p>}
-    <ul className="mp-shop-grid mp-address-list">{displayAddresses.map(row => {
+    <section className="commerce-panel customer-address__summary">
+      <div>
+        <h2>{t("Delivery address book", "ডেলিভারির ঠিকানার তালিকা")}</h2>
+        <p>{t("Save addresses to use at checkout.", "চেকআউটে ব্যবহারের জন্য ঠিকানা সংরক্ষণ করুন।")}</p>
+      </div>
+      {available && <button type="button" className="button button--primary" disabled={pending}
+        onClick={() => openEditor()}><Plus size={18} aria-hidden="true" />{t("Add an address", "ঠিকানা যোগ করুন")}</button>}
+    </section>
+    {status && !editor && <p className="commerce-message" role={status.error ? "alert" : "status"}>{status.text}</p>}
+    {!available && <p role="status">{t("Delivery districts are temporarily unavailable.", "ডেলিভারির জেলার তালিকা সাময়িকভাবে পাওয়া যাচ্ছে না।")}</p>}
+    {!displayAddresses.length ? <div className="mp-empty">
+      <MapPin size={23} aria-hidden="true" />
+      <p>{t("You have no saved addresses in this country.", "এই দেশে আপনার কোনো সংরক্ষিত ঠিকানা নেই।")}</p>
+    </div> : <ul className="customer-address__grid">{displayAddresses.map(row => {
       const bd = row.marketId === "bd" ? row.details : null;
       const northAmerica = row.marketId !== "bd" ? row.details : null;
-      return <li className="mp-list-card" key={row.id}>
-        <strong>{row.label}</strong>
-        {row.isDefault && <p>{t("Default delivery address", "ডিফল্ট ডেলিভারি ঠিকানা")}</p>}
-        {bd && <p>{bd.name}<br />{bd.address}<br />{bd.locality}{bd.landmark && <><br />{bd.landmark}</>}<br />{bd.phone}</p>}
-        {northAmerica && <p>{northAmerica.name}<br />{[northAmerica.addressLine1, northAmerica.addressLine2].filter(Boolean).join(", ")}<br />
-          {northAmerica.city}, {northAmerica.state} {northAmerica.postalCode}<br />{northAmerica.phone}</p>}
+      const district = districts.find(item => item.id === bd?.district);
+      return <li className="commerce-panel customer-address__card" key={row.id}>
+        <div className="customer-address__card-head">
+          <h2>{row.label}</h2>
+          {row.isDefault && <span>{t("Default delivery address", "ডিফল্ট ডেলিভারি ঠিকানা")}</span>}
+        </div>
+        {bd && <address>{bd.name}<br />{bd.address}<br />{bd.locality}{district && <>, {addressDistrictName(district, language)}</>}
+          {bd.postalCode && <> {bd.postalCode}</>}{bd.landmark && <><br />{bd.landmark}</>}<br />{bd.phone}</address>}
+        {northAmerica && <address>{northAmerica.name}<br />{[northAmerica.addressLine1, northAmerica.addressLine2].filter(Boolean).join(", ")}<br />
+          {northAmerica.city}, {northAmerica.state} {northAmerica.postalCode}<br />{northAmerica.phone}</address>}
         {!row.details && <p>{t("Review the details before using this address.", "ঠিকানাটি ব্যবহারের আগে তথ্য যাচাই করুন।")}</p>}
-        {editing === row.id ? <AddressForm row={row} marketId={marketId} districts={districts} pending={pending} language={language}
-          onSave={save} onCancel={() => setEditing(undefined)} /> : <div className="mp-panel-links">
-          {available && <button type="button" className="link-button" disabled={pending}
-            onClick={() => { setEditing(row.id); setRemoving(undefined); }}>{t("Edit", "সম্পাদনা করুন")}</button>}
-          {!row.isDefault && row.details && <button type="button" className="link-button" disabled={pending}
-            onClick={() => void change({ action: "default-address", address: row.id }, t("Default address updated.", "ডিফল্ট ঠিকানা হালনাগাদ হয়েছে।"))}>
-            {t("Set as default", "ডিফল্ট করুন")}</button>}
+        <div className="customer-address__card-actions">
           {removing === row.id ? <>
+            <span>{t("Remove this saved address?", "সংরক্ষিত ঠিকানাটি মুছে ফেলবেন?")}</span>
             <button type="button" className="link-button" disabled={pending} onClick={() => void change(
               { action: "remove-address", address: row.id }, t("Address deleted.", "ঠিকানা মুছে ফেলা হয়েছে।"),
             ).then(ok => { if (ok) setRemoving(undefined); })}>{t("Confirm delete", "ঠিকানা মুছে ফেলুন")}</button>
             <button type="button" className="link-button" disabled={pending} onClick={() => setRemoving(undefined)}>{t("Cancel", "বাতিল")}</button>
-          </> : <button type="button" className="link-button" disabled={pending}
-            onClick={() => setRemoving(row.id)}>{t("Delete", "মুছুন")}</button>}
-        </div>}
+          </> : <>
+            {available && <button type="button" className="link-button" disabled={pending}
+              onClick={() => openEditor(row)}>{t("Edit", "সম্পাদনা করুন")}</button>}
+            {!row.isDefault && row.details && <button type="button" className="link-button" disabled={pending}
+              onClick={() => void change({ action: "default-address", address: row.id }, t("Default address updated.", "ডিফল্ট ঠিকানা হালনাগাদ হয়েছে।"))}>
+              {t("Set as default", "ডিফল্ট করুন")}</button>}
+            <button type="button" className="link-button" disabled={pending} onClick={() => setRemoving(row.id)}>{t("Delete", "মুছুন")}</button>
+          </>}
+        </div>
       </li>;
-    })}</ul>
-    {available ? <section className="mp-section">
-      <h2>{t("Add an address", "ঠিকানা যোগ করুন")}</h2>
-      <AddressForm marketId={marketId} districts={districts} pending={pending} language={language} onSave={save} />
-    </section> : <p role="status">{t("Delivery districts are temporarily unavailable.", "ডেলিভারির জেলার তালিকা সাময়িকভাবে পাওয়া যাচ্ছে না।")}</p>}
+    })}</ul>}
+    <dialog ref={dialog} className="customer-address__dialog" aria-labelledby={dialogTitle}
+      onCancel={event => { if (pending) event.preventDefault(); }}
+      onClose={() => {
+        setEditor(undefined);
+        if (status?.error) clearStatus();
+      }}>
+      <header>
+        <div>
+          <h2 id={dialogTitle}>{editor?.row ? t("Edit address", "ঠিকানা সম্পাদনা করুন") : t("Add an address", "ঠিকানা যোগ করুন")}</h2>
+          <p><MapPin size={16} aria-hidden="true" />{accountMarketName(language, marketId)}</p>
+        </div>
+        <button type="button" disabled={pending} aria-label={t("Close address form", "ঠিকানার ফর্ম বন্ধ করুন")} onClick={() => dialog.current?.close()}>
+          <X size={20} aria-hidden="true" />
+        </button>
+      </header>
+      {editor && <AddressForm row={editor.row} marketId={marketId} districts={districts} pending={pending} language={language}
+        error={status?.error ? status.text : undefined} onSave={save} onCancel={() => dialog.current?.close()} />}
+    </dialog>
   </>;
 }
 

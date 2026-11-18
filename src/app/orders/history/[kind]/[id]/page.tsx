@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { historicalKind, historicalState, LegacyOrderSummary } from "@/components/marketplace/legacy-order";
+import { OrderDocumentLink } from "@/components/marketplace/order-document-link";
 import { SignInGate } from "@/components/marketplace/session";
 import { store } from "@/config/store";
 import { customerOrderDate } from "@/lib/commerce/account-order";
@@ -46,6 +47,8 @@ export default async function HistoricalOrderPage({ params }: { params: Promise<
       {back}
       <h1 className="display-type">{historicalKind(order, language)} {order.reference}</h1>
       <time dateTime={order.createdAt}>{customerOrderDate(new Date(order.createdAt), "bd", language)}</time>
+      <div className="order-detail-actions"><OrderDocumentLink orderPath={`/orders/history/${order.kind}/${order.id}`}
+        reference={order.reference} kind="order-summary" language={language} className="button button--outline" /></div>
     </div>
     <section className="commerce-panel commerce-summary">
       <h2>{t("Status and payment", "অবস্থা ও পেমেন্ট")}</h2>

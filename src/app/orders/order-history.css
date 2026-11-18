@@ -71,6 +71,25 @@
   text-underline-offset: .2em;
 }
 
+.order-document-link,
+.order-updates-link {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+}
+
+.order-document-link svg,
+.order-updates-link svg {
+  flex: none;
+}
+
+.order-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+  margin-block-start: .8rem;
+}
+
 #order-support,
 #refund-progress {
   scroll-margin-top: 6rem;

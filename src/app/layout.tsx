@@ -14,7 +14,7 @@ import { globalAccountRequestHeader } from "@/config/regional-path";
 import { catalog } from "@/lib/catalog/repository";
 import { currentMarket } from "@/lib/market-server";
 import { firstPartyStoreMode, hybridDemoMode, marketplaceMode, productionMode } from "@/lib/release-config";
-import { currentAccountLanguage } from "@/lib/marketplace/account-language-server";
+import { currentAccountLanguage, marketAccountProfile } from "@/lib/marketplace/account-language-server";
 import { getShopper } from "@/lib/marketplace/auth";
 import { shopperIdentityDirectory, storefrontHandoffUrl } from "@/lib/marketplace/identity-directory";
 import { shopperSelections } from "@/lib/marketplace/data";
@@ -43,14 +43,16 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     marketplace ? globalAccount ? getShopper().catch(() => null) : getShopper() : null,
     marketplace && !globalAccount ? currentAccountLanguage(market.id) : "en" as const,
   ]);
-  const selections = shopper && !globalAccount ? await shopperSelections(shopper.id, market.id) : { favorites: [], lists: [], shops: [] };
+  const [selections, profile] = shopper && !globalAccount
+    ? await Promise.all([shopperSelections(shopper.id, market.id), marketAccountProfile(shopper.id, market.id)])
+    : [{ favorites: [], lists: [], shops: [] }, null];
   const main = <main id="main-content" tabIndex={-1}>{children}</main>;
   return (
     <html lang={store.language}>
       <body className={marketplace ? "marketplace" : undefined} data-market={hybrid ? market.id : undefined}>
         <a className="skip-link" href="#main-content">Skip to content</a>
         <CartPricingProvider market={market} regionalRouting={hybrid}>
-          {marketplace ? <MarketplaceSession key={shopper?.id ?? "guest"} shopper={shopper && { id: shopper.id, name: shopper.name }}
+          {marketplace ? <MarketplaceSession key={shopper?.id ?? "guest"} shopper={shopper && { id: shopper.id, name: profile?.displayName ?? shopper.name }}
             selections={selections} hybrid={hybrid} marketId={market.id} language={language} emailLinks={shopperMailAvailable()}
             emailPreview={shopperMailPreview()} handoffStart={globalAccount ? undefined : handoffStart}>
             {hybrid ? <div className="preview-strip">Dev store · Sample orders and prices</div>

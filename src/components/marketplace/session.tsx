@@ -3,12 +3,12 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, UserRound, X } from "lucide-react";
+import { Bell, ChevronDown, CircleHelp, LogOut, MapPin, MessageSquare, Package, Settings2, X } from "lucide-react";
 import { createContext, useContext, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { MarketId } from "@/config/markets";
 import { marketStoreHref } from "@/config/regional-path";
 import { storefrontPath } from "@/config/storefront-path";
-import { accountText, type AccountLanguage } from "@/lib/marketplace/account-language";
+import { accountInitials, accountText, type AccountLanguage } from "@/lib/marketplace/account-language";
 import type { ListSummary, ShopSummary } from "@/lib/marketplace/constants";
 
 export async function marketplaceRequest<T = unknown>(body: object, endpoint = "/api/marketplace"): Promise<T> {
@@ -204,28 +204,76 @@ export function MarketplaceSession({ shopper, selections, children, hybrid = fal
   </MarketplaceContext.Provider>;
 }
 
-export function ShopperMenu() {
+export function ShopperMenu({ orderUpdates = false }: { orderUpdates?: boolean }) {
   const state = useMarketplace()!;
   const router = useRouter();
   const menu = useRef<HTMLDetailsElement>(null);
+  const trigger = useRef<HTMLElement>(null);
+  const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const t = (en: string, bn: string) => accountText(state.language, en, bn);
   const href = (path: string) => marketStoreHref(path, state.region);
   if (!state.shopper) return <button type="button" className="account-control__trigger mp-sign-button" aria-haspopup="dialog" onClick={state.openAuth}>{t("Sign in", "সাইন ইন")}</button>;
-  return <details className="department-menu mp-account" ref={menu} onBlur={event => {
-    if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
-  }} onKeyDown={event => { if (event.key === "Escape") event.currentTarget.open = false; }}>
-    <summary aria-label={t("Your account", "আপনার অ্যাকাউন্ট")}><UserRound size={21}/><ChevronDown size={13}/></summary>
-    <nav aria-label={t("Your account", "আপনার অ্যাকাউন্ট")} onClick={() => { if (menu.current) menu.current.open = false; }}>
-      <strong>{state.shopper.name}</strong>
-      <Link href={href("/orders")}>{t("My orders", "আমার অর্ডার")}</Link>
-      <Link href={href("/account/help")}>{t("Help & returns", "সহায়তা ও ফেরত")}</Link>
-      <Link href={href("/account")}>{t("My account", "আমার অ্যাকাউন্ট")}</Link>
-      <button type="button" onClick={() => void accountRequest("sign-out").then(() => router.refresh(), () => {
-        setError("Couldn't sign out. Try again.");
-        if (menu.current) menu.current.open = true;
-      })}>{t("Sign out", "সাইন আউট")}</button>
-      {error && <p role="alert">{error}</p>}
+
+  const name = state.shopper.name;
+  const initials = accountInitials(name);
+  const sections = [
+    [
+      { path: "/orders", label: t("My Orders", "আমার অর্ডার"), icon: Package },
+      ...(orderUpdates ? [{ path: "/account/notifications", label: t("Notifications", "বিজ্ঞপ্তি"), icon: Bell }] : []),
+      { path: "/account/help", label: t("Help & returns", "সহায়তা ও ফেরত"), icon: CircleHelp },
+      { path: "/messages", label: t("Messages", "বার্তা"), icon: MessageSquare },
+    ],
+    [
+      { path: "/account/addresses", label: t("Saved addresses", "সংরক্ষিত ঠিকানা"), icon: MapPin },
+      { path: "/account/settings", label: t("Account settings", "অ্যাকাউন্ট সেটিংস"), icon: Settings2 },
+    ],
+  ];
+
+  function closeMenu() {
+    if (menu.current) menu.current.open = false;
+  }
+
+  async function signOut() {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      await accountRequest("sign-out");
+      closeMenu();
+      router.refresh();
+    } catch {
+      setError(t("Couldn’t sign out. Try again.", "সাইন আউট করা যায়নি। আবার চেষ্টা করুন।"));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return <details className="department-menu mp-account mp-profile-menu" lang={state.language} ref={menu} onBlur={event => {
+    if (!event.currentTarget.contains(event.relatedTarget)) closeMenu();
+  }} onKeyDown={event => {
+    if (event.key !== "Escape" || !menu.current?.open) return;
+    event.preventDefault();
+    closeMenu();
+    trigger.current?.focus();
+  }}>
+    <summary ref={trigger} aria-label={t("Your account", "আপনার অ্যাকাউন্ট")}>
+      <span aria-hidden="true" className="mp-profile-initials">{initials}</span>
+      <ChevronDown size={14} aria-hidden="true" />
+    </summary>
+    <nav aria-label={t("Your account", "আপনার অ্যাকাউন্ট")}>
+      <Link className="mp-profile-menu__identity" href={href("/account")} onClick={closeMenu}>
+        <span aria-hidden="true" className="mp-profile-initials">{initials}</span>
+        <span><strong>{name}</strong><small>{t("Account overview", "এক নজরে অ্যাকাউন্ট")}</small></span>
+      </Link>
+      {sections.map(section => <ul key={section[0].path}>{section.map(({ path, label, icon: Icon }) => <li key={path}>
+        <Link href={href(path)} onClick={closeMenu}><Icon size={17} aria-hidden="true" />{label}</Link>
+      </li>)}</ul>)}
+      <div className="mp-profile-menu__exit">
+        <button type="button" disabled={pending} onClick={() => void signOut()}><LogOut size={17} aria-hidden="true" />{pending
+          ? t("Signing out…", "সাইন আউট হচ্ছে…") : t("Sign out", "সাইন আউট")}</button>
+        {error && <p role="alert">{error}</p>}
+      </div>
     </nav>
   </details>;
 }

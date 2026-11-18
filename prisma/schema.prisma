@@ -418,6 +418,7 @@ model Order {
   requests          ShopperRequest[]
   reviews           ShopperReview[]
   cases             OrderCase[]
+  notificationReads ShopperOrderNotificationRead[]
   bangladeshShipment BangladeshShipment?
   bangladeshRefusedParcelReceipt BangladeshRefusedParcelReceipt?
   warehousePostings HybridWarehousePosting[]
@@ -759,6 +760,7 @@ model Shopper {
   addresses ShopperAddress[]
   marketProfiles ShopperMarketProfile[]
   accountEvents ShopperAccountEvent[]
+  orderNotificationReads ShopperOrderNotificationRead[]
   bangladeshLegacyAccount BangladeshLegacyAccount?
   bangladeshOrderGrants BangladeshOrderGrant[]
   bangladeshRecoveryChallenges BangladeshOrderChallenge[]
@@ -818,6 +820,18 @@ model ShopperAccountEvent {
   createdAt DateTime @default(now())
 
   @@index([shopperId, marketId, createdAt])
+}
+
+model ShopperOrderNotificationRead {
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  orderId String @db.Uuid
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  eventKey String @db.VarChar(64)
+  readAt DateTime @default(now())
+
+  @@id([shopperId, eventKey])
+  @@index([orderId])
 }
 
 model ShopperSession {

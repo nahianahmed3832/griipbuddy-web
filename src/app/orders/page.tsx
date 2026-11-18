@@ -1,7 +1,9 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
+import { Bell } from "lucide-react";
 import { BangladeshOrderHubForms } from "@/components/marketplace/bd-order-hub-forms";
 import { LegacyOrderRow } from "@/components/marketplace/legacy-order";
+import { OrderDocumentLink } from "@/components/marketplace/order-document-link";
 import { SignInGate } from "@/components/marketplace/session";
 import { marketList, type Currency, type MarketId } from "@/config/markets";
 import { marketStoreHref } from "@/config/regional-path";
@@ -9,6 +11,7 @@ import { store } from "@/config/store";
 import { storefrontPath } from "@/config/storefront-path";
 import { guestCookie, readGuestKey } from "@/lib/commerce/guest";
 import { cashDueOnDelivery, customerOrderDate, customerOrderMoney, customerOrderStatus, customerPaymentStatus } from "@/lib/commerce/account-order";
+import { bangladeshOrderDocumentKind } from "@/lib/commerce/bd-order-document";
 import { listGuestOrders } from "@/lib/commerce/orders";
 import { integratedCheckout, listRecoveredOrders } from "@/lib/commerce/integrated-checkout";
 import { bangladeshTrackingUrl, usesBangladeshCheckout } from "@/lib/commerce/bangladesh-handoff";
@@ -91,6 +94,9 @@ export default async function CustomerOrdersPage({ searchParams }: {
             ? <strong aria-current="true" key={id}>{accountMarketName(language, id)}</strong>
             : <a key={id} href={storefrontPath(marketStoreHref("/orders", id))}>{t("View orders in", "অর্ডার দেখুন:")} {accountMarketName(language, id)}</a>)}
         </nav>}
+        {hub && shopper && <Link className="button button--outline order-updates-link" href={href("/account/notifications")}>
+          <Bell size={17} aria-hidden="true" />{t("Order and refund updates", "অর্ডার ও টাকা ফেরতের আপডেট")}
+        </Link>}
       </div>
       {hub && (shopper ? <BangladeshOrderHubForms language={language} linked={Boolean(history?.linked)} verifiedPhone={Boolean(verifiedPhone)}/>
         : <div className="commerce-panel bd-order-hub-forms"><SignInGate language={language}>
@@ -134,6 +140,8 @@ export default async function CustomerOrdersPage({ searchParams }: {
               </ul>}
               {showAfterSales && <div className="account-order-actions">
                 <Link href={href(orderPath + "#order-support")}>{t("Manage order", "অর্ডার পরিচালনা করুন")}</Link>
+                {hub && order.currency === "BDT" && <OrderDocumentLink orderPath={orderPath} reference={order.reference}
+                  language={language} kind={bangladeshOrderDocumentKind(order.payment ?? null)} />}
                 {order.cases?.map(request => {
                   const refund = request.refundConfirmedAt || request.status === "REFUND_APPROVED" || request.status === "REFUND_FAILED";
                   return <Link key={request.id} href={href(orderPath + "/cases/" + request.id + (refund ? "#refund-progress" : ""))}>

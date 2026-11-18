@@ -13,7 +13,7 @@ import { caseKindLabel, caseProgressLabel } from "@/lib/marketplace/case-languag
 import { casesForShopper } from "@/lib/marketplace/cases";
 import { hybridDemoMode, marketplaceMode } from "@/lib/release-config";
 
-export const metadata = { title: "Help and returns" };
+export const metadata = { title: "Help and returns", robots: { index: false, follow: false } };
 
 export default async function AccountHelp() {
   if (!marketplaceMode()) notFound();
@@ -34,9 +34,9 @@ export default async function AccountHelp() {
       <section className="commerce-panel">
         <h2>{t("My support requests", "আমার সহায়তার অনুরোধ")}</h2>
         {!cases.length ? <p>{t("There are no requests for this country yet.", "এই দেশে এখনো কোনো অনুরোধ নেই।")}</p> :
-          <ul className="customer-account__stack">{cases.map(item => <li key={item.id}>
+          <ul className="customer-account__stack customer-account__activity">{cases.map(item => <li key={item.id}>
             <Link href={href(`/orders/${item.order.id}/cases/${item.id}`)}>{t("Request for order", "অর্ডারের জন্য অনুরোধ")} {item.order.reference}</Link>
-            {" · "}<span>{caseKindLabel(language, item.kind)} · {caseProgressLabel(language, item)}</span>{" · "}<time dateTime={item.updatedAt.toISOString()}>
+            <span>{caseKindLabel(language, item.kind)} · {caseProgressLabel(language, item)}</span><time dateTime={item.updatedAt.toISOString()}>
               {customerOrderDate(item.updatedAt, market.id, language)}</time>
           </li>)}</ul>}
       </section>}

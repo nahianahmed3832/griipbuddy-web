@@ -6,6 +6,7 @@ import type { Market } from "@/config/markets";
 import { store } from "@/config/store";
 import type { Department } from "@/lib/catalog/types";
 import { departmentTree } from "@/lib/catalog/departments";
+import { bdOrderHubConfig } from "@/lib/marketplace/bd-order-hub-bridge";
 import { hybridDemoMode, hybridStoreMode } from "@/lib/release-config";
 import { activeOffer, ordered, readAdminContent } from "@/lib/marketplace/admin-content";
 import { CartLink } from "../cart-link";
@@ -16,6 +17,7 @@ import { ShopperMenu } from "./session";
 import { MobileStoreNav, StoreCategoryMenu, StoreShopNavigation } from "./store-navigation";
 import "./store-navigation.css";
 import "./merchandising.css";
+import "./profile-menu.css";
 
 export async function MarketplaceHeader({ departments, market }: { departments: readonly Department[]; market: Market }) {
   const roots = departmentTree(departments);
@@ -37,7 +39,7 @@ export async function MarketplaceHeader({ departments, market }: { departments: 
           <Suspense fallback={<MarketplaceSearch {...search} />}><MarketplaceHeaderSearch {...search} /></Suspense>
         </div>
         <div className="mp-header-actions">
-          <ShopperMenu />
+          <ShopperMenu orderUpdates={market.id === "bd" && Boolean(bdOrderHubConfig())} />
           <Link className="mp-icon mp-header-saved" href={localHref("/favorites")} aria-label="Saved items" title="Saved items">
             <Heart size={22} aria-hidden="true" />
           </Link>

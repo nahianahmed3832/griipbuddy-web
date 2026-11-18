@@ -11,7 +11,7 @@ type Settings = { language: AccountLanguage; market: MarketId };
 export function AccountLanguageForm({ language, market }: Settings) {
   if (market !== "bd") return null;
   const t = (en: string, bn: string) => accountText(language, en, bn);
-  return <MarketplaceForm endpoint={endpoint} label={t("Save language", "ভাষা সংরক্ষণ করুন")} success={t("Language updated.", "ভাষা পরিবর্তন করা হয়েছে।")}
+  return <MarketplaceForm key={language} endpoint={endpoint} label={t("Save language", "ভাষা সংরক্ষণ করুন")} success={t("Language updated.", "ভাষা পরিবর্তন করা হয়েছে।")}
     errorMessage={t("Couldn’t save language. Try again.", "ভাষা সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।")}
     pendingLabel={t("Saving…", "সংরক্ষণ হচ্ছে…")}
     fields={<label>{t("Language", "ভাষা")}<select name="language" defaultValue={language}>
