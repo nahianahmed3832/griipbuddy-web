@@ -741,6 +741,42 @@ model Shopper {
   addresses ShopperAddress[]
   marketProfiles ShopperMarketProfile[]
   accountEvents ShopperAccountEvent[]
+  bangladeshLegacyAccount BangladeshLegacyAccount?
+  bangladeshOrderGrants BangladeshOrderGrant[]
+  bangladeshRecoveryChallenges BangladeshOrderChallenge[]
+}
+
+model BangladeshLegacyAccount {
+  shopperId  String   @id
+  shopper    Shopper  @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  customerId String   @unique @db.VarChar(24)
+  linkedAt   DateTime @default(now())
+}
+
+model BangladeshOrderGrant {
+  kind      String   @db.VarChar(12)
+  sourceId  String   @db.VarChar(24)
+  shopperId String
+  shopper   Shopper  @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  claimedAt DateTime @default(now())
+
+  @@id([kind, sourceId])
+  @@index([shopperId, claimedAt])
+}
+
+model BangladeshOrderChallenge {
+  id          String    @id @db.Uuid
+  shopperId   String
+  shopper     Shopper   @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  target      String?   @db.VarChar(12)
+  sourceId    String?   @db.VarChar(36)
+  codeDigest  String    @db.VarChar(64)
+  inputDigest String    @db.VarChar(64)
+  expiresAt   DateTime
+  attempts    Int       @default(0)
+  consumedAt  DateTime?
+
+  @@index([expiresAt])
 }
 
 model ShopperMarketProfile {

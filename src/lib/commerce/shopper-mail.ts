@@ -8,7 +8,7 @@ import { hybridDemoMode, marketplaceMode } from "../release-config.ts";
 const email = z.string().trim().toLowerCase().pipe(z.email().max(254));
 const previewAddress = /^[^@]+@example\.invalid$/;
 const messageInput = z.object({
-  kind: z.enum(["verify-email", "password-reset", "order-confirmation", "shipment-update"]),
+  kind: z.enum(["verify-email", "password-reset", "order-confirmation", "shipment-update", "order-recovery"]),
   to: email,
   subject: z.string().trim().min(1).max(160).regex(/^[^\r\n]+$/),
   text: z.string().min(1).max(12_000),

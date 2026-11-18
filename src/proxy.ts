@@ -81,7 +81,7 @@ function hybridRouting(request: NextRequest) {
     return NextResponse.next({ request: { headers: incoming }, headers: { ...noIndex, "Referrer-Policy": "strict-origin" } });
   }
   const privateLink = identityPrivateRoute.test(bare) ||
-    /^\/(?:orders(?:\/|$)|api\/checkout\/order-recovery$|account(?:\/|$)|api\/shopper-auth\/|api\/marketplace\/(?:cases|account)$|(?:admin|staff)\/test-email$)/.test(bare);
+    /^\/(?:orders(?:\/|$)|api\/checkout\/order-recovery$|account(?:\/|$)|api\/shopper-auth\/|api\/marketplace\/(?:cases|account|bd-orders)$|(?:admin|staff)\/test-email$)/.test(bare);
   const headers = { ...noIndex, "Cache-Control": "private, no-store", "Referrer-Policy": privateLink ? "no-referrer" : "strict-origin" };
   if (adminPath.test(path)) return NextResponse.next({ request: { headers: incoming }, headers });
   if (staffPath.test(path) && ["GET", "HEAD"].includes(request.method)) {

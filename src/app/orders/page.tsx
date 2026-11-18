@@ -1,5 +1,8 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
+import { BangladeshOrderHubForms } from "@/components/marketplace/bd-order-hub-forms";
+import { LegacyOrderRow } from "@/components/marketplace/legacy-order";
+import { SignInGate } from "@/components/marketplace/session";
 import { marketList, type Currency, type MarketId } from "@/config/markets";
 import { marketStoreHref } from "@/config/regional-path";
 import { store } from "@/config/store";
@@ -14,8 +17,11 @@ import { hybridDemoMode, marketplaceMode } from "@/lib/release-config";
 import { accountMarketName, accountText } from "@/lib/marketplace/account-language";
 import { currentAccountLanguage } from "@/lib/marketplace/account-language-server";
 import { getShopper } from "@/lib/marketplace/auth";
+import { bdLegacyAccess } from "@/lib/marketplace/bd-order-hub";
+import { bdOrderHubConfig, legacyCursor, legacyOrderHistory } from "@/lib/marketplace/bd-order-hub-bridge";
 import { shopperOrders } from "@/lib/marketplace/data";
 import { orderRecoveryEnabled } from "@/lib/commerce/order-recovery";
+import { reportFailure } from "@/lib/db/observability";
 import type { BangladeshShipmentStatus, FulfillmentStatus, OrderStatus, PaymentMethod, PaymentStatus } from "@/generated/prisma/enums";
 import "./order-history.css";
 
@@ -37,23 +43,45 @@ type OrderListEntry = {
   bangladeshRefusedParcelReceipt?: { receivedAt: Date } | null;
 };
 
-export default async function CustomerOrdersPage() {
-  const [jar, active] = await Promise.all([cookies(), currentMarket()]);
+export default async function CustomerOrdersPage({ searchParams }: {
+  searchParams: Promise<{ view?: string; before?: string }>;
+}) {
+  const [jar, active, params] = await Promise.all([cookies(), currentMarket(), searchParams]);
   const guestKey = readGuestKey(jar.get(guestCookie)?.value);
   const marketplace = marketplaceMode();
   const regional = hybridDemoMode();
   const [language, shopper] = await Promise.all([currentAccountLanguage(active.id), marketplace ? getShopper() : null]);
   const t = (english: string, bangla: string) => accountText(language, english, bangla);
   const href = (path: string) => marketStoreHref(path, regional ? active.id : undefined);
-  const orders: OrderListEntry[] = marketplace ? await shopperOrders(shopper?.id, guestKey, active.id)
-    : guestKey ? await (integratedCheckout() ? listRecoveredOrders : listGuestOrders)(guestKey) : [];
+  const hub = active.id === "bd" && Boolean(bdOrderHubConfig());
+  const view = hub && (params.view === "order" || params.view === "preorder") ? params.view : undefined;
+  const before = hub && shopper ? legacyCursor.safeParse(params.before).data : undefined;
+  const [orders, history]: [OrderListEntry[], Awaited<ReturnType<typeof historicalOrders>> | null] = await Promise.all([
+    view === "preorder" || before ? [] : marketplace ? shopperOrders(shopper?.id, guestKey, active.id)
+      : guestKey ? (integratedCheckout() ? listRecoveredOrders : listGuestOrders)(guestKey) : [],
+    hub && shopper ? historicalOrders(shopper.id, view, before) : null,
+  ]);
+  const entries = [
+    ...orders.map(order => ({ type: "current" as const, order, at: order.createdAt.getTime() })),
+    ...(history?.items ?? []).map(order => ({ type: "historical" as const, order, at: Date.parse(order.createdAt) })),
+  ].sort((left, right) => right.at - left.at);
+  const verifiedPhone = shopper && "phoneNumberVerified" in shopper && shopper.phoneNumberVerified === true &&
+    "phoneNumber" in shopper && typeof shopper.phoneNumber === "string" &&
+    /^\+8801[3-9]\d{8}$/.test(shopper.phoneNumber) && shopper.phoneNumber !== "+8801700000000";
+  const pageLink = (filter?: string, cursor?: string) => {
+    const query = new URLSearchParams();
+    if (filter) query.set("view", filter);
+    if (cursor) query.set("before", cursor);
+    return href(query.size ? `/orders?${query}` : "/orders");
+  };
   const number = new Intl.NumberFormat(language === "bn" ? "bn-BD" : active.locale);
   return (
     <div className="shell inner-page commerce-page customer-info" lang={language}>
       <div className="commerce-intro">
-        <h1 className="display-type">{shopper ? t("My orders", "আমার অর্ডার") : t("Order status", "অর্ডারের অবস্থা")}</h1>
+        <h1 className="display-type">{shopper || hub ? t("My orders", "আমার অর্ডার") : t("Order status", "অর্ডারের অবস্থা")}</h1>
         {usesBangladeshCheckout() ? <p><a className="text-link" href={bangladeshTrackingUrl}>{t("Track a Bangladesh order on griipbuddy.com", "griipbuddy.com-এ বাংলাদেশের অর্ডার ট্র্যাক করুন")}</a></p>
-          : <p>{shopper ? t("Open an order to track its delivery or get help.", "ডেলিভারি ট্র্যাক করতে বা সহায়তা পেতে অর্ডারটি খুলুন।")
+          : <p>{hub ? t("Track Bangladesh orders and pre-orders, or recover an order you placed as a guest.",
+            "বাংলাদেশের অর্ডার ও প্রি-অর্ডার ট্র্যাক করুন, অথবা অতিথি হিসেবে করা অর্ডার পুনরুদ্ধার করুন।") : shopper ? t("Open an order to track its delivery or get help.", "ডেলিভারি ট্র্যাক করতে বা সহায়তা পেতে অর্ডারটি খুলুন।")
             : t("Open a recent order in the browser you used for checkout.", "যে ব্রাউজারে অর্ডার করেছেন, সেখানে সাম্প্রতিক অর্ডার খুলুন।")}</p>}
         {regional && <nav className="mp-panel-links" aria-label={t("Order country", "অর্ডারের দেশ")}>
           {marketList.map(({ id }) => id === active.id
@@ -61,15 +89,31 @@ export default async function CustomerOrdersPage() {
             : <a key={id} href={storefrontPath(marketStoreHref("/orders", id))}>{t("View orders in", "অর্ডার দেখুন:")} {accountMarketName(language, id)}</a>)}
         </nav>}
       </div>
-      {orders.length === 0 ? <section className="commerce-panel commerce-stack">
-        <h2>{shopper ? t("No purchases yet", "এখনো কোনো অর্ডার নেই") : t("No orders in this browser", "এই ব্রাউজারে কোনো অর্ডার নেই")}</h2>
+      {hub && (shopper ? <BangladeshOrderHubForms language={language} linked={Boolean(history?.linked)} verifiedPhone={Boolean(verifiedPhone)}/>
+        : <div className="commerce-panel bd-order-hub-forms"><SignInGate language={language}>
+          {t("Sign in to see earlier purchases and recover a guest order on this device.", "আগের কেনাকাটা দেখতে এবং এই ডিভাইসে অতিথি অর্ডার পুনরুদ্ধার করতে সাইন ইন করুন।")}
+        </SignInGate></div>)}
+      {hub && <nav className="mp-panel-links bd-order-filters" aria-label={t("Order type", "অর্ডারের ধরন")}>
+        <Link href={pageLink()} aria-current={view === undefined && !before ? "page" : undefined}>{t("All orders", "সব অর্ডার")}</Link>
+        <Link href={pageLink("order")} aria-current={view === "order" && !before ? "page" : undefined}>{t("Orders", "অর্ডার")}</Link>
+        <Link href={pageLink("preorder")} aria-current={view === "preorder" && !before ? "page" : undefined}>{t("Pre-orders", "প্রি-অর্ডার")}</Link>
+      </nav>}
+      {history?.unavailable && <p role="status">{t("Earlier purchases are temporarily unavailable.", "আগের কেনাকাটাগুলো সাময়িকভাবে দেখা যাচ্ছে না।")}</p>}
+      {entries.length === 0 ? <section className="commerce-panel commerce-stack">
+        <h2>{view === "preorder" ? t("No pre-orders to show", "দেখানোর মতো কোনো প্রি-অর্ডার নেই")
+          : shopper ? t("No purchases to show", "দেখানোর মতো কোনো অর্ডার নেই") : t("No orders in this browser", "এই ব্রাউজারে কোনো অর্ডার নেই")}</h2>
         {orderRecoveryEnabled() && <p>{t("If you saved a private order link, open it to track the guest order.",
           "ব্যক্তিগত অর্ডার লিংক সংরক্ষণ করে থাকলে, অতিথি অর্ডার ট্র্যাক করতে সেটি খুলুন।")}</p>}
         <p>{t("Need help finding a guest order? Email", "অতিথি অর্ডার খুঁজতে সহায়তা দরকার? অর্ডার নম্বরসহ ইমেইল করুন")}
           {" "}<a href={"mailto:" + store.supportEmail}>{store.supportEmail}</a>{" "}{t("with your order reference.", "।")}</p>
         <Link className="button button--outline" href={href("/shop")}>{t("Continue shopping", "কেনাকাটা চালিয়ে যান")}</Link>
       </section> : <ul className="staff-orders account-order-list">
-        {orders.map(order => {
+        {entries.map(entry => {
+          if (entry.type === "historical") {
+            const { order } = entry;
+            return <LegacyOrderRow key={`${order.kind}-${order.id}`} order={order} href={href(`/orders/history/${order.kind}/${order.id}`)} language={language}/>;
+          }
+          const { order } = entry;
           const marketId = order.marketId ?? active.id;
           const cashDue = order.currency ? cashDueOnDelivery({ ...order, marketId, currency: order.currency, payment: order.payment ?? null }) : null;
           const extra = (order._count?.items ?? 0) - (order.items?.length ?? 0);
@@ -93,10 +137,26 @@ export default async function CustomerOrdersPage() {
           </li>;
         })}
       </ul>}
+      {(history?.next || before) && <nav className="mp-panel-links" aria-label={t("Order history pages", "অর্ডার ইতিহাসের পৃষ্ঠাগুলো")}>
+        {before && <Link href={pageLink(view)}>{t("Back to newest", "সাম্প্রতিক অর্ডারে ফিরে যান")}</Link>}
+        {history?.next && <Link href={pageLink(view, history.next)}>{t("Older orders", "পুরোনো অর্ডার")}</Link>}
+      </nav>}
       <div className="mp-panel-links">
         {shopper && <Link href={href("/account")}>{t("My account", "আমার অ্যাকাউন্ট")}</Link>}
         <Link href={href("/help")}>{t("Help with orders", "অর্ডারের জন্য সহায়তা")}</Link>
       </div>
     </div>
   );
+}
+
+async function historicalOrders(shopperId: string, view?: "order" | "preorder", before?: string) {
+  const access = await bdLegacyAccess(shopperId);
+  const linked = Boolean(access.legacyCustomerId);
+  if (!linked && !access.grants.length) return { items: [], next: null, linked, unavailable: false };
+  try {
+    return { ...await legacyOrderHistory(access, view, before), linked, unavailable: false };
+  } catch (error) {
+    reportFailure("bd-order-hub.history", undefined, error);
+    return { items: [], next: null, linked, unavailable: true };
+  }
 }

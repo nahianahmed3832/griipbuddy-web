@@ -16,6 +16,14 @@ See [Global customer account](global-customer-account.md) for the global directo
 | Profile & Settings | `/bd/account/settings` | Market display name, language and marketing preference. Sign-in credentials and recovery remain in Better Auth |
 | Staff packing and service | `/admin/orders/:id`, `/admin/cases/:id` | Existing packing queue, order, fulfillment audit and owner cases |
 
+## Bangladesh My Orders staging
+
+`/bd/orders` shows current storefront orders and earlier orders and pre-orders in one list. Link an earlier account using its verified legacy credentials. To save an unowned guest purchase, use its reference and checkout email from any signed-in device. The six-digit code expires after ten minutes and is single-use. For legacy purchases with a phone instead of an email, the hub can use a verified Bangladesh phone on the signed-in account and the exact reference.
+
+The historical service reads a dedicated synthetic Mongo fixture over a private Docker network. Staging email is captured in the owner-only test inbox. The account mapping and recovery grants stay in the staging PostgreSQL database. Recent orders keep their existing private links, receipt details, tracking and service actions. Historical details show fulfillment and payment information with a support link.
+
+The Android `ordersPreview` build opens this same URL. The earlier orders and recovery controls are available only with the isolated bridge and captured mail enabled. An approved historical export is required to exercise the hub with actual legacy records.
+
 ## Data and integrations
 
 - Better Auth supplies the stable `Shopper.id` and shopper sessions. Bangladesh and US on the same dev origin share the shopper login. Seller Center already uses the shopper identity and existing seller-market approvals. Staff sessions use their own identity and permissions. Distinct production storefront hosts need a shared issuer or approved session exchange before cross-host sign-in can be validated.

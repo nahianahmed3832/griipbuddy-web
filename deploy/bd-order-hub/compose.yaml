@@ -1,0 +1,101 @@
+name: griipbuddy-bd-order-hub
+
+services:
+  mongo:
+    image: mongo@sha256:b9924c330a8bbc5800fe9c69f04a84e221eca7b28fd049a0354147d9908fa142
+    pull_policy: never
+    command: [mongod, --bind_ip_all, --wiredTigerCacheSizeGB, "0.25"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: order_hub_admin
+      MONGO_INITDB_ROOT_PASSWORD: ${BD_ORDER_HUB_MONGO_ADMIN_PASSWORD:?}
+      MONGO_INITDB_DATABASE: griipbuddy_order_hub_stage
+      BD_ORDER_HUB_MONGO_READ_PASSWORD: ${BD_ORDER_HUB_MONGO_READ_PASSWORD:?}
+      BD_ORDER_HUB_MONGO_SEED_PASSWORD: ${BD_ORDER_HUB_MONGO_SEED_PASSWORD:?}
+    volumes:
+      - mongo:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/20-orders.js:ro
+    networks:
+      documents:
+        aliases: [bd-order-hub-mongo]
+    healthcheck:
+      test: [CMD, mongosh, --host, bd-order-hub-mongo, --quiet, --eval, 'quit(db.runCommand({ping: 1}).ok ? 0 : 1)']
+      interval: 4s
+      timeout: 4s
+      retries: 20
+    mem_limit: 384m
+    restart: unless-stopped
+    logging: &logs
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+  api:
+    image: griipbuddy-overhaul-api:19adfd454c44
+    pull_policy: never
+    working_dir: /usr/src/app
+    entrypoint: [node, /usr/src/app/recovery/hostinger/customer-orders-server.mjs]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mongodb://order_hub_reader:${BD_ORDER_HUB_MONGO_READ_PASSWORD:?}@bd-order-hub-mongo:27017/griipbuddy_order_hub_stage
+      GRIIP_OPERATIONS_MODE: staging
+      BD_ORDER_HUB_MODE: isolated
+      BD_ORDER_HUB_BRIDGE_TOKEN: ${BD_ORDER_HUB_BRIDGE_TOKEN:?}
+      HASH_SECRET: ${BD_ORDER_HUB_FIXTURE_HASH_SECRET:?}
+    volumes:
+      - ./source/src:/usr/src/app/src:ro
+      - ./source/recovery:/usr/src/app/recovery:ro
+    networks:
+      documents:
+      bridge:
+        aliases: [bd-order-hub-api]
+    depends_on:
+      mongo: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, -e, 'fetch("http://127.0.0.1:38100/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))']
+      interval: 5s
+      timeout: 4s
+      retries: 12
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+    restart: unless-stopped
+    logging: *logs
+  seed:
+    profiles: [seed]
+    image: griipbuddy-overhaul-api:19adfd454c44
+    pull_policy: never
+    working_dir: /usr/src/app
+    entrypoint: [node, /usr/src/app/recovery/hostinger/customer-orders-fixture.cjs]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mongodb://order_hub_seed:${BD_ORDER_HUB_MONGO_SEED_PASSWORD:?}@bd-order-hub-mongo:27017/griipbuddy_order_hub_stage
+      GRIIP_OPERATIONS_MODE: staging
+      BD_ORDER_HUB_MODE: isolated
+      HASH_SECRET: ${BD_ORDER_HUB_FIXTURE_HASH_SECRET:?}
+      BD_ORDER_HUB_LEGACY_SAMPLE_PASSWORD: ${BD_ORDER_HUB_LEGACY_SAMPLE_PASSWORD:?}
+    volumes:
+      - ./source/src:/usr/src/app/src:ro
+      - ./source/recovery:/usr/src/app/recovery:ro
+    networks: [documents]
+    depends_on:
+      mongo: {condition: service_healthy}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+    logging: *logs
+
+networks:
+  documents:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${BD_ORDER_HUB_DOCUMENTS_SUBNET:-10.236.52.0/28}
+  bridge:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${BD_ORDER_HUB_BRIDGE_SUBNET:-10.236.53.0/28}
+
+volumes:
+  mongo:

@@ -1,0 +1,11 @@
+services:
+  app:
+    env_file:
+      - /opt/griipbuddy-bd-order-hub/next.env
+    networks:
+      - bd-order-hub
+
+networks:
+  bd-order-hub:
+    name: griipbuddy-bd-order-hub_bridge
+    external: true
