@@ -26,7 +26,7 @@ export const caseStatusLabels: Record<OrderCaseStatus, string> = {
 const revision = z.number().int().nonnegative();
 const reply = z.string().trim().min(3).max(1500);
 const singleLine = (max: number) => z.string().trim().min(2).max(max).regex(/^[^\p{Cc}]+$/u);
-const returnLines = z.array(z.object({
+export const returnLines = z.array(z.object({
   orderItemId: z.uuid(),
   quantity: z.number().int().min(1).max(MAX_QUANTITY),
 })).min(1).max(MAX_CART_LINES).refine(lines => new Set(lines.map(line => line.orderItemId)).size === lines.length);

@@ -3,7 +3,8 @@ import type { MarketId } from "../../config/markets.ts";
 import { restoreBangladeshInventory } from "../commerce/bangladesh-returns.ts";
 import { purchaseCaseOptions } from "../commerce/order-return-terms.ts";
 import { getDb, type DbReader } from "../db/client.ts";
-import { authorize, OperationError } from "../staff/operations.ts";
+import { authorize, lockFulfillmentOrder, OperationError } from "../staff/operations.ts";
+import type { DevAdminFulfillmentOperator, DevAdminOrderCommand } from "../staff/dev-admin-order-proof.ts";
 import { activeCaseStatuses, caseActorRole, mayRequestCancellation, mayRequestReturn, mayWithdrawCase, ownerCaseTransitions, type CaseCommand } from "./case-policy.ts";
 
 export class OrderCaseError extends Error {
@@ -13,6 +14,9 @@ export class OrderCaseError extends Error {
 }
 
 type CaseActor = { role: "shopper" | "owner"; id: string; market?: MarketId };
+type DevAdminCaseActor = { role: "dev-admin"; operator: DevAdminFulfillmentOperator; orderId: string; market: "bd" };
+type CaseOperator = CaseActor | DevAdminCaseActor;
+type DevAdminCaseCommand = Extract<DevAdminOrderCommand, { action: "open-return" | "review-return" | "receive-return" | "confirm-return-refund" }>;
 type OpenCommand = Extract<CaseCommand, { action: "open" }>;
 type ReceiveCommand = Extract<CaseCommand, { action: "receive" }>;
 type RefundCommand = Extract<CaseCommand, { action: "confirm-refund" }>;
@@ -144,15 +148,24 @@ export async function staffOrderCase(actorId: string, caseId: string, marketId?:
   return { ...orderCase, maxRefundMinor };
 }
 
-async function confirmRefund(actor: CaseActor, command: RefundCommand) {
+async function lockCaseOrder(tx: Prisma.TransactionClient, actor: CaseOperator, caseId: string) {
+  if (actor.role === "dev-admin") {
+    const { actorId } = await lockFulfillmentOrder(tx, actor.operator, actor.orderId, { returns: true, bangladeshOnly: true });
+    return { orderId: actor.orderId, actorId };
+  }
+  await authorize(tx, actor.id, true, actor.market);
+  const found = await tx.orderCase.findFirst({ where: { id: caseId, order: { marketId: actor.market } }, select: { orderId: true } });
+  if (!found) throw new OrderCaseError("Case not found.", 404);
+  await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${found.orderId}::uuid FOR UPDATE`;
+  return { orderId: found.orderId, actorId: actor.id };
+}
+
+async function confirmRefund(actor: CaseOperator, command: RefundCommand) {
   return getDb().$transaction(async tx => {
-    await authorize(tx, actor.id, true, actor.market);
-    const found = await tx.orderCase.findFirst({ where: { id: command.caseId, order: { marketId: actor.market } }, select: { orderId: true } });
-    if (!found) throw new OrderCaseError("Case not found.", 404);
-    await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${found.orderId}::uuid FOR UPDATE`;
-    const orderCase = await tx.orderCase.findUnique({ where: { id: command.caseId }, select: refundFields });
+    const { orderId, actorId } = await lockCaseOrder(tx, actor, command.caseId);
+    const orderCase = await tx.orderCase.findUnique({ where: { id: command.caseId, orderId }, select: refundFields });
     if (!orderCase) throw new OrderCaseError("Case not found.", 404);
-    await authorize(tx, actor.id, true, orderCase.order.marketId);
+    if (actor.role !== "dev-admin") await authorize(tx, actorId, true, orderCase.order.marketId);
     if (orderCase.refundConfirmedAt && orderCase.refundAmountMinor === command.amountMinor &&
         orderCase.refundMethod === command.method && orderCase.refundReference === command.reference) return { id: orderCase.id };
     if (orderCase.revision !== command.revision) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
@@ -162,14 +175,17 @@ async function confirmRefund(actor: CaseActor, command: RefundCommand) {
     if (command.amountMinor < 1 || !Number.isInteger(command.amountMinor) || command.amountMinor > await refundLimit(tx, orderCase)) {
       throw new OrderCaseError("The refund exceeds the amount paid for these items.", 409);
     }
+    const duplicate = await tx.orderCase.findFirst({ where: { orderId, id: { not: orderCase.id },
+      refundMethod: command.method, refundReference: command.reference }, select: { id: true } });
+    if (duplicate) throw new OrderCaseError("That refund reference is already recorded for this order.", 409);
     const revision = orderCase.revision + 1;
     const result = await tx.orderCase.updateMany({ where: { id: orderCase.id, revision: orderCase.revision }, data: {
       revision, refundAmountMinor: command.amountMinor, refundMethod: command.method,
       refundReference: command.reference, refundConfirmedAt: new Date(),
     } });
     if (result.count !== 1) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
-    await tx.orderCaseEvent.create({ data: { caseId: orderCase.id, status: orderCase.status, revision, actorId: actor.id, refundConfirmed: true } });
-    await tx.auditEvent.create({ data: { actorId: actor.id, action: "BD_CASE_REFUND_CONFIRMED", target: orderCase.id, changes: {
+    await tx.orderCaseEvent.create({ data: { caseId: orderCase.id, status: orderCase.status, revision, actorId, refundConfirmed: true } });
+    await tx.auditEvent.create({ data: { actorId, action: "BD_CASE_REFUND_CONFIRMED", target: orderCase.id, changes: {
       orderId: orderCase.order.id, marketId: "bd", amountMinor: command.amountMinor, currency: "BDT", outcome: "confirmed",
     } } });
     return { id: orderCase.id };
@@ -200,14 +216,20 @@ export async function listOrderCases(actorId: string, includeClosed: boolean, pa
   return { rows: rows.slice(0, queuePageSize), hasNext: rows.length > queuePageSize };
 }
 
-async function openOrderCase(actor: CaseActor, command: OpenCommand, photo?: Uint8Array<ArrayBuffer>) {
+async function openOrderCase(actor: CaseOperator, command: OpenCommand, photo?: Uint8Array<ArrayBuffer>) {
   return getDb().$transaction(async tx => {
-    const actorId = actor.id;
     const { orderId, kind, note, lines, reason, issueItemId } = command;
-    const marketScope = actor.market ? Prisma.sql`AND "marketId" = ${actor.market}::"MarketCode"` : Prisma.empty;
-    await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId}::uuid AND "shopperId" = ${actorId} ${marketScope} FOR UPDATE`;
+    let actorId: string;
+    if (actor.role === "dev-admin") {
+      const locked = await lockFulfillmentOrder(tx, actor.operator, orderId, { returns: true, bangladeshOnly: true });
+      actorId = locked.actorId;
+    } else {
+      actorId = actor.id;
+      const marketScope = actor.market ? Prisma.sql`AND "marketId" = ${actor.market}::"MarketCode"` : Prisma.empty;
+      await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId}::uuid AND "shopperId" = ${actorId} ${marketScope} FOR UPDATE`;
+    }
     const order = await tx.order.findFirst({
-      where: { id: orderId, shopperId: actorId, marketId: actor.market },
+      where: { id: orderId, ...(actor.role !== "dev-admin" && { shopperId: actorId }), marketId: actor.market },
       select: { status: true, fulfillmentStatus: true, marketId: true, returnTerms: true, items: { select: { id: true, quantity: true } } },
     });
     if (!order) throw new OrderCaseError("Order not found.", 404);
@@ -242,7 +264,8 @@ async function openOrderCase(actor: CaseActor, command: OpenCommand, photo?: Uin
       throw new OrderCaseError("This request does not accept item selection.", 400);
     }
     return tx.orderCase.create({
-      data: { orderId, kind, reason, issueItemId, events: { create: { status: "OPEN", note, revision: 0, shopperActorId: actorId } },
+      data: { orderId, kind, reason, issueItemId, events: { create: { status: "OPEN", note, revision: 0,
+        ...(actor.role === "dev-admin" ? { actorId } : { shopperActorId: actorId }) } },
         ...(photo && { attachment: { create: { data: photo } } }),
         ...(lines && { returnLines: { createMany: { data: lines } } }) },
       select: { id: true },
@@ -250,16 +273,19 @@ async function openOrderCase(actor: CaseActor, command: OpenCommand, photo?: Uin
   });
 }
 
-async function updateOrderCase(actor: CaseActor, command: UpdateCommand) {
+async function updateOrderCase(actor: CaseOperator, command: UpdateCommand) {
   return getDb().$transaction(async tx => {
-    if (actor.role === "owner") await authorize(tx, actor.id, true, actor.market);
-    const where = { id: command.caseId, order: { ...(actor.role === "shopper" && { shopperId: actor.id }), marketId: actor.market } };
+    const actorId = actor.role === "dev-admin"
+      ? (await lockCaseOrder(tx, actor, command.caseId)).actorId : actor.id;
+    if (actor.role === "owner") await authorize(tx, actorId, true, actor.market);
+    const where = { id: command.caseId, ...(actor.role === "dev-admin" && { orderId: actor.orderId, kind: "RETURN" as const }),
+      order: { ...(actor.role === "shopper" && { shopperId: actorId }), marketId: actor.market } };
     const existingCase = await tx.orderCase.findFirst({
       where, select: { id: true, kind: true, status: true, revision: true, order: { select: { status: true, marketId: true } },
         _count: { select: { returnLines: true } } },
     });
     if (!existingCase) throw new OrderCaseError("Case not found.", 404);
-    if (actor.role === "owner") await authorize(tx, actor.id, true, existingCase.order.marketId);
+    if (actor.role === "owner") await authorize(tx, actorId, true, existingCase.order.marketId);
     if (existingCase.revision !== command.revision) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
     const allowed = command.action === "withdraw" ? mayWithdrawCase(existingCase.status)
       : command.action === "reply" || command.action === "respond" ? activeCaseStatuses.some(status => status === existingCase.status)
@@ -274,23 +300,19 @@ async function updateOrderCase(actor: CaseActor, command: UpdateCommand) {
     const result = await tx.orderCase.updateMany({ where: { ...where, revision: command.revision }, data: { status, revision } });
     if (result.count !== 1) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
     await tx.orderCaseEvent.create({
-      data: { caseId: existingCase.id, status, revision, ...(actor.role === "owner" ? { actorId: actor.id } : { shopperActorId: actor.id }),
+      data: { caseId: existingCase.id, status, revision, ...(actor.role === "shopper" ? { shopperActorId: actorId } : { actorId }),
         ...(command.action !== "withdraw" && { note: command.note }) },
     });
     return { id: existingCase.id };
   });
 }
 
-async function receiveOrderCase(actor: CaseActor, command: ReceiveCommand) {
+async function receiveOrderCase(actor: CaseOperator, command: ReceiveCommand) {
   if (command.confirmed !== true) throw new OrderCaseError("Confirm receipt of the physical items first.", 400);
   return getDb().$transaction(async tx => {
-    const actorId = actor.id;
-    await authorize(tx, actorId, true, actor.market);
-    const found = await tx.orderCase.findFirst({ where: { id: command.caseId, order: { marketId: actor.market } }, select: { orderId: true } });
-    if (!found) throw new OrderCaseError("Case not found.", 404);
-    await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${found.orderId}::uuid FOR UPDATE`;
+    const { orderId, actorId } = await lockCaseOrder(tx, actor, command.caseId);
     const orderCase = await tx.orderCase.findUnique({
-      where: { id: command.caseId },
+      where: { id: command.caseId, orderId },
       select: {
         id: true, kind: true, status: true, revision: true, returnReceivedAt: true,
         order: { select: { id: true, status: true, fulfillmentStatus: true, marketId: true } },
@@ -300,7 +322,7 @@ async function receiveOrderCase(actor: CaseActor, command: ReceiveCommand) {
       },
     });
     if (!orderCase) throw new OrderCaseError("Case not found.", 404);
-    await authorize(tx, actorId, true, orderCase.order.marketId);
+    if (actor.role !== "dev-admin") await authorize(tx, actorId, true, orderCase.order.marketId);
     if (orderCase.revision !== command.revision) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
     if (orderCase.kind !== "RETURN" || orderCase.status !== "RETURN_APPROVED" || orderCase.returnReceivedAt ||
         orderCase.order.marketId !== "bd" || !mayRequestReturn(orderCase.order) || !orderCase.returnLines.length) {
@@ -346,4 +368,15 @@ export function executeOrderCase(actor: CaseActor, command: CaseCommand, photo?:
   if (command.action === "receive") return receiveOrderCase(actor, command);
   if (command.action === "confirm-refund") return confirmRefund(actor, command);
   return updateOrderCase(actor, command);
+}
+
+
+export function executeDevAdminReturn(operator: DevAdminFulfillmentOperator, orderId: string, command: DevAdminCaseCommand) {
+  const actor: DevAdminCaseActor = { role: "dev-admin", operator, orderId, market: "bd" };
+  switch (command.action) {
+    case "open-return": return openOrderCase(actor, { ...command, action: "open", kind: "RETURN", orderId });
+    case "review-return": return updateOrderCase(actor, { ...command, action: "review" });
+    case "receive-return": return receiveOrderCase(actor, { ...command, action: "receive" });
+    case "confirm-return-refund": return confirmRefund(actor, { ...command, action: "confirm-refund" });
+  }
 }

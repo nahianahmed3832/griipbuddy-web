@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { caseReasons, ownerCaseStatuses, returnLines } from "../marketplace/case-policy.ts";
 
 const tokenFormat = /^[a-f0-9]{64}$/;
 const maxProofAge = 30;
@@ -27,7 +28,18 @@ export const returnCostCommand = z.object({
   evidence: z.string().trim().min(3).max(120).regex(/^[^\u0000-\u001f\u007f]+$/u),
 }).strict();
 const tracking = z.enum(["OUT_FOR_DELIVERY", "DELIVERED", "REFUSED"]);
+const caseRevision = { caseId: z.uuid(), revision: z.int().nonnegative() };
+const caseNote = z.string().trim().min(3).max(1500);
+const singleLine = (max: number) => z.string().trim().min(2).max(max).regex(/^[^\p{Cc}]+$/u);
 const command = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("edit-contact"), name: singleLine(120), phone: z.string().regex(/^(?:\+?88)?01\d{9}$/),
+    address: z.string().trim().min(1).max(450), revision: z.iso.datetime() }).strict(),
+  z.object({ action: z.literal("add-note"), note: z.string().trim().min(1).max(1000), key: z.uuid() }).strict(),
+  z.object({ action: z.literal("open-return"), reason: z.enum(caseReasons), note: z.string().trim().min(10).max(1500), lines: returnLines }).strict(),
+  z.object({ action: z.literal("review-return"), ...caseRevision, status: z.enum(ownerCaseStatuses), note: caseNote }).strict(),
+  z.object({ action: z.literal("receive-return"), ...caseRevision, disposition: z.enum(["RESTOCK", "HOLD"]), confirmed: z.literal(true) }).strict(),
+  z.object({ action: z.literal("confirm-return-refund"), ...caseRevision, amountMinor: z.int().min(1).max(2_147_483_647),
+    method: singleLine(60), reference: singleLine(80), confirmed: z.literal(true) }).strict(),
   returnCostCommand,
   z.object({ action: z.literal("advance"), next: z.enum(["PACKING", "READY_TO_SHIP", "SHIPPED", "DELIVERED"]),
     carrier: text.optional(), trackingReference: text.optional(), simulate: z.boolean().optional(),
@@ -46,7 +58,7 @@ const proof = z.object({ id, operator, command }).strict();
 export type DevAdminFulfillmentOperator = z.infer<typeof operator>;
 export type DevAdminOrderCommand = z.infer<typeof command>;
 
-export function readDevAdminOrderProof(body: string, header: string | null, now = Date.now()) {
+function validDevAdminProof(body: string, header: string | null, purpose: string, now: number) {
   const secret = process.env.GRIIP_HYBRID_ADMIN_FULFILLMENT_TOKEN ?? "";
   if (!tokenFormat.test(secret) || !header) return null;
   const [timestamp, signature, extra] = header.split(".");
@@ -55,8 +67,16 @@ export function readDevAdminOrderProof(body: string, header: string | null, now 
   if (elapsed > maxProofAge || elapsed < -clockSkew) return null;
 
   const expected = createHmac("sha256", Buffer.from(secret, "hex"))
-    .update("griipbuddy/hybrid-fulfillment/v1\n" + timestamp + "\n" + body).digest();
-  if (!timingSafeEqual(expected, Buffer.from(signature, "hex"))) return null;
+    .update(purpose + "\n" + timestamp + "\n" + body).digest();
+  return timingSafeEqual(expected, Buffer.from(signature, "hex"));
+}
+
+export function validDevAdminDetailProof(query: string, header: string | null, now = Date.now()) {
+  return validDevAdminProof(query, header, "griipbuddy/hybrid-order-details/v1", now);
+}
+
+export function readDevAdminOrderProof(body: string, header: string | null, now = Date.now()) {
+  if (!validDevAdminProof(body, header, "griipbuddy/hybrid-fulfillment/v1", now)) return null;
   try {
     const result = proof.safeParse(JSON.parse(body));
     return result.success ? result.data : null;

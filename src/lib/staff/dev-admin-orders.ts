@@ -57,7 +57,7 @@ const detail = {
     status: true, type: true, createdAt: true, actor: { select: { name: true } },
   } },
 } satisfies Prisma.OrderSelect;
-const reportItem = { ...itemSnapshot, variantId: true, variant: { select: { productId: true,
+const reportItem = { ...itemSnapshot, variantId: true, variant: { select: { productId: true, inventory: { select: { available: true } },
   product: { select: { department: { select: { id: true, name: true } } } },
 } } } satisfies Prisma.OrderItemSelect;
 const reportingSummary = {
@@ -76,7 +76,7 @@ const reportingSummary = {
 type Cursor = { createdAt: Date; id: string };
 const warehouseIds = z.string().max(499).regex(/^[a-f0-9]{24}(,[a-f0-9]{24})*$/).transform(value => [...new Set(value.split(","))]);
 const workspace = z.object({
-  view: z.literal("workspace"), q: z.string().trim().max(100).optional(), sku: z.string().trim().max(100).optional(),
+  view: z.literal("workspace"), assigned: z.literal("1").optional(), q: z.string().trim().max(100).optional(), sku: z.string().trim().max(100).optional(),
   locations: warehouseIds.optional(),
   from: z.iso.date().optional(), to: z.iso.date().optional(), creator: z.enum(["USER", "GUEST"]).optional(),
 }).strict().refine(value => !value.from || !value.to || value.from <= value.to);
@@ -84,7 +84,7 @@ const reporting = z.object({
   view: z.literal("reporting"), locations: warehouseIds.optional(), from: z.iso.date().optional(), to: z.iso.date().optional(),
   active: z.literal("1").optional(), costs: z.literal("1").optional(),
 }).strict().refine(value => !value.from || !value.to || value.from <= value.to);
-type OrderQuery = { kind: "detail"; id: string; costs?: boolean } | { kind: "list"; limit: number; search: string; after?: Cursor } |
+type OrderQuery = { kind: "detail"; id: string; costs?: boolean; operations?: boolean; warehouse?: string } | { kind: "list"; limit: number; search: string; after?: Cursor } |
   { kind: "workspace"; filters: z.infer<typeof workspace> } | { kind: "reporting"; filters: z.infer<typeof reporting> };
 const workspaceLimit = 10_000;
 
@@ -112,21 +112,45 @@ export function readDevAdminOrderQuery(params: URLSearchParams): OrderQuery | nu
     const parsed = reporting.safeParse(Object.fromEntries(params));
     return parsed.success ? { kind: "reporting", filters: parsed.data } : null;
   }
-  const allowed = ["id", "limit", "search", "after", "costs"];
+  const allowed = ["id", "limit", "search", "after", "costs", "ops", "warehouse"];
   if (provided.some(key => !allowed.includes(key))) return null;
   const id = params.get("id");
   const costs = params.get("costs");
+  const operations = params.get("ops");
+  const warehouse = params.get("warehouse");
   if (id !== null) {
-    return idFormat.safeParse(id).success && provided.every(key => key === "id" || key === "costs") && (costs === null || costs === "1")
-      ? { kind: "detail", id, ...(costs && { costs: true }) } : null;
+    return idFormat.safeParse(id).success && provided.every(key => ["id", "costs", "ops", "warehouse"].includes(key)) &&
+      (costs === null || costs === "1") && (operations === null || operations === "1") &&
+      (warehouse === null || operations === "1" && /^[a-f0-9]{24}$/.test(warehouse))
+      ? { kind: "detail", id, ...(costs && { costs: true }), ...(operations && { operations: true }), ...(warehouse && { warehouse }) } : null;
   }
-  if (costs !== null) return null;
+  if (costs !== null || operations !== null || warehouse !== null) return null;
   const limit = params.get("limit") ?? "30";
   const search = params.get("search")?.trim() ?? "";
   const cursor = params.get("after");
   const after = cursor === null ? undefined : decodeCursor(cursor);
   if (!/^[1-9]\d?$/.test(limit) || Number(limit) > 50 || !/^[a-z0-9-]{0,40}$/i.test(search) || (cursor !== null && !after)) return null;
   return { kind: "list", limit: Number(limit), search, after };
+}
+
+async function readOperations(db: DbReader, id: string) {
+  const [row, notes] = await Promise.all([
+    db.order.findUnique({ where: { id }, select: { customerName: true, phone: true, address: true, locality: true, updatedAt: true,
+      items: { select: { ...itemSnapshot, id: true }, orderBy: { id: "asc" } },
+      cases: { where: { kind: "RETURN" }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 100, select: {
+        id: true, status: true, revision: true, reason: true, createdAt: true, returnReceivedAt: true,
+        returnDisposition: true, refundAmountMinor: true, refundConfirmedAt: true,
+        returnLines: { select: { orderItemId: true, quantity: true }, orderBy: { orderItemId: "asc" } },
+        events: { orderBy: { revision: "asc" }, select: { note: true, status: true, refundConfirmed: true, createdAt: true, actor: { select: { name: true } } } },
+      } },
+    } }),
+    db.auditEvent.findMany({ where: { target: id, action: "FULFILLMENT_CHANGED",
+      changes: { path: ["adminNote"], string_contains: "" } }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 100,
+      select: { changes: true, createdAt: true, actor: { select: { name: true } } } }),
+  ]);
+  if (!row) return undefined;
+  return { ...row, notes: notes.map(note => ({ text: (note.changes as { adminNote: string }).adminNote,
+    at: note.createdAt, by: note.actor?.name })) };
 }
 
 export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
@@ -137,23 +161,24 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
       ...detail, bangladeshRefusedParcelReceipt: { select: { ...detail.bangladeshRefusedParcelReceipt.select, returnCost } },
       cases: { ...detail.cases, select: { ...detail.cases.select, id: readCost, returnDisposition: readCost, returnCost } },
     } });
-    if (!row) return null;
+    if (!row || query.warehouse && row.shippingWarehouseId && row.shippingWarehouseId !== query.warehouse) return null;
+    const operations = query.operations ? await readOperations(db, row.id) : undefined;
     const { items, subtotalMinor, discountMinor, deliveryMinor, taxMinor, payment, ...summaryFields } = row;
     const manualProof = payment?.manualProof;
     const manualPayment = manualProof?.test && !manualProof.reviewedAt ? { transaction: manualProof.submittedTransaction } : null;
     const order = orderSummary({ ...summaryFields, payment: payment ? {
       method: payment.method, status: payment.status, amountMinor: payment.amountMinor, collectedAt: payment.collectedAt,
     } : null });
-    return { ...order, subtotalMinor, discountMinor, deliveryMinor, taxMinor, items, manualPayment };
+    return { ...order, subtotalMinor, discountMinor, deliveryMinor, taxMinor, items, manualPayment, ...(operations && { operations }) };
   }
   if (query.kind === "workspace") {
-    const { q, sku, from, to, creator, locations } = query.filters;
+    const { q, sku, from, to, creator, locations, assigned } = query.filters;
     const contains = (value: string) => ({ contains: value.replace(/[\\%_]/g, "\\$&"), mode: "insensitive" as const });
     const start = from && new Date(from + "T00:00:00.000+06:00");
     const end = to && new Date(to + "T23:59:59.999+06:00");
     const orders = await db.order.findMany({
       where: { ...devAdminOrderScope,
-        ...(locations && { shippingWarehouseId: { in: locations } }),
+        ...(locations ? { shippingWarehouseId: { in: locations } } : assigned && { shippingWarehouseId: { not: null } }),
         ...(q && { reference: contains(q) }),
         ...(sku && { items: { every: firstParty, some: { ...firstParty, sku: contains(sku) } } }),
         ...((start || end) && { createdAt: { ...(start && { gte: start }), ...(end && { lte: end }) } }),
