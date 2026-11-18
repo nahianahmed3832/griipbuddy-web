@@ -211,8 +211,8 @@
   .mp-hero-copy p { margin-bottom: 13px; }
 }
 @media (max-width: 730px) {
-  .marketplace .mp-header-row { grid-template-columns: 44px minmax(0, 1fr); grid-template-rows: auto auto; gap: 2px 7px; padding-top: 5px; }
-  .marketplace .mp-header-row > .wordmark { grid-column: 2; grid-row: 1; }
+  .marketplace .mp-header-row { grid-template-columns: 44px minmax(0, 1fr) 44px; grid-template-rows: auto auto; gap: 2px 7px; padding-top: 5px; }
+  .marketplace .mp-header-row > .wordmark { grid-column: 2; grid-row: 1; justify-self: center; }
   .marketplace .mp-header-row > .department-menu { grid-column: 1; grid-row: 1; }
   .marketplace .mp-header-row > .site-header__search { grid-column: 1 / -1; grid-row: 2; }
   .mp-header-actions { display: none; }
