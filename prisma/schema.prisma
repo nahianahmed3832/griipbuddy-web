@@ -420,12 +420,27 @@ model Order {
   cases             OrderCase[]
   bangladeshShipment BangladeshShipment?
   bangladeshRefusedParcelReceipt BangladeshRefusedParcelReceipt?
+  warehousePostings HybridWarehousePosting[]
 
   @@index([createdAt, id])
   @@index([status, fulfillmentStatus, createdAt])
   @@index([shopperId, createdAt])
   @@index([couponCode])
   @@index([shippingWarehouseId, createdAt])
+}
+
+model HybridWarehousePosting {
+  key              String   @id @db.VarChar(64)
+  orderId          String   @db.Uuid
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fingerprint      String   @db.Char(64)
+  request          Json
+  trackingReference String? @db.VarChar(80)
+  evidence         Json?
+  createdAt        DateTime @default(now())
+  completedAt      DateTime?
+
+  @@index([orderId, completedAt])
 }
 
 enum MeasurementKind {

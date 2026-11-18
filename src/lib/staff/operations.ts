@@ -13,8 +13,14 @@ import { isManualPaymentMethod } from "../commerce/manual-payment-methods.ts";
 import { notifyOrder } from "../commerce/order-notifications.ts";
 import { hybridDemoMode, hybridStoreMode } from "../release-config.ts";
 import { pendingCancellationStatuses } from "../marketplace/case-policy.ts";
+import { storeShop } from "../marketplace/constants.ts";
 import { devAdminOrderScope } from "./dev-admin-orders.ts";
 import { devAdminWarehouse, type DevAdminFulfillmentOperator } from "./dev-admin-order-proof.ts";
+import { warehouseDispatchKey, warehouseVariant } from "./hybrid-warehouse-evidence.ts";
+import {
+  ensureNoPendingWarehousePosting, postWarehouseMovement, runWarehouseOperation,
+  warehouseFingerprint, warehouseInventoryEnabled, warehouseTransactionOptions,
+} from "./hybrid-warehouse.ts";
 
 export class OperationError extends Error {
   constructor(message: string, readonly status = 409) { super(message); }
@@ -127,8 +133,18 @@ export async function advanceFulfillment(actor: FulfillmentActor, orderId: strin
   const parsed = fulfillmentInput.safeParse(input);
   if (!parsed.success) throw new OperationError("Choose a valid fulfillment step.");
   const { next } = parsed.data;
-  await getDb().$transaction(async (tx) => {
+  const changed = await runWarehouseOperation(complete => getDb().$transaction(async (tx) => {
     const { order, actorId } = await lockFulfillmentOrder(tx, actor, orderId);
+    const warehouse = parsed.data.warehouse;
+    const simulate = parsed.data.simulate === true;
+    const dispatchKey = warehouseDispatchKey(orderId);
+    const dispatch = next === "SHIPPED" ? await tx.hybridWarehousePosting.findUnique({ where: { key: dispatchKey },
+      select: { fingerprint: true, completedAt: true, trackingReference: true },
+    }) : null;
+    await ensureNoPendingWarehousePosting(tx, orderId, next === "SHIPPED" ? dispatchKey : undefined);
+    const tracking = shipment.safeParse(simulate ? demoHandoff(dispatch?.trackingReference ?? undefined) : parsed.data);
+    const fingerprint = warehouseFingerprint([warehouse?.id ?? null, simulate, simulate ? null : tracking.data ?? null]);
+    if (dispatch?.completedAt && dispatch.fingerprint === fingerprint) return false;
     if (order.status !== "PLACED") throw new OperationError("This order is cancelled.");
     if (next === "SHIPPED" && order.marketId === "bd" && await tx.orderCase.findFirst({
       where: { orderId, kind: "CANCEL", status: { in: [...pendingCancellationStatuses] } }, select: { id: true },
@@ -142,17 +158,28 @@ export async function advanceFulfillment(actor: FulfillmentActor, orderId: strin
     if (next === "DELIVERED" && order.marketId === "bd" && await tx.bangladeshShipment.findUnique({ where: { orderId }, select: { orderId: true } })) {
       throw new OperationError("Record the courier’s delivery outcome in Bangladesh shipment tracking.");
     }
-    const simulate = parsed.data.simulate === true;
     if (simulate && (next !== "SHIPPED" || !devShipmentAvailable(order))) throw new OperationError("The demo courier is available only for test orders.");
-    const tracking = shipment.safeParse(simulate ? demoHandoff() : parsed.data);
     if (next === "SHIPPED" && !tracking.success) throw new OperationError("Enter a carrier and a tracking reference before shipping.");
-    const warehouse = parsed.data.warehouse;
     if (typeof actor !== "string" && next === "SHIPPED" &&
       (!warehouse || actor.assignedWarehouseId && warehouse.id !== actor.assignedWarehouseId)) {
       throw new OperationError("Choose an available shipping warehouse.");
     }
     if (warehouse && (typeof actor === "string" || next !== "SHIPPED" || order.shippingWarehouseId)) {
       throw new OperationError("Shipping warehouse is recorded once at dispatch.");
+    }
+    if (next === "SHIPPED" && order.marketId === "bd" && tracking.success) {
+      const tracked = order.items.filter(item => warehouseVariant.test(item.variantId) &&
+        (item.marketplaceShopId === null || item.marketplaceShopId === storeShop.id));
+      if (dispatch || tracked.length && order.measurementTest === true && warehouseInventoryEnabled()) {
+        if (typeof actor === "string" || !warehouse) {
+          throw new OperationError("Choose the shipping warehouse in editable Orders to record this dispatch.");
+        }
+        const posted = await postWarehouseMovement(tx, { key: dispatchKey, fingerprint, trackingReference: tracking.data.trackingReference,
+          request: { action: "dispatch", orderId, reference: order.reference, warehouseId: warehouse.id, operatorId: actor.id,
+            lines: tracked.map(item => ({ itemId: item.id, variantId: item.variantId, sku: item.sku, quantity: item.quantity })) },
+        }, complete);
+        if (!("evidence" in posted)) return posted;
+      }
     }
     const fields = next === "SHIPPED" && tracking.success ? {
       ...tracking.data,
@@ -173,9 +200,10 @@ export async function advanceFulfillment(actor: FulfillmentActor, orderId: strin
     await tx.auditEvent.create({
       data: { actorId, action: "FULFILLMENT_CHANGED", target: orderId, changes: { from: order.fulfillmentStatus, to: next, ...fields } },
     });
-  });
-  if (typeof actor === "string" && next === "SHIPPED") await notifyOrder(orderId, "shipped");
-  if (typeof actor === "string" && next === "DELIVERED") await notifyOrder(orderId, "delivered");
+    return true;
+  }, warehouseTransactionOptions));
+  if (changed && typeof actor === "string" && next === "SHIPPED") await notifyOrder(orderId, "shipped");
+  if (changed && typeof actor === "string" && next === "DELIVERED") await notifyOrder(orderId, "delivered");
 }
 
 const trackingInput = z.object({
@@ -226,6 +254,7 @@ export async function cancelLockedUnshippedOrder(tx: Prisma.TransactionClient, o
 }, { actorId = null, shopperId, paymentStatus = "VOIDED" }: {
   actorId?: string | null; shopperId?: string; paymentStatus?: "VOIDED" | "REFUND_PENDING";
 }) {
+  await ensureNoPendingWarehousePosting(tx, order.id);
   const items = [...order.items].sort((a, b) => a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0);
   for (const item of items) {
     await tx.inventory.update({ where: { variantId: item.variantId }, data: { available: { increment: item.quantity } } });

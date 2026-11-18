@@ -27,6 +27,6 @@ export function devShipmentAvailable(order: TestOrder) {
   return order.marketId === "bd" && order.measurementTest === true && hybridDemoMode();
 }
 
-export function demoHandoff() {
-  return { carrier: "GriipBuddy demo courier", trackingReference: `DEMO-${randomBytes(8).toString("hex").toUpperCase()}` };
+export function demoHandoff(trackingReference = `DEMO-${randomBytes(8).toString("hex").toUpperCase()}`) {
+  return { carrier: "GriipBuddy demo courier", trackingReference };
 }

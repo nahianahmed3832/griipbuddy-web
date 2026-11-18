@@ -1,0 +1,12 @@
+services:
+  api:
+    env_file:
+      - /opt/griipbuddy-hybrid-demo/inventory-api.env
+    networks:
+      hybrid-inventory:
+        aliases: [hybrid-inventory-api]
+
+networks:
+  hybrid-inventory:
+    name: griipbuddy-hybrid-inventory_bridge
+    external: true

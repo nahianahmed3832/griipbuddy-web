@@ -3,6 +3,10 @@ import type { Prisma } from "../../generated/prisma/client.ts";
 import { variantQuantities } from "../cart/model.ts";
 import { getDb } from "../db/client.ts";
 import { lockFulfillmentOrder, OperationError, type FulfillmentActor } from "../staff/operations.ts";
+import {
+  ensureNoPendingWarehousePosting, postWarehouseMovement, recordWarehouseReturnCost, runWarehouseOperation,
+  warehouseFingerprint, warehouseRefusedKey, warehouseReturnRequest, warehouseTransactionOptions,
+} from "../staff/hybrid-warehouse.ts";
 import { uuid } from "./checkout-types.ts";
 import { isManualPaymentMethod } from "./manual-payment-methods.ts";
 
@@ -31,7 +35,7 @@ export async function receiveBangladeshRefusedParcel(actor: FulfillmentActor, or
   if (!parsed.success) throw new OperationError("Choose how to handle the stock and enter a warehouse note (3 to 500 characters).");
   const { disposition, note } = parsed.data;
 
-  return getDb().$transaction(async tx => {
+  return runWarehouseOperation(complete => getDb().$transaction(async tx => {
     const { order, actorId } = await lockFulfillmentOrder(tx, actor, orderId, { bangladeshOnly: true, returns: true });
     const shipment = await tx.bangladeshShipment.findUnique({ where: { orderId }, select: { status: true } });
     if (order.status !== "PLACED" || order.fulfillmentStatus !== "SHIPPED" || shipment?.status !== "REFUSED") {
@@ -49,14 +53,25 @@ export async function receiveBangladeshRefusedParcel(actor: FulfillmentActor, or
       throw new OperationError("The payment status needs review before recording this receipt.");
     }
 
+    const key = warehouseRefusedKey(orderId);
+    await ensureNoPendingWarehousePosting(tx, orderId, key);
+    const request = await warehouseReturnRequest(tx, orderId, orderId,
+      order.items.map(item => ({ itemId: item.id, quantity: item.quantity })), disposition,
+      typeof actor === "string" ? { ownerActorId: actorId } : { operatorId: actor.id });
+    const posting = request && await postWarehouseMovement(tx, { key,
+      fingerprint: warehouseFingerprint([disposition, note]), request }, complete);
+    if (posting && !("evidence" in posting)) return posting;
+    const movement = posting?.evidence;
     const restockedUnits = disposition === "RESTOCK" ? await restoreBangladeshInventory(tx, order.items) : 0;
     const receipt = await tx.bangladeshRefusedParcelReceipt.create({
-      data: { orderId, receivedById: actorId, disposition, restockedUnits, note },
+      data: { orderId, receivedById: actorId, disposition, restockedUnits, note,
+        ...(movement && { receivedAt: new Date(movement.recordedAt) }) },
       select: { disposition: true, restockedUnits: true },
     });
+    await recordWarehouseReturnCost(tx, movement, restockedUnits, { refusedOrderId: orderId });
     await tx.auditEvent.create({
       data: { actorId, target: orderId, action: "BD_REFUSED_PARCEL_RECEIVED", changes: { disposition, restockedUnits } },
     });
     return receipt;
-  });
+  }, warehouseTransactionOptions));
 }

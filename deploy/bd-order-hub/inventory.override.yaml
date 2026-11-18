@@ -1,0 +1,11 @@
+services:
+  app:
+    env_file:
+      - /opt/griipbuddy-hybrid-demo/inventory.env
+    networks:
+      - hybrid-inventory
+
+networks:
+  hybrid-inventory:
+    name: griipbuddy-hybrid-inventory_bridge
+    external: true

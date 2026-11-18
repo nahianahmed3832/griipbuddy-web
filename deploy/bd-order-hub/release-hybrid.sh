@@ -56,6 +56,14 @@ if docker inspect --format '{{ range $name,$network := .NetworkSettings.Networks
     griipbuddy-hybrid-demo-app-1 | grep -Fxq griipbuddy-bd-order-hub_bridge; then
   prior+=(-f "$previous/deploy/bd-order-hub/next.override.yaml")
 fi
+if [[ -s "$root/inventory.env" ]]; then
+  [[ $(docker network inspect --format '{{.Internal}}' griipbuddy-hybrid-inventory_bridge) == true ]]
+  candidate+=(-f "$release/deploy/bd-order-hub/inventory.override.yaml")
+  if docker inspect --format '{{ range $name,$network := .NetworkSettings.Networks }}{{println $name}}{{end}}' \
+      griipbuddy-hybrid-demo-app-1 | grep -Fxq griipbuddy-hybrid-inventory_bridge; then
+    prior+=(-f "$previous/deploy/bd-order-hub/inventory.override.yaml")
+  fi
+fi
 APP_REVISION="$revision" "${candidate[@]}" config --quiet
 
 backup="$root/backups/order-hub-$(date -u +%Y%m%dT%H%M%SZ)-$expected"

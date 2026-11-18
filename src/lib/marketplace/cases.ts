@@ -6,6 +6,10 @@ import { purchaseCaseOptions } from "../commerce/order-return-terms.ts";
 import { getDb, type DbReader } from "../db/client.ts";
 import { authorize, cancelLockedUnshippedOrder, lockFulfillmentOrder, lockProductEdits, OperationError } from "../staff/operations.ts";
 import type { DevAdminFulfillmentOperator, DevAdminOrderCommand } from "../staff/dev-admin-order-proof.ts";
+import {
+  ensureNoPendingWarehousePosting, postWarehouseMovement, recordWarehouseReturnCost, runWarehouseOperation,
+  warehouseFingerprint, warehouseReturnKey, warehouseReturnRequest, warehouseTransactionOptions,
+} from "../staff/hybrid-warehouse.ts";
 import { eligibleExchangeVariants, exchangeSource, type ExchangeSource } from "./case-exchange.ts";
 import {
   activeCaseStatuses, caseActorRole, mayCancelBangladeshOrderImmediately, mayRequestBangladeshCancellation, mayRequestCancellation,
@@ -200,17 +204,23 @@ async function lockDevAdminReturn(tx: Prisma.TransactionClient, actor: DevAdminC
   return actorId;
 }
 
-function ownerCaseTransaction<T>(actor: CaseOperator, caseId: string, work: (tx: Prisma.TransactionClient, actorId: string) => Promise<T>) {
+function ownerCaseTransaction<T>(actor: CaseOperator, caseId: string,
+  work: (tx: Prisma.TransactionClient, actorId: string) => Promise<T>, postingKey?: string) {
   return getDb().$transaction(async tx => {
-    if (actor.role === "dev-admin") return work(tx, await lockDevAdminReturn(tx, actor, caseId));
+    if (actor.role === "dev-admin") {
+      const actorId = await lockDevAdminReturn(tx, actor, caseId);
+      await ensureNoPendingWarehousePosting(tx, actor.orderId, postingKey);
+      return work(tx, actorId);
+    }
     await authorize(tx, actor.id, true, actor.market);
     const found = await tx.orderCase.findFirst({ where: { id: caseId, order: { marketId: actor.market } },
       select: { orderId: true, order: { select: { marketId: true } } } });
     if (!found) throw new OrderCaseError("Case not found.", 404);
     await authorize(tx, actor.id, true, found.order.marketId);
     await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${found.orderId}::uuid FOR UPDATE`;
+    await ensureNoPendingWarehousePosting(tx, found.orderId, postingKey);
     return work(tx, actor.id);
-  });
+  }, postingKey ? warehouseTransactionOptions : undefined);
 }
 
 async function progressRefund(actor: CaseOperator, command: RefundCommand) {
@@ -359,6 +369,7 @@ async function openOrderCase(actor: CaseOperator, command: OpenCommand, photo?: 
       select: { ...cancellationOrder, returnTerms: true, items: { select: { ...exchangeSource, quantity: true } } },
     });
     if (!order) throw new OrderCaseError("Order not found.", 404);
+    await ensureNoPendingWarehousePosting(tx, orderId);
     const options = purchaseCaseOptions(order);
     const merchandise = merchandiseKinds.some(merchandiseKind => merchandiseKind === kind);
     if (kind === "RETURN") {
@@ -438,11 +449,13 @@ async function updateOrderCase(actor: CaseOperator, command: UpdateCommand) {
     const where = { id: command.caseId, ...(actor.role === "dev-admin" && { orderId: actor.orderId, kind: "RETURN" as const }),
       order: { ...(actor.role === "shopper" && { shopperId: actorId }), marketId: actor.market } };
     const existingCase = await tx.orderCase.findFirst({
-      where, select: { id: true, kind: true, status: true, revision: true, order: { select: { status: true, marketId: true } },
+      where, select: { id: true, kind: true, status: true, revision: true, orderId: true, order: { select: { status: true, marketId: true } },
         _count: { select: { returnLines: true } } },
     });
     if (!existingCase) throw new OrderCaseError("Case not found.", 404);
     if (actor.role === "owner") await authorize(tx, actorId, true, existingCase.order.marketId);
+    if (actor.role !== "dev-admin") await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${existingCase.orderId}::uuid FOR UPDATE`;
+    await ensureNoPendingWarehousePosting(tx, existingCase.orderId);
     if (existingCase.revision !== command.revision) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
     const allowed = command.action === "withdraw" ? mayWithdrawCase(existingCase.status)
       : command.action === "reply" || command.action === "respond" ? activeCaseStatuses.some(status => status === existingCase.status)
@@ -466,7 +479,9 @@ async function updateOrderCase(actor: CaseOperator, command: UpdateCommand) {
 
 async function receiveOrderCase(actor: CaseOperator, command: ReceiveCommand) {
   if (command.confirmed !== true) throw new OrderCaseError("Confirm receipt of the physical items first.", 400);
-  return ownerCaseTransaction(actor, command.caseId, async (tx, actorId) => {
+  const key = warehouseReturnKey(command.caseId);
+  const fingerprint = warehouseFingerprint([command.revision, command.disposition]);
+  return runWarehouseOperation(complete => ownerCaseTransaction(actor, command.caseId, async (tx, actorId) => {
     const orderCase = await tx.orderCase.findUnique({
       where: { id: command.caseId },
       select: {
@@ -478,6 +493,10 @@ async function receiveOrderCase(actor: CaseOperator, command: ReceiveCommand) {
       },
     });
     if (!orderCase) throw new OrderCaseError("Case not found.", 404);
+    if (orderCase.returnReceivedAt) {
+      const posting = await tx.hybridWarehousePosting.findUnique({ where: { key }, select: { fingerprint: true, completedAt: true } });
+      if (posting?.completedAt && posting.fingerprint === fingerprint) return { id: orderCase.id };
+    }
     if (orderCase.revision !== command.revision) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
     if (!merchandiseKinds.some(kind => kind === orderCase.kind) || orderCase.status !== "RETURN_APPROVED" || orderCase.returnReceivedAt ||
         orderCase.order.marketId !== "bd" || !mayRequestReturn(orderCase.order) || !orderCase.returnLines.length) {
@@ -490,11 +509,18 @@ async function receiveOrderCase(actor: CaseOperator, command: ReceiveCommand) {
       throw new OrderCaseError("Returned quantities no longer match the order. No receipt or stock change was saved.", 409);
     }
 
+    const request = await warehouseReturnRequest(tx, orderCase.order.id, orderCase.id,
+      lines.map(line => ({ itemId: line.orderItemId, quantity: line.quantity })), command.disposition,
+      actor.role === "dev-admin" ? { operatorId: actor.operator.id } : { ownerActorId: actorId });
+    const posting = request && await postWarehouseMovement(tx, { key, fingerprint, request }, complete);
+    if (posting && !("evidence" in posting)) return posting;
+    const movement = posting?.evidence;
     const status = "RETURN_RECEIVED";
     const revision = command.revision + 1;
     const result = await tx.orderCase.updateMany({
       where: { id: orderCase.id, revision: command.revision },
-      data: { status, revision, returnReceivedAt: new Date(), returnReceivedById: actorId, returnDisposition: command.disposition },
+      data: { status, revision, returnReceivedAt: movement ? new Date(movement.recordedAt) : new Date(),
+        returnReceivedById: actorId, returnDisposition: command.disposition },
     });
     if (result.count !== 1) throw new OrderCaseError("This case changed. Refresh the page and try again.", 409);
     let restockedUnits = 0;
@@ -507,6 +533,7 @@ async function receiveOrderCase(actor: CaseOperator, command: ReceiveCommand) {
         throw error;
       }
     }
+    await recordWarehouseReturnCost(tx, movement, restockedUnits, { caseId: orderCase.id });
     await tx.orderCaseEvent.create({ data: { caseId: orderCase.id, status, revision, actorId } });
     await tx.auditEvent.create({
       data: { actorId, action: "BD_RETURN_CASE_RECEIVED", target: orderCase.id, changes: {
@@ -514,6 +541,9 @@ async function receiveOrderCase(actor: CaseOperator, command: ReceiveCommand) {
       } },
     });
     return { id: orderCase.id };
+  }, key)).catch(error => {
+    if (error instanceof OperationError) throw new OrderCaseError(error.message, error.status);
+    throw error;
   });
 }
 

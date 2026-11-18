@@ -5,6 +5,7 @@ import type { DbReader } from "../db/client.ts";
 import { bangladeshStaffTrackingHistory } from "../commerce/bangladesh-shipment.ts";
 import { storeShop } from "../marketplace/constants.ts";
 import { hybridDemoMode } from "../release-config.ts";
+import { dispatchEvidence, warehouseDispatchKey, warehouseVariant } from "./hybrid-warehouse-evidence.ts";
 
 const tokenFormat = /^[a-f0-9]{64}$/;
 const idFormat = z.uuid();
@@ -57,7 +58,7 @@ const detail = {
     status: true, type: true, createdAt: true, actor: { select: { name: true } },
   } },
 } satisfies Prisma.OrderSelect;
-const reportItem = { ...itemSnapshot, variantId: true, variant: { select: { productId: true, inventory: { select: { available: true } },
+const reportItem = { ...itemSnapshot, id: true, variantId: true, variant: { select: { productId: true, inventory: { select: { available: true } },
   product: { select: { department: { select: { id: true, name: true } } } },
 } } } satisfies Prisma.OrderItemSelect;
 const reportingSummary = {
@@ -67,8 +68,8 @@ const reportingSummary = {
     events: { select: { status: true, recordedAt: true } },
   } },
   events: { where: { type: "STATUS_CHANGED" }, select: { status: true, createdAt: true } },
-  cases: { where: currentReturnCases, select: {
-    status: true, returnReceivedAt: true, refundConfirmedAt: true, refundAmountMinor: true, createdAt: true,
+  cases: { where: { OR: [currentReturnCases, { kind: "EXCHANGE", replacementTrackingReference: { not: null } }] }, select: {
+    kind: true, status: true, returnReceivedAt: true, refundConfirmedAt: true, refundAmountMinor: true, createdAt: true,
     returnLines: { select: { quantity: true, orderItem: { select: reportItem } } },
   } },
 } satisfies Prisma.OrderSelect;
@@ -82,7 +83,8 @@ const workspace = z.object({
 }).strict().refine(value => !value.from || !value.to || value.from <= value.to);
 const reporting = z.object({
   view: z.literal("reporting"), locations: warehouseIds.optional(), from: z.iso.date().optional(), to: z.iso.date().optional(),
-  active: z.literal("1").optional(), costs: z.literal("1").optional(),
+  active: z.literal("1").optional(), costs: z.literal("1").optional(), profit: z.literal("1").optional(),
+  warehouseSince: z.iso.datetime().optional(),
 }).strict().refine(value => !value.from || !value.to || value.from <= value.to);
 type OrderQuery = { kind: "detail"; id: string; costs?: boolean; operations?: boolean; warehouse?: string } | { kind: "list"; limit: number; search: string; after?: Cursor } |
   { kind: "workspace"; filters: z.infer<typeof workspace> } | { kind: "reporting"; filters: z.infer<typeof reporting> };
@@ -190,7 +192,7 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
   }
 
   if (query.kind === "reporting") {
-    const { from, to, active, locations, costs } = query.filters;
+    const { from, to, active, locations, costs, profit, warehouseSince } = query.filters;
     const range = { ...(from && { gte: new Date(from + "T00:00:00.000+06:00") }),
       ...(to && { lte: new Date(to + "T23:59:59.999+06:00") }) };
     const dated: Prisma.OrderWhereInput[] = from || to ? [
@@ -205,15 +207,32 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
       { cases: { some: { kind: "RETURN", status: { in: ["OPEN", "IN_REVIEW", "RETURN_APPROVED"] } } } },
     ] : [];
     const matched = [...dated, ...current];
-    const returnCost = costs === "1" && { select: { amountMinor: true } };
+    const returnCost = (costs === "1" || profit === "1") && { select: { amountMinor: true } };
     const rows = await db.order.findMany({ where: { ...devAdminOrderScope,
-      ...(locations && { shippingWarehouseId: { in: locations } }), ...(matched.length && { OR: matched }) },
+      ...(locations && { shippingWarehouseId: { in: locations } }), ...(matched.length && { OR: matched }),
+      ...(warehouseSince && { updatedAt: { gte: new Date(warehouseSince) } }) },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: workspaceLimit + 1, select: {
         ...reportingSummary,
+        updatedAt: Boolean(warehouseSince), cancelledAt: Boolean(warehouseSince),
+        warehousePostings: { where: { completedAt: { not: null }, key: { startsWith: "dispatch:" } },
+          select: { key: true, evidence: true } },
         bangladeshRefusedParcelReceipt: { select: { ...reportingSummary.bangladeshRefusedParcelReceipt.select, returnCost } },
         cases: { ...reportingSummary.cases, select: { ...reportingSummary.cases.select, returnDisposition: true, returnCost } },
       } });
-    return { reportOrders: rows.length > workspaceLimit ? [] : rows.map(orderSummary), tooMany: rows.length > workspaceLimit };
+    return { reportOrders: rows.length > workspaceLimit ? [] : rows.map(({ warehousePostings, cases, ...row }) => {
+      const posting = warehousePostings.find(({ key }) => key === warehouseDispatchKey(row.id));
+      const dispatch = dispatchEvidence(posting?.evidence);
+      const recorded = dispatch?.orderId === row.id && dispatch.warehouseId === row.shippingWarehouseId ? dispatch : null;
+      const quantities = new Map(recorded?.lines.map(({ itemId, quantity }) => [itemId, quantity]));
+      const covered = recorded && !cases.some(entry => entry.kind === "EXCHANGE") &&
+        quantities.size === row.items.length && row.items.every(item => quantities.get(item.id) === item.quantity);
+      const pendingRestock = recorded && row.bangladeshShipment?.status === "REFUSED" && !row.bangladeshRefusedParcelReceipt;
+      return { ...orderSummary({ ...row, cases: cases.filter(entry => entry.kind === "RETURN") }), warehouseInventoryRecorded: Boolean(recorded),
+        warehouseStockExpected: row.items.some(item => warehouseVariant.test(item.variantId)),
+        ...(profit === "1" && { purchaseCostMinor: covered ? recorded.costMinor : null }),
+        ...(pendingRestock && { warehouseUnitsPendingRestock: recorded.lines.reduce((sum, line) => sum + line.quantity, 0) }),
+      };
+    }), tooMany: rows.length > workspaceLimit };
   }
 
   const { limit, search, after } = query;
