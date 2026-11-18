@@ -13,3 +13,8 @@ export function accountText(language: AccountLanguage, english: string, bangla: 
 export function accountMarketName(language: AccountLanguage, market: MarketId) {
   return accountText(language, markets[market].name, markets[market].nameBn);
 }
+
+export function accountInitials(name: string) {
+  const graphemes = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+  return name.trim().split(/\s+/u, 2).map(word => graphemes?.segment(word).containing(0)?.segment ?? Array.from(word)[0]).join("").toUpperCase();
+}

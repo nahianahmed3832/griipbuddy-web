@@ -2,6 +2,7 @@ import Link from "next/link";
 import { customerOrderDate, customerOrderMoney } from "@/lib/commerce/account-order";
 import { accountText, type AccountLanguage } from "@/lib/marketplace/account-language";
 import type { LegacyOrder } from "@/lib/marketplace/bd-order-hub-bridge";
+import { OrderDocumentLink } from "./order-document-link";
 
 const banglaStatuses: Record<string, string> = {
   HANDED_OVER_TO_COURIER: "কুরিয়ারে দেওয়া হয়েছে", IN_TRANSIT: "পথে আছে", DELIVERED: "ডেলিভারি সম্পন্ন",
@@ -51,6 +52,8 @@ export function LegacyOrderRow({ order, href, language }: { order: LegacyOrder; 
         {order.items.slice(0, 3).map((item, index) => <li key={index}>{item.name} × {count.format(item.quantity)}</li>)}
         {remaining > 0 && <li>{accountText(language, "More items", "আরও পণ্য")} · {count.format(remaining)}</li>}
       </ul>}
+      <div className="account-order-actions"><OrderDocumentLink orderPath={`/orders/history/${order.kind}/${order.id}`}
+        reference={order.reference} kind="order-summary" language={language} /></div>
     </div>
     <LegacyOrderSummary order={order} language={language} />
   </li>;

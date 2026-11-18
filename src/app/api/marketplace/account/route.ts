@@ -9,7 +9,9 @@ import { currentMarket, storefrontMarketAllowed } from "@/lib/market-server";
 import { currentAccountLanguage } from "@/lib/marketplace/account-language-server";
 import { getShopper } from "@/lib/marketplace/auth";
 import { accountLanguageCookie } from "@/lib/marketplace/account-language";
+import { bdOrderHubConfig } from "@/lib/marketplace/bd-order-hub-bridge";
 import { storeShop } from "@/lib/marketplace/constants";
+import { markShopOrderNotificationsRead, orderNoticeKey, orderNoticePageSize } from "@/lib/marketplace/order-notification-inbox";
 
 const market = z.enum(marketIds);
 const schema = z.discriminatedUnion("action", [
@@ -17,6 +19,8 @@ const schema = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("profile"), market, displayName: z.string().trim().min(2).max(65).regex(/^[^\p{Cc}]+$/u) }),
   z.strictObject({ action: z.literal("marketing"), market, enabled: z.boolean() }),
   z.strictObject({ action: z.literal("request-deletion"), market }),
+  z.strictObject({ action: z.literal("read-order-notifications"), market: z.literal("bd"),
+    keys: z.array(orderNoticeKey).min(1).max(orderNoticePageSize) }),
 ]);
 
 const reply = (data: object, status = 200) => NextResponse.json(data, { status, headers: privateHeaders });
@@ -33,6 +37,12 @@ export async function POST(request: Request) {
     return reply({ code: "invalid" }, 422);
   }
   const shopper = await getShopper();
+  if (command.action === "read-order-notifications") {
+    if (marketId !== "bd" || !bdOrderHubConfig()) return reply({}, 404);
+    if (!shopper) return reply({ code: "sign-in" }, 401);
+    await markShopOrderNotificationsRead(shopper.id, command.keys);
+    return reply({ ok: true });
+  }
   if (!shopper && command.action !== "language") return reply({ code: "sign-in" }, 401);
   if (shopper) {
     const shopperId = shopper.id;

@@ -2,20 +2,23 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { CircleCheck } from "lucide-react";
+import { Bell, CircleCheck } from "lucide-react";
 import { OrderBreakdown, PurchasedItems } from "@/components/order-summary";
 import { SavePrivateOrderLink } from "@/components/order-recovery";
+import { OrderDocumentLink } from "@/components/marketplace/order-document-link";
 import { markets } from "@/config/markets";
 import { marketStoreHref } from "@/config/regional-path";
 import { store } from "@/config/store";
 import { storefrontPath } from "@/config/storefront-path";
 import { guestCookie, readGuestKey } from "@/lib/commerce/guest";
 import { cashDueOnDelivery, customerOrderDate, customerOrderMoney, customerOrderState, customerOrderStatus, customerPaymentStatus, customerPaymentMethod } from "@/lib/commerce/account-order";
+import { bangladeshOrderDocumentKind } from "@/lib/commerce/bd-order-document";
 import { guestOrder, visibleOrderMarket } from "@/lib/commerce/orders";
 import { orderRecoveryEnabled, receiptAccessCookie, recoveredReceiptGuestKey } from "@/lib/commerce/order-recovery";
 import { recordedReturnTerms } from "@/lib/commerce/order-return-terms";
 import { integratedCheckout, readRecoveredOrder } from "@/lib/commerce/integrated-checkout";
 import { getShopper } from "@/lib/marketplace/auth";
+import { bdOrderHubConfig } from "@/lib/marketplace/bd-order-hub-bridge";
 import { getDb } from "@/lib/db/client";
 import { currentMarket } from "@/lib/market-server";
 import { hybridDemoMode, marketplaceMode } from "@/lib/release-config";
@@ -92,6 +95,7 @@ export default async function ConfirmationPage({ params, searchParams }: {
   const manualDeclined = payment && isManualPaymentMethod(payment.method) && payment.status === "VOIDED";
   const cashDue = cashDueOnDelivery(order);
   const owned = marketplace && nativeOrder && shopper && nativeOrder.shopperId === shopper.id;
+  const showOrderUpdates = owned && active.id === "bd" && order.marketId === "bd" && Boolean(bdOrderHubConfig());
   const initialItemId = owned && uuid.safeParse(selected.item).data;
   const [shops, reviewItems, existingReviews] = owned ? await Promise.all([
     getDb().marketplaceShop.findMany({ where: { id: { in: [...new Set(nativeOrder.items.map(item => item.marketplaceShopId ?? storeShop.id))] }, published: true }, select: { id: true, name: true } }),
@@ -116,6 +120,13 @@ export default async function ConfirmationPage({ params, searchParams }: {
         {owned && order.marketId === "bd" && <a className="text-link" href="#order-support">
           {t("Manage this order", "এই অর্ডার পরিচালনা করুন")}
         </a>}
+        {showOrderUpdates && <div className="order-detail-actions">
+          <Link className="button button--outline order-updates-link" href={orderHref(`/account/notifications?order=${id}`)}>
+            <Bell size={17} aria-hidden="true" />{t("Updates for this order", "এই অর্ডারের আপডেট")}
+          </Link>
+          {order.currency === "BDT" && <OrderDocumentLink orderPath={`/orders/${id}`} reference={order.reference}
+            kind={bangladeshOrderDocumentKind(payment)} language={language} className="button button--outline" />}
+        </div>}
         {usSandbox && <p>United States · PayPal sandbox</p>}
       </div>
       <div className="commerce-layout">
