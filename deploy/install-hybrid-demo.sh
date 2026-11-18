@@ -175,6 +175,11 @@ if account_profile not in config:
     assert config.count(marker) == 1
     config = config.replace(marker, marker + account_profile + "\n", 1)
 
+catalog_video = r"    ~^POST:/api/(staff/catalog-video|marketplace/listing-video)$ 0;"
+if catalog_video not in config:
+    assert config.count(marker) == 1
+    config = config.replace(marker, marker + catalog_video + "\n", 1)
+
 candidate.write_text(config)
 PY
 

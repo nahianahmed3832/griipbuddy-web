@@ -99,8 +99,15 @@ test("variant selection, gallery, cart persistence and market switch", async ({ 
   await page.goto(tote);
   await expect(page.getByRole("heading", { level: 1, name: "Canvas Carryall Tote" })).toBeVisible();
   await expect(page.getByText("৳1,250", { exact: false }).first()).toBeVisible();
-  await page.getByRole("button", { name: /View image .*stitching/ }).click();
-  await expect(page.getByRole("img", { name: "Detail of the stitching on the plum canvas tote handle" })).toBeVisible();
+  const gallery = page.getByRole("region", { name: "Product media" });
+  if (info.project.name === "narrow-mobile") {
+    await expect(gallery.getByRole("group", { name: "Choose product media" })).toBeHidden();
+    await gallery.getByRole("button", { name: "Next product media" }).click();
+  } else {
+    await gallery.getByRole("button", { name: /View image .*stitching/ }).click();
+  }
+  await expect(gallery.getByRole("img", { name: "Detail of the stitching on the plum canvas tote handle" })).toBeVisible();
+  await expect(gallery.getByRole("img")).toHaveCount(1);
   if (info.project.name === "desktop") {
     const plum = page.getByRole("radio", { name: "Plum", exact: true });
     await plum.focus();

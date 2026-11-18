@@ -28,6 +28,7 @@ export type Variant = {
   id: string;
   options: Readonly<Record<string, string>>;
   image?: CatalogImage;
+  videoUrl?: string;
 };
 
 export type MarketOffer = {
@@ -51,6 +52,7 @@ export type Product = {
   shortDescription?: string;
   keywords: readonly string[];
   images: readonly CatalogImage[];
+  videoUrl?: string;
   variants: readonly Variant[];
   addedOn: string;
   newArrival?: boolean;

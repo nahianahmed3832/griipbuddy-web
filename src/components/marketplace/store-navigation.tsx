@@ -4,12 +4,13 @@ import { ArrowUpRight, ChevronDown, ChevronRight, Compass, Heart, House, Menu, S
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { MarketId } from "@/config/markets";
 import { marketStoreHref, withoutRegionalPrefix } from "@/config/regional-path";
 import { storefrontPath } from "@/config/storefront-path";
 import type { DepartmentNode } from "@/lib/catalog/departments";
 import { useCartPricing } from "../cart-pricing";
+import { useDismissOutside } from "./use-dismiss-outside";
 
 function CategoryLinks({ departments, close, region }: { departments: readonly DepartmentNode[]; close: () => void; region?: MarketId }) {
   return <ul className="mp-category-children">
@@ -73,17 +74,15 @@ export function StoreCategoryMenu({ departments, region }: { departments: readon
   const [selected, select] = useState<string>();
   const active = departments.find(department => department.id === selected) ?? departments[0];
 
-  function close() {
-    if (disclosure.current) disclosure.current.open = false;
-  }
+  const close = useCallback(() => {
+    if (disclosure.current?.open) disclosure.current.open = false;
+  }, []);
+  useDismissOutside(disclosure, close);
 
   return (
     <details
       ref={disclosure}
       className="department-menu mp-store-categories"
-      onBlur={event => {
-        if (!event.currentTarget.contains(event.relatedTarget)) close();
-      }}
       onKeyDown={event => {
         if (event.key === "Escape" && event.currentTarget.open) {
           close();
@@ -108,6 +107,7 @@ export function StoreShopNavigation({ departments, showShops, dealLabel, region 
   region?: MarketId;
 }) {
   const panelId = useId();
+  const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLAnchorElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ triggerId: string; selectedId: string; focus?: boolean }>();
@@ -129,13 +129,12 @@ export function StoreShopNavigation({ departments, showShops, dealLabel, region 
     if (menu?.focus) panel.current?.querySelector<HTMLAnchorElement>(".mp-category-overview")?.focus();
   }, [menu]);
 
-  function close() { setMenu(undefined); }
+  const close = useCallback(() => setMenu(undefined), []);
+  useDismissOutside(container, close, open);
 
   return (
-    <div className="shell mp-shop-navigation" onPointerLeave={event => {
+    <div ref={container} className="shell mp-shop-navigation" onPointerLeave={event => {
       if (event.pointerType === "mouse" && !panel.current?.contains(document.activeElement)) close();
-    }} onBlur={event => {
-      if (!event.currentTarget.contains(event.relatedTarget)) close();
     }}>
       <nav className="mp-nav" aria-label="Shop navigation">
         <Link href={marketStoreHref("/shop", region)} onPointerEnter={close} onFocus={close} onClick={close}>Shop all</Link>

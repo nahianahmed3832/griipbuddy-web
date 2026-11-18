@@ -4,10 +4,11 @@ import Form from "next/form";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Search, Store, X } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { markets, type MarketId } from "@/config/markets";
 import { storefrontPath } from "@/config/storefront-path";
 import { localizedStoreHref, marketStoreHref, withoutRegionalPrefix } from "@/config/regional-path";
+import { useDismissOutside } from "./use-dismiss-outside";
 
 type Match = { id: string; name: string; slug: string };
 type Suggestion = { products: (Match & { variantId?: string })[]; shops: Match[] };
@@ -21,6 +22,7 @@ export function MarketplaceSearch({ query = "", firstParty = false, marketId }: 
   const inputId = useId();
   const listId = `${inputId}-suggestions`;
   const instructionsId = `${inputId}-instructions`;
+  const container = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const suggestions = useRef<HTMLUListElement>(null);
   const pendingArrow = useRef<"ArrowDown" | "ArrowUp" | null>(null);
@@ -55,10 +57,11 @@ export function MarketplaceSearch({ query = "", firstParty = false, marketId }: 
     }
   }, [matched]);
 
-  function closeSuggestions() {
+  const closeSuggestions = useCallback(() => {
     pendingArrow.current = null;
     setOpen(false);
-  }
+  }, []);
+  useDismissOutside(container, closeSuggestions, open);
 
   function navigateSuggestions(event: KeyboardEvent<HTMLDivElement>) {
     if (event.nativeEvent.isComposing || event.ctrlKey || event.altKey || event.metaKey) return;
@@ -88,8 +91,7 @@ export function MarketplaceSearch({ query = "", firstParty = false, marketId }: 
     else links[Math.min(index + (event.key === "ArrowDown" ? 1 : -1), links.length - 1)]?.focus();
   }
 
-  return <div className="mp-search" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) closeSuggestions(); }}
-    onKeyDown={navigateSuggestions}>
+  return <div ref={container} className="mp-search" onKeyDown={navigateSuggestions}>
     <Form action={searchPath} className="search-form" role="search" aria-label={firstParty ? "Store search" : "Marketplace search"} onSubmit={closeSuggestions}>
       {marketId && !markets[marketId].pathPrefix && <input type="hidden" name="market" value={marketId} />}
       <label htmlFor={inputId} className="sr-only">{firstParty ? "Search products" : "Search for items or shops"}</label>

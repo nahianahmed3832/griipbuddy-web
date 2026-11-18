@@ -166,6 +166,7 @@ model Product {
   revision       Int                 @default(0)
   personalizationPrompt String? @db.VarChar(180)
   personalizationRequired Boolean @default(false)
+  videoUrl       String?
   images         ProductImage[]
   variants       Variant[]
   collections    CollectionProduct[]
@@ -178,11 +179,13 @@ model Product {
   @@index([departmentId])
   @@index([publication, position])
   @@index([marketplaceShopId, publication])
+  @@index([videoUrl])
 }
 
 model CatalogMedia {
   id        String   @id @db.Char(64)
   data      Bytes
+  contentType String @default("image/webp")
   createdAt DateTime @default(now())
 }
 
@@ -232,6 +235,7 @@ model Variant {
   label     String
   imageSrc  String?
   imageAlt  String?
+  videoUrl  String?
   position  Int
   active    Boolean       @default(true)
   inventory Inventory?
@@ -240,6 +244,7 @@ model Variant {
 
   @@index([productId])
   @@index([imageSrc])
+  @@index([videoUrl])
 }
 
 model Collection {

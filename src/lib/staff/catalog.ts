@@ -6,6 +6,7 @@ import { getDb, type DbReader } from "../db/client.ts";
 import type { Specification } from "../catalog/types.ts";
 import { mergeCatalogIdentifiers, productIdField, productInput, validationMessage, type ProductInput, type VariantInput } from "./catalog-input.ts";
 import { missingImage } from "./catalog-media.ts";
+import { missingVideo } from "./catalog-video.ts";
 import { hybridStoreMode, productionMode } from "../release-config.ts";
 import { storeShop } from "../marketplace/constants.ts";
 import { authorize, lockProductEdits, OperationError } from "./operations.ts";
@@ -49,14 +50,16 @@ function asInput(row: ProductRow): ProductInput {
   return {
     id, slug, name, departmentId, description, keywords, images, publication, demo, featured, newArrival,
     ...(row.brand && { brand: row.brand }),
+    ...(row.videoUrl && { videoUrl: row.videoUrl }),
     ...(row.shortDescription && { shortDescription: row.shortDescription }),
     collectionIds: row.collections.map(({ collectionId }) => collectionId),
     specifications: row.specifications as Specification[],
-    variants: row.variants.map(({ sku, options, active, gtin, mpn, identifiersNotAssigned, imageSrc, imageAlt, offers }) => ({
+    variants: row.variants.map(({ sku, options, active, gtin, mpn, identifiersNotAssigned, imageSrc, imageAlt, videoUrl, offers }) => ({
       sku, options: options as Record<string, string>, active,
       ...(gtin && { gtin }),
       ...(mpn && { mpn }),
       ...(identifiersNotAssigned && { identifiersNotAssigned }),
+      ...(videoUrl && { videoUrl }),
       ...(imageSrc && imageAlt ? { image: { src: imageSrc, alt: imageAlt } } : {}),
       offers: offers.flatMap(({ marketId, currency, amountMinor, eligible }) =>
         isRetailMarketId(marketId) && markets[marketId].currency === currency ? [{ marketId, currency, amountMinor, eligible }] : []),
@@ -78,18 +81,21 @@ export async function ownerProduct(actorId: string, id: string) {
 function desiredVariant(input: VariantInput, prior?: VariantInput): VariantInput {
   const retained = prior?.offers.filter((offer) => !input.offers.some(({ marketId }) => marketId === offer.marketId)) ?? [];
   const offers = [...input.offers, ...retained.map((offer) => ({ ...offer, eligible: false }))];
-  const { gtin, mpn, identifiersNotAssigned, ...fields } = input;
+  const { gtin, mpn, identifiersNotAssigned, videoUrl, ...fields } = input;
+  const video = videoUrl === undefined ? prior?.videoUrl : videoUrl;
   return {
     ...fields, offers: offers.sort((a, b) => a.marketId.localeCompare(b.marketId)),
     ...(gtin && { gtin }),
     ...(mpn && { mpn }),
     ...(identifiersNotAssigned && { identifiersNotAssigned }),
+    ...(video && { videoUrl: video }),
   };
 }
 
 function desiredProduct(input: ProductInput, prior: ProductInput | null, source: "editor" | "csv"): ProductInput {
-  const { brand, ...fields } = input;
-  const product = { ...fields, collectionIds: [...input.collectionIds].sort(), ...(brand && { brand }) };
+  const { brand, videoUrl, ...fields } = input;
+  const video = videoUrl === undefined ? prior?.videoUrl : videoUrl;
+  const product = { ...fields, collectionIds: [...input.collectionIds].sort(), ...(brand && { brand }), ...(video && { videoUrl: video }) };
   const variants = input.variants.map((item) => desiredVariant(item, prior?.variants.find(({ sku }) => sku === item.sku)));
   const omitted = prior?.variants.filter(({ sku }) => !variants.some((variant) => variant.sku === sku)) ?? [];
   if (source === "editor" && omitted.length) throw new OperationError("Deactivate an existing SKU to retire it.");
@@ -120,6 +126,8 @@ async function validateRelations(db: DbReader, product: ProductInput) {
   if (collision) throw new OperationError(`SKU ${collision.sku} already belongs to ${collision.productId}.`);
   const paths = [...product.images, ...product.variants.flatMap(({ image }) => image ? [image] : [])].map(({ src }) => src);
   if (await missingImage(db, paths)) throw new OperationError("An image path does not exist. Upload the image or select a bundled catalog image.");
+  const videos = [product.videoUrl, ...product.variants.map(({ videoUrl }) => videoUrl)];
+  if (await missingVideo(db, videos)) throw new OperationError("A video could not be found. Upload the video again.");
 }
 
 async function prepareProduct(db: DbReader, raw: unknown, source: "editor" | "csv", row: ProductRow | null) {
@@ -200,7 +208,8 @@ export async function saveProduct(
           throw new OperationError("Approve this seller for each market enabled on the listing before publishing.");
         }
       }
-      const data = { ...fields, brand: fields.brand ?? null, shortDescription: fields.shortDescription || null, publication, active: publication === "ACTIVE" };
+      const data = { ...fields, brand: fields.brand ?? null, videoUrl: fields.videoUrl ?? null,
+        shortDescription: fields.shortDescription || null, publication, active: publication === "ACTIVE" };
       const updated = await tx.product.upsert({
         where: { id }, create: { ...data, addedOn: new Date(), position: 10000 },
         update: { ...data, revision: { increment: 1 } },
@@ -217,6 +226,7 @@ export async function saveProduct(
           options: variant.options, label: Object.values(variant.options).join(" / ") || "Standard", active: variant.active, position,
           gtin: variant.gtin ?? null, mpn: variant.mpn ?? null, identifiersNotAssigned: variant.identifiersNotAssigned ?? false,
           imageSrc: variant.image?.src ?? null, imageAlt: variant.image?.alt ?? null,
+          videoUrl: variant.videoUrl ?? null,
         };
         await tx.variant.upsert({
           where: { id: variantId }, update: variantData,

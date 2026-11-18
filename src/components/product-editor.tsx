@@ -8,6 +8,7 @@ import { marketList } from "@/config/markets";
 import { MAX_GALLERY_IMAGES, readMarketOffer, type ProductInput, type VariantInput } from "@/lib/staff/catalog-input";
 import { postMerchandising } from "@/lib/staff/merchandising-client";
 import { CatalogImageField } from "./catalog-image-field";
+import { CatalogVideoField } from "./catalog-video-field";
 
 type Choice = { id: string; name: string };
 const subscribeToHydration = () => () => {};
@@ -56,6 +57,10 @@ function VariantFields({ name, variant, remove }: { name: string; variant?: Vari
         <summary>Variant image</summary>
         <CatalogImageField name={`${name}.image`} src={variant?.image?.src} alt={variant?.image?.alt} />
       </details>
+      <details open={variant?.videoUrl ? true : undefined}>
+        <summary>Variant video</summary>
+        <CatalogVideoField name={`${name}.videoUrl`} original={variant?.videoUrl} />
+      </details>
       {!variant && <button className="link-button" type="button" onClick={remove}>Remove new variant</button>}
     </fieldset>
   );
@@ -94,6 +99,7 @@ export function ProductEditor({ existing, departments, collections, production, 
           demo: reviewDraft ? original?.demo ?? true : form.has("demo"),
         featured: form.has("featured"), newArrival: form.has("newArrival"),
         images: images.map(({ key }) => image(`image.${key}`)),
+        videoUrl: text("videoUrl") || null,
         variants: variants.map(({ key }) => {
           const name = `variant.${key}`;
           const pairs = asPairs(text(`${name}.options`));
@@ -105,6 +111,7 @@ export function ProductEditor({ existing, departments, collections, production, 
             identifiersNotAssigned: changedInputs.current.has(`${name}.identifiersNotAssigned`) ? form.has(`${name}.identifiersNotAssigned`) : undefined,
             options: Object.fromEntries(pairs.map(({ label, value }) => [label, value])),
             ...(photo.src || photo.alt ? { image: photo } : {}),
+            videoUrl: text(`${name}.videoUrl`) || null,
             offers: marketList.flatMap(({ id }) => readMarketOffer(id, form.get(`${name}.${id}.price`), form.has(`${name}.${id}.eligible`))),
           };
         }),
@@ -176,6 +183,10 @@ export function ProductEditor({ existing, departments, collections, production, 
       </fieldset>
       <fieldset className="commerce-panel commerce-form" disabled={disabled}>
         <legend>Gallery</legend>
+        <fieldset className="catalog-fields">
+          <legend>Product video</legend>
+          <CatalogVideoField name="videoUrl" original={original?.videoUrl} />
+        </fieldset>
         {images.map(({ key, image }) => <div className="catalog-fields" key={key}>
           <CatalogImageField name={`image.${key}`} src={image?.src} alt={image?.alt} required />
           <button className="link-button" type="button" onClick={() => setImages((rows) => rows.filter((row) => row.key !== key))}>Remove gallery image</button>

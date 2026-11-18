@@ -4,6 +4,7 @@ import { storefrontPath } from "@/config/storefront-path";
 import { marketList, markets, type MarketId } from "@/config/markets";
 import type { MarketGrantStatus } from "@/lib/marketplace/market-grants";
 import { MAX_PERSONALIZATION_PROMPT, type Personalization } from "@/lib/catalog/personalization";
+import { videoUploadLimit } from "@/lib/catalog/video";
 import { MarketplaceForm, useMarketplaceSubmission } from "./action-form";
 
 type Shop = { name: string; about: string; announcement: string };
@@ -87,6 +88,36 @@ export function ListingPhotoForm({ product }: { product: string }) {
     <label>Listing photo<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required/></label>
     <label>Photo description<input name="alt" maxLength={180} required/></label>
     <button className="button button--primary" disabled={save.pending}>Upload photo</button>{save.feedback}
+  </form>;
+}
+
+export function ListingVideoForm({ product, variant, label, src }: {
+  product: string; variant?: string; label: string; src: string | null;
+}) {
+  const save = useMarketplaceSubmission();
+
+  async function changeVideo(action: "upload" | "remove", file?: FormDataEntryValue | null) {
+    const query = new URLSearchParams({ product, action, ...(variant && { variant }) });
+    return save.submit(async () => {
+      const video = file instanceof File ? file : undefined;
+      if (action === "upload" && (!video?.size || video.size > videoUploadLimit)) throw new Error("Choose an MP4 video up to 4 MB.");
+      const response = await fetch(storefrontPath(`/api/marketplace/listing-video?${query}`), {
+        method: "POST", headers: video ? { "Content-Type": video.type } : undefined, body: video,
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message ?? "The video could not be saved.");
+    }, action === "upload" ? "Video saved." : "Video removed.");
+  }
+
+  return <form className="mp-form" onSubmit={async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (await changeVideo("upload", new FormData(form).get("video"))) form.reset();
+  }}>
+    {src && <video src={storefrontPath(src)} controls playsInline preload="none" width={240} aria-label={label} />}
+    <label>{label}<input type="file" accept="video/mp4,.mp4" name="video" required disabled={save.pending} /></label>
+    <button className="button button--primary" disabled={save.pending}>{src ? "Replace video" : "Upload video"}</button>
+    {src && <button type="button" className="button button--outline" disabled={save.pending} onClick={() => void changeVideo("remove")}>Remove video</button>}
+    {save.feedback}
   </form>;
 }
 

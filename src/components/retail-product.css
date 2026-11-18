@@ -1,4 +1,4 @@
-.retail-options { display: grid; gap: 19px; }
+.retail-options { display: grid; gap: 19px; margin-top: 16px; }
 .retail-option-group { border: 0; padding: 0; margin: 0; min-width: 0; }
 .retail-option-group legend { font-size: 16px; font-weight: 750; margin-bottom: 8px; padding: 0; }
 .retail-option-group legend span { font-weight: 450; margin-left: 6px; }

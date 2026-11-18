@@ -82,12 +82,16 @@ import sys
 source, target = map(Path, sys.argv[1:])
 config = source.read_text()
 marker = 'map "$request_method:$uri" $griipbuddy_public_method_denied {\n'
-allowance = '    ~^POST:/api/marketplace/bd-orders$ 0;\n'
+allowances = (
+    '    ~^POST:/api/marketplace/bd-orders$ 0;\n',
+    '    ~^POST:/api/(staff/catalog-video|marketplace/listing-video)$ 0;\n',
+)
 assert config.count(marker) == 1
 assert config.count('server_name dev.griipbuddy.com;') == 2
 assert config.count('if ($griipbuddy_public_method_denied) { return 405; }') == 1
-if allowance not in config:
-    config = config.replace(marker, marker + allowance, 1)
+for allowance in allowances:
+    if allowance not in config:
+        config = config.replace(marker, marker + allowance, 1)
 target.write_text(config)
 PY
 

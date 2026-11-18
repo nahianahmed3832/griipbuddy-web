@@ -6,7 +6,7 @@ import { getShopper } from "@/lib/marketplace/auth";
 import { getDb } from "@/lib/db/client";
 import { storefrontPath } from "@/config/storefront-path";
 import { markets } from "@/config/markets";
-import { ListingForm, ListingPhotoForm } from "@/components/marketplace/seller";
+import { ListingForm, ListingPhotoForm, ListingVideoForm } from "@/components/marketplace/seller";
 
 export const metadata = { title: "Manage listing" };
 
@@ -24,7 +24,7 @@ export default async function SellerListing({ params }: { params: Promise<{ id: 
   const [departments, item] = await Promise.all([
     db.department.findMany({ select: { id: true, name: true }, orderBy: { position: "asc" } }),
     id === "new" ? null : db.product.findFirst({ where: { id, marketplaceShopId: shop.id }, include: {
-      images: { orderBy: { position: "asc" } }, variants: { orderBy: { position: "asc" }, take: 1,
+      images: { orderBy: { position: "asc" } }, variants: { orderBy: { position: "asc" },
         include: { inventory: true, offers: { where: hybrid ? { eligible: true } : { marketId: "bd" } } } },
     } }),
   ]);
@@ -59,6 +59,13 @@ export default async function SellerListing({ params }: { params: Promise<{ id: 
       </li>)}</ul>}
       {item.publication === "DRAFT" && item.images.length < 6 && <ListingPhotoForm product={item.id}/>}
       {item.publication === "DRAFT" && <p>Drafts stay private until a marketplace owner publishes the listing.</p>}
+    </section>}
+    {item?.publication === "DRAFT" && <section className="mp-section">
+      <h2>Listing videos</h2>
+      <p>Use an MP4 up to 4 MB. A variant video appears first for its option. The listing video is shared across other options.</p>
+      <ListingVideoForm product={item.id} label="Product video" src={item.videoUrl} />
+      {item.variants.filter(option => option.active && (option.videoUrl || Object.keys(option.options ?? {}).length > 0)).map(option =>
+        <ListingVideoForm key={option.id} product={item.id} variant={option.id} label={`${option.label} video`} src={option.videoUrl} />)}
     </section>}
   </div>;
 }

@@ -354,8 +354,7 @@ nav.mp-category-panel a:hover { background: #f2efeb; }
     min-height: 40px;
   }
 
-  .mp-store-categories .mp-category-chevron,
-  .mp-store-header .mp-header-saved {
+  .mp-store-categories .mp-category-chevron {
     display: none;
   }
 

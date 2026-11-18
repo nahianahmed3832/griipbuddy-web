@@ -43,7 +43,7 @@ export async function missingImage(db: DbReader, paths: Iterable<string>) {
   for (const src of new Set(paths)) {
     if (!catalogImage.shape.src.safeParse(src).success) return src;
     if (src.startsWith("/media/")) {
-      if (!await db.catalogMedia.findUnique({ where: { id: src.slice(7) }, select: { id: true } })) return src;
+      if (!await db.catalogMedia.findUnique({ where: { id: src.slice(7), contentType: "image/webp" }, select: { id: true } })) return src;
     } else {
       try {
         await access(join(process.cwd(), "public", src.slice(1)));

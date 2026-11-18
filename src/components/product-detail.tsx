@@ -1,24 +1,22 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Check, CircleCheck, CircleX, ShoppingBag, Store, Truck, X, ZoomIn } from "lucide-react";
-import Image from "next/image";
-import { storefrontPath } from "@/config/storefront-path";
+import { Check, CircleCheck, CircleX, ShoppingBag, Store, Truck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { formatMoney, type Market } from "@/config/markets";
 import { marketStoreHref } from "@/config/regional-path";
 import { useCart, useCartActions } from "@/lib/cart/browser";
 import { useProductMeasurement } from "@/lib/measurement/browser";
 import { rememberBuyPersonalization } from "@/lib/cart/buy-personalization";
 import { MAX_QUANTITY, variantQuantities } from "@/lib/cart/model";
-import type { CatalogImage, CatalogProduct, ListedVariant } from "@/lib/catalog/types";
+import type { CatalogProduct, ListedVariant } from "@/lib/catalog/types";
 import { merchantVariantDetails } from "@/lib/catalog/merchant-fields";
 import { personalizationAvailable, personalizationText } from "@/lib/catalog/personalization";
 import { usPreviewDeliveryArea } from "@/lib/commerce/us-delivery";
 import { QuantityControl } from "./quantity-control";
-import { CatalogPhoto } from "./catalog-photo";
-import { AddToList, FavoriteButton } from "./marketplace/favorites";
+import { ProductGallery } from "./product-gallery";
+import { AddToList } from "./marketplace/favorites";
 import { PersonalizationField } from "./personalization-field";
 import { ProductAddOns, RetailOptions, type ProductAddOn } from "./retail-product";
 
@@ -34,15 +32,6 @@ function chooseVariant(variants: readonly ListedVariant[], current: ListedVarian
   return matching.find((variant) => others.every(([key, option]) => variant.options[key] === option))
     ?? matching.find((variant) => (variant.offer?.stock ?? 0) > 0)
     ?? matching[0];
-}
-
-function uniquePhotos(product: CatalogProduct, selected: ListedVariant): CatalogImage[] {
-  const photos = [
-    ...(selected.image ? [selected.image] : []),
-    ...product.images,
-    ...product.variants.flatMap((variant) => variant.image ? [variant.image] : []),
-  ];
-  return [...new Map(photos.map((photo) => [photo.src, photo])).values()];
 }
 
 export function ProductDetail({ product, market, initialVariantId, departmentName, preview, firstParty, modelsByVariant, hybrid, sales = 0, addOns = [] }: {
@@ -65,19 +54,13 @@ export function ProductDetail({ product, market, initialVariantId, departmentNam
   const [selectedId, setSelectedId] = useState(defaultVariant.id);
   const [quantity, setQuantity] = useState(1);
   const [personalizationDraft, setPersonalizationDraft] = useState("");
-  const [photoChoice, setPhotoChoice] = useState<string | null>(null);
-  const [zoomOpen, setZoomOpen] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string; marketId: string } | null>(null);
-  const zoom = useRef<HTMLDialogElement>(null);
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
   const optionId = useId();
   const { items, ready } = useCart();
   const { addToCart } = useCartActions();
   const measureCartAdd = useProductMeasurement(defaultVariant.id, market.id, !preview);
   const selected = product.variants.find((variant) => variant.id === selectedId) ?? defaultVariant;
   const models = modelsByVariant?.[selected.id] ?? [];
-  const photos = uniquePhotos(product, selected);
-  const photo = photos.find(({ src }) => src === photoChoice) ?? photos[0];
   const optionNames = [...new Set(product.variants.flatMap((variant) => Object.keys(variant.options)))];
   const guides = hybrid ? product.specifications.filter(spec => /^Size guide\s*[:–-]/i.test(spec.label)) : [];
   const { brand, gtin, mpn } = merchantVariantDetails(product, selected);
@@ -106,8 +89,6 @@ export function ProductDetail({ product, market, initialVariantId, departmentNam
   const buyQuery = new URLSearchParams({ buy: selected.id, quantity: String(Math.min(quantity, max)) });
   if (hybrid) buyQuery.set("destination", market.id);
   const buyHref = marketHref(`/checkout?${buyQuery}`);
-  const currentPhoto = photos.findIndex(item => item.src === photo?.src);
-  const movePhoto = (direction: number) => setPhotoChoice(photos[(currentPhoto + photos.length + direction) % photos.length]?.src ?? null);
 
   function selectOption(name: string, value: string) {
     const next = chooseVariant(product.variants, selected, name, value);
@@ -118,7 +99,6 @@ export function ProductDetail({ product, market, initialVariantId, departmentNam
       url.searchParams.set("variant", next.id);
       window.history.replaceState(null, "", url);
     }
-    setPhotoChoice(null);
     setQuantity(1);
     setFeedback(null);
   }
@@ -133,50 +113,8 @@ export function ProductDetail({ product, market, initialVariantId, departmentNam
     });
   }
 
-  if (shop && photo) return <div className="mp-listing-detail">
-    <section className="product-gallery" aria-label="Product images">
-      <button type="button" className="product-gallery__main" aria-label="Zoom product image" onClick={() => {
-        zoom.current?.showModal();
-        setZoomOpen(true);
-      }}
-        onTouchStart={event => {
-          const touch = event.touches[0];
-          if ((firstParty || hybrid) && photos.length > 1 && event.touches.length === 1 && touch) {
-            touchStart.current = { x: touch.clientX, y: touch.clientY };
-          }
-        }}
-        onTouchEnd={event => {
-          const start = touchStart.current;
-          touchStart.current = null;
-          const touch = event.changedTouches[0];
-          if (!start || !touch) return;
-          const delta = touch.clientX - start.x;
-          if (Math.abs(delta) > 45 && Math.abs(delta) > Math.abs(touch.clientY - start.y) * 1.5) movePhoto(delta < 0 ? 1 : -1);
-        }}
-        onTouchCancel={() => { touchStart.current = null; }}>
-        <CatalogPhoto image={photo} responsive={hybrid} rendition="detail" fill loading="eager" fetchPriority="high"
-          sizes="(max-width: 759px) calc(100vw - 2rem), (max-width: 1250px) 47vw, 600px"/>
-        <span className="mp-gallery-zoom-icon"><ZoomIn size={21}/></span>
-      </button>
-      {photos.length > 1 && <div className="product-gallery__thumbs" aria-label="Choose product image">{photos.map((image, index) =>
-        <button key={image.src} type="button" aria-label={`View image ${index + 1}`} aria-pressed={image.src === photo.src} onClick={() => setPhotoChoice(image.src)}>
-          <CatalogPhoto image={{ ...image, alt: "" }} responsive={hybrid} rendition="thumbnail" fill sizes="60px" fetchPriority="low"/>
-        </button>
-      )}</div>}
-      <FavoriteButton product={product.id} name={product.name}/>
-      <dialog className="store-dialog mp-image-zoom" ref={zoom} aria-label="Product image viewer" onClose={() => setZoomOpen(false)} onKeyDown={event => {
-        if (event.key === "ArrowLeft") movePhoto(-1);
-        if (event.key === "ArrowRight") movePhoto(1);
-      }}>
-        <button className="store-dialog__close" type="button" aria-label="Close image viewer" onClick={() => zoom.current?.close()}><X size={22}/></button>
-        <div className="mp-zoom-frame">{zoomOpen && <Image src={storefrontPath(photo.src)} alt={photo.alt} fill loading="eager" sizes="90vw"/>}</div>
-        {photos.length > 1 && <div className="mp-gallery-controls">
-          <button type="button" className="mp-icon" aria-label="Previous image" onClick={() => movePhoto(-1)}><ArrowLeft size={19}/></button>
-          <span aria-live="polite">{currentPhoto + 1} / {photos.length}</span>
-          <button type="button" className="mp-icon" aria-label="Next image" onClick={() => movePhoto(1)}><ArrowRight size={19}/></button>
-        </div>}
-      </dialog>
-    </section>
+  if (shop) return <div className="mp-listing-detail">
+    <ProductGallery key={selected.id} product={product} selected={selected} responsive={hybrid} marketplace/>
     <div className="mp-listing-info">
       {marketOffer && <p className="product-detail__price" aria-live="polite">{formatMoney(marketOffer.amountMinor, market)}
         {marketOffer.regularMinor && marketOffer.regularMinor > marketOffer.amountMinor ? <del>{formatMoney(marketOffer.regularMinor, market)}</del> : null}
@@ -200,7 +138,10 @@ export function ProductDetail({ product, market, initialVariantId, departmentNam
         </select></label>)}
       </div>}
       {settings && available && <PersonalizationField settings={settings} value={personalizationDraft} onChange={setPersonalizationDraft}/>}
-      {available && <QuantityControl value={quantity} max={max} onChange={setQuantity}/>}
+      {available && <div className="mp-listing-quantity">
+        <p>Quantity</p>
+        <QuantityControl value={quantity} max={max} onChange={setQuantity}/>
+      </div>}
       <div className="mp-listing-ctas">
         {available && (market.id === "bd" || firstParty || hybrid) && (settings
           ? <button type="button" className="button button--outline" disabled={!validPersonalization} onClick={() => {
@@ -211,7 +152,7 @@ export function ProductDetail({ product, market, initialVariantId, departmentNam
         <button type="button" className="button button--primary" disabled={!ready || !available || remaining < quantity || !validPersonalization} onClick={add}>
           {available ? remaining >= quantity ? "Add to cart" : "Quantity limit reached" : marketOffer ? "Out of stock" : "Unavailable in this market"}
         </button>
-        <AddToList product={product.id}/>
+        {!hybrid && <AddToList product={product.id}/>}
       </div>
       {activeFeedback && <p className={`add-feedback ${activeFeedback.ok ? "" : "add-feedback--error"}`} role="status">
         <span>{activeFeedback.text}</span> <Link href={marketHref("/cart")}>View cart</Link>
@@ -234,27 +175,7 @@ export function ProductDetail({ product, market, initialVariantId, departmentNam
 
   return (
     <div className="product-detail">
-      <section className="product-gallery" aria-label="Product images">
-        <div className="product-gallery__main">
-          <CatalogPhoto key={photo.src} image={photo} responsive={hybrid} rendition="detail" fill loading="eager" fetchPriority="high"
-            sizes="(max-width: 759px) calc(100vw - 2rem), 580px" />
-        </div>
-        {photos.length > 1 && (
-          <div className="product-gallery__thumbs" role="group" aria-label="Choose product image">
-            {photos.map((image, index) => (
-              <button
-                key={image.src}
-                type="button"
-                aria-label={`View image ${index + 1}: ${image.alt}`}
-                aria-pressed={image.src === photo.src}
-                onClick={() => setPhotoChoice(image.src)}
-              >
-                <CatalogPhoto image={{ ...image, alt: "" }} responsive={hybrid} rendition="thumbnail" fill sizes="76px" fetchPriority="low" />
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+      <ProductGallery key={selected.id} product={product} selected={selected} responsive={hybrid}/>
 
       <div className="product-detail__info">
         <p className="eyebrow">{departmentName}</p>

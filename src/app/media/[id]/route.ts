@@ -30,7 +30,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       if (!shopper || !await db.productImage.findFirst({ where: { src, product: { marketplaceShop: { ownerId: shopper.id } } },
         select: { productId: true } })) return unavailable(404);
     }
-    const image = await db.catalogMedia.findUnique({ where: { id }, select: { data: true } });
+    const image = await db.catalogMedia.findUnique({ where: { id, contentType: "image/webp" }, select: { data: true } });
     if (!image) return unavailable(404);
     const data = width ? await sharp(image.data, { limitInputPixels: 16_000_000 })
       .resize({ width, withoutEnlargement: true })

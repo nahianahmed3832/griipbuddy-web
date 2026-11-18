@@ -67,6 +67,7 @@ function variantView(row: VariantRow, marketId: MarketId, now: Date, product: Pi
     identifiersNotAssigned: row.identifiersNotAssigned,
     options: row.options as Record<string, string>,
     image: row.imageSrc && row.imageAlt ? { src: row.imageSrc, alt: row.imageAlt } : undefined,
+    videoUrl: row.videoUrl ?? undefined,
     offer: offer?.currency === markets[marketId].currency ? {
       variantId: row.id, marketId, currency: offer.currency,
       amountMinor, regularMinor, stock: row.inventory?.available ?? 0,
@@ -85,6 +86,7 @@ function productView(row: ProductRow, marketId: MarketId, now: Date, campaign: D
     shortDescription: row.shortDescription ?? undefined,
     specifications: row.specifications as Specification[], keywords: row.keywords,
     images: row.images.map(({ src, alt }) => ({ src, alt })),
+    videoUrl: row.videoUrl ?? undefined,
     variants: row.variants.map((variant) => variantView(variant, marketId, now, row, campaign)),
     addedOn: row.addedOn.toISOString().slice(0, 10), newArrival: row.newArrival, featured: row.featured, demo: row.demo,
     ...(marketplaceMode() && { shop: row.marketplaceShop ?? storeShop }),

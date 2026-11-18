@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { markets, retailMarketIds, type RetailMarketId } from "../../config/markets.ts";
 import { validGtin } from "../catalog/identifiers.ts";
+import { catalogVideoPattern } from "../catalog/video.ts";
 
 export const slugField = z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(120);
 export const MAX_GALLERY_IMAGES = 96;
@@ -23,6 +24,7 @@ const offer = z.object({
 }).strict().refine((value) => value.currency === markets[value.marketId].currency, "Currency must match the selected market.");
 const variant = z.object({
   sku: skuField, options, active: z.boolean(), image: catalogImage.optional(),
+  videoUrl: z.string().regex(catalogVideoPattern, "Upload a catalog video.").nullish(),
   gtin: gtinField.nullish(), mpn: manufacturerText.nullish(), identifiersNotAssigned: z.boolean().optional(),
   offers: z.array(offer).max(2).refine((value) => unique(value.map(({ marketId }) => marketId)), "List each market once per SKU."),
 }).strict().refine(({ identifiersNotAssigned, gtin, mpn }) => !identifiersNotAssigned || (!gtin && !mpn), {
@@ -40,6 +42,7 @@ export const productInput = z.object({
   description: textField(0, 4000), shortDescription: textField(0, 240).optional(), specifications: z.array(attribute).max(30),
   keywords: z.array(textField(1, 60)).max(20), collectionIds: z.array(productIdField).max(20),
   images: z.array(catalogImage).max(MAX_GALLERY_IMAGES), variants: z.array(variant).max(40),
+  videoUrl: z.string().regex(catalogVideoPattern, "Upload a catalog video.").nullish(),
   publication: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]), demo: z.boolean(), featured: z.boolean(), newArrival: z.boolean(),
 }).strict().superRefine((value, ctx) => {
   const issue = (path: string, message: string) => ctx.addIssue({ code: "custom", path: [path], message });
