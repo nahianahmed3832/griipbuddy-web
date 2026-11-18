@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { test } from "node:test";
 import "../../scripts/load-env.ts";
 import { newGuestToken, readGuestKey } from "../../src/lib/commerce/guest.ts";
@@ -108,7 +108,7 @@ test("committed order, shipment and refund milestones reach verified owners with
     assert.equal((await redeemGuestOrderLink(orderId, token))?.cookiePath, `/bd/orders/${orderId}`);
   }
 
-  const notices = (shopperId: string) => shopOrderNotifications(shopperId, { orderId, filter: "all" });
+  const notices = (shopperId: string) => shopOrderNotifications(shopperId, "bd", { orderId, filter: "all" });
   assert.deepEqual((await notices(buyer.id)).notices, []);
   const challenge = randomUUID();
   const recovery = { kind: "order", reference: order.reference, email: details.customer.email } as const;
@@ -126,20 +126,20 @@ test("committed order, shipment and refund milestones reach verified owners with
   ]));
   assert.ok(lifecycle.every(row => row.reference === order.reference && !row.read));
   assert.deepEqual((await notices(stranger.id)).notices, []);
-  assert.deepEqual((await shopOrderNotifications(buyer.id, { orderId: randomUUID(), filter: "all" })).notices, []);
+  assert.deepEqual((await shopOrderNotifications(buyer.id, "bd", { orderId: randomUUID(), filter: "all" })).notices, []);
   const deliveredKey = lifecycle.find(row => row.status === "DELIVERED")?.key;
   assert.ok(deliveredKey);
-  await markShopOrderNotificationsRead(stranger.id, [deliveredKey]);
+  await markShopOrderNotificationsRead(stranger.id, "bd", [deliveredKey]);
   assert.equal(await db.shopperOrderNotificationRead.count({ where: { shopperId: stranger.id } }), 0);
   await Promise.all([
-    markShopOrderNotificationsRead(buyer.id, [deliveredKey, deliveredKey]),
-    markShopOrderNotificationsRead(buyer.id, [deliveredKey]),
+    markShopOrderNotificationsRead(buyer.id, "bd", [deliveredKey, deliveredKey]),
+    markShopOrderNotificationsRead(buyer.id, "bd", [deliveredKey]),
   ]);
   assert.deepEqual((await notices(buyer.id)).notices.filter(row => row.read).map(row => row.key), [deliveredKey]);
   const firstNotice = lifecycle[0];
   const before = readNoticeCursor(`${firstNotice.at.toISOString()}~${firstNotice.key}`);
   assert.ok(before);
-  assert.deepEqual((await shopOrderNotifications(buyer.id, { filter: "all", orderId, before })).notices.map(row => row.key),
+  assert.deepEqual((await shopOrderNotifications(buyer.id, "bd", { filter: "all", orderId, before })).notices.map(row => row.key),
     lifecycle.slice(1).map(row => row.key));
 
   const line = await db.orderItem.findFirstOrThrow({ where: { orderId } });
@@ -159,8 +159,82 @@ test("committed order, shipment and refund milestones reach verified owners with
     reference: suffix, confirmed: true });
   const afterSales = (await notices(buyer.id)).notices;
   assert.equal(afterSales.filter(row => row.caseId === caseId && row.status === "IN_REVIEW").length, 1);
-  const refunds = (await shopOrderNotifications(buyer.id, { orderId, filter: "refunds" })).notices;
+  const refunds = (await shopOrderNotifications(buyer.id, "bd", { orderId, filter: "refunds" })).notices;
   assert.deepEqual(refunds.map(row => row.status), ["REFUND_CONFIRMED", "REFUND_APPROVED", "REFUND_FAILED", "REFUND_APPROVED"]);
   assert.ok(refunds.every(row => row.caseId === caseId && row.type === "refund" && !row.read));
   assert.doesNotMatch(JSON.stringify(refunds), /Synthetic payout failed|@example\.invalid/);
+});
+
+test("US order updates require stored PayPal capture and refund evidence and are private to the market", {
+  skip: !preview && "Requires loopback hybrid DB and SHOPPER_MAIL_MODE=preview",
+}, async t => {
+  const db = getDb();
+  const attemptId = randomUUID();
+  const orderId = randomUUID();
+  const shopperId = `inbox-us-${orderId}`;
+  const otherShopperId = `inbox-us-other-${orderId}`;
+  t.after(async () => {
+    try {
+      await db.$transaction([
+        db.fulfillmentEvent.deleteMany({ where: { orderId } }),
+        db.payment.deleteMany({ where: { orderId } }),
+        db.order.deleteMany({ where: { id: orderId } }),
+        db.checkoutAttempt.deleteMany({ where: { id: attemptId } }),
+        db.shopper.deleteMany({ where: { id: { in: [shopperId, otherShopperId] } } }),
+      ]);
+    } finally {
+      await db.$disconnect();
+    }
+  });
+
+  await db.shopper.createMany({ data: [shopperId, otherShopperId].map(id => ({ id, name: "US Inbox Test", email: `${id}@example.invalid` })) });
+  await db.checkoutAttempt.create({ data: { id: attemptId, guestKey: randomBytes(32).toString("hex"), requestHash: randomBytes(32).toString("hex") } });
+  await db.order.create({ data: {
+    id: orderId, attemptId, shopperId, measurementTest: true, reference: `GB-${randomBytes(6).toString("hex").toUpperCase()}`,
+    marketId: "us", currency: "USD", customerName: "US Inbox Test", phone: "206-555-0123", address: "100 Test Street",
+    locality: "Seattle", district: "wa", districtLabel: "WA", postalCode: "98101",
+    deliveryMethod: "test-standard-us", deliveryLabel: "Sandbox delivery", taxLabel: "Tax (test)",
+    subtotalMinor: 1500, discountMinor: 0, taxMinor: 0, deliveryMinor: 699, totalMinor: 2199,
+    payment: { create: { method: "PAYPAL", status: "PAID", amountMinor: 2199, currency: "USD" } },
+  } });
+  const all = () => shopOrderNotifications(shopperId, "us", { orderId, filter: "all" });
+  const refunds = () => shopOrderNotifications(shopperId, "us", { orderId, filter: "refunds" });
+  assert.deepEqual((await all()).notices.map(item => item.status), ["PLACED"]);
+  assert.deepEqual((await shopOrderNotifications(shopperId, "bd", { orderId, filter: "all" })).notices, []);
+  assert.deepEqual((await shopOrderNotifications(shopperId, "ca", { orderId, filter: "all" })).notices, []);
+  assert.deepEqual((await shopOrderNotifications(otherShopperId, "us", { orderId, filter: "all" })).notices, []);
+
+  await db.payPalCheckout.create({ data: {
+    attemptId, state: "COMPLETED", providerOrderId: `fixture-${orderId}`, captureId: `capture-${orderId}`, expiresAt: new Date(),
+  } });
+  await db.fulfillmentEvent.create({ data: { orderId, type: "STATUS_CHANGED", status: "PACKING" } });
+  const placed = (await all()).notices;
+  assert.deepEqual(new Set(placed.map(item => item.status)), new Set(["PLACED", "PAYMENT_CONFIRMED", "PACKING"]));
+  assert.equal(placed.length, 3);
+  const payment = placed.find(item => item.status === "PAYMENT_CONFIRMED");
+  assert.ok(payment);
+  await markShopOrderNotificationsRead(shopperId, "bd", [payment.key]);
+  assert.equal((await all()).notices.find(item => item.key === payment.key)?.read, false);
+  await markShopOrderNotificationsRead(shopperId, "us", [payment.key]);
+  assert.equal((await all()).notices.find(item => item.key === payment.key)?.read, true);
+
+  const refundStartedAt = new Date();
+  await db.$transaction([
+    db.payPalCheckout.update({ where: { attemptId }, data: { refundStartedAt } }),
+    db.payment.update({ where: { orderId }, data: { status: "REFUND_PENDING" } }),
+  ]);
+  assert.deepEqual((await refunds()).notices.map(item => item.status), ["REFUND_REQUESTED"]);
+  const refundId = `refund-${orderId}`;
+  await db.payPalCheckout.update({ where: { attemptId }, data: { refundId } });
+  assert.deepEqual((await refunds()).notices.map(item => item.status), ["REFUND_REQUESTED"]);
+  await db.$transaction([
+    db.payment.update({ where: { orderId }, data: { status: "REFUNDED" } }),
+    db.order.update({ where: { id: orderId }, data: { status: "CANCELLED", cancelledAt: new Date() } }),
+  ]);
+  const confirmed = (await refunds()).notices;
+  assert.deepEqual(confirmed.map(item => item.status), ["REFUND_CONFIRMED", "REFUND_REQUESTED"]);
+  assert.ok(confirmed.every(item => item.type === "refund" && item.caseId === null && !item.read));
+  assert.doesNotMatch(JSON.stringify(confirmed), /refundId|captureId|fixture-/);
+  assert.equal((await all()).notices.filter(item => item.status === "CANCELLED").length, 1);
+  assert.equal((await all()).notices.find(item => item.key === payment.key)?.read, true);
 });

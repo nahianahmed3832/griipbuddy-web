@@ -12,13 +12,13 @@ import { store } from "@/config/store";
 import { storefrontPath } from "@/config/storefront-path";
 import { guestCookie, readGuestKey } from "@/lib/commerce/guest";
 import { cashDueOnDelivery, customerOrderDate, customerOrderMoney, customerOrderState, customerOrderStatus, customerPaymentStatus, customerPaymentMethod } from "@/lib/commerce/account-order";
-import { bangladeshOrderDocumentKind } from "@/lib/commerce/bd-order-document";
+import { orderDocumentKind } from "@/lib/commerce/order-document";
 import { guestOrder, visibleOrderMarket } from "@/lib/commerce/orders";
 import { orderRecoveryEnabled, receiptAccessCookie, recoveredReceiptGuestKey } from "@/lib/commerce/order-recovery";
 import { recordedReturnTerms } from "@/lib/commerce/order-return-terms";
 import { integratedCheckout, readRecoveredOrder } from "@/lib/commerce/integrated-checkout";
 import { getShopper } from "@/lib/marketplace/auth";
-import { bdOrderHubConfig } from "@/lib/marketplace/bd-order-hub-bridge";
+import { orderCenterEnabled } from "@/lib/marketplace/order-center-config";
 import { getDb } from "@/lib/db/client";
 import { currentMarket } from "@/lib/market-server";
 import { hybridDemoMode, marketplaceMode } from "@/lib/release-config";
@@ -95,7 +95,8 @@ export default async function ConfirmationPage({ params, searchParams }: {
   const manualDeclined = payment && isManualPaymentMethod(payment.method) && payment.status === "VOIDED";
   const cashDue = cashDueOnDelivery(order);
   const owned = marketplace && nativeOrder && shopper && nativeOrder.shopperId === shopper.id;
-  const showOrderUpdates = owned && active.id === "bd" && order.marketId === "bd" && Boolean(bdOrderHubConfig());
+  const showOrderUpdates = owned && active.id === order.marketId && orderCenterEnabled(active.id);
+  const payPalRefund = showOrderUpdates && usSandbox && (payment?.status === "REFUND_PENDING" || payment?.status === "REFUNDED");
   const initialItemId = owned && uuid.safeParse(selected.item).data;
   const [shops, reviewItems, existingReviews] = owned ? await Promise.all([
     getDb().marketplaceShop.findMany({ where: { id: { in: [...new Set(nativeOrder.items.map(item => item.marketplaceShopId ?? storeShop.id))] }, published: true }, select: { id: true, name: true } }),
@@ -124,8 +125,8 @@ export default async function ConfirmationPage({ params, searchParams }: {
           <Link className="button button--outline order-updates-link" href={orderHref(`/account/notifications?order=${id}`)}>
             <Bell size={17} aria-hidden="true" />{t("Updates for this order", "এই অর্ডারের আপডেট")}
           </Link>
-          {order.currency === "BDT" && <OrderDocumentLink orderPath={`/orders/${id}`} reference={order.reference}
-            kind={bangladeshOrderDocumentKind(payment)} language={language} className="button button--outline" />}
+          {order.currency === active.currency && <OrderDocumentLink orderPath={`/orders/${id}`} reference={order.reference} market={order.marketId}
+            kind={orderDocumentKind(payment, order.currency)} language={language} className="button button--outline" />}
         </div>}
         {usSandbox && <p>United States · PayPal sandbox</p>}
       </div>
@@ -168,7 +169,8 @@ export default async function ConfirmationPage({ params, searchParams }: {
           </section>
         </div>
         <div className="commerce-stack">
-          <section className="commerce-panel commerce-summary" aria-label={t("Payment and status", "পেমেন্ট ও অর্ডারের অবস্থা")}>
+          <section id={payPalRefund ? "refund-progress" : undefined} className="commerce-panel commerce-summary"
+            aria-label={t("Payment and status", "পেমেন্ট ও অর্ডারের অবস্থা")}>
             <h2>{t("Payment and status", "পেমেন্ট ও অর্ডারের অবস্থা")}</h2>
             <dl>
               {payment && <div><dt>{t("Payment method", "পেমেন্ট পদ্ধতি")}</dt><dd>{customerPaymentMethod(payment.method, language)}</dd></div>}

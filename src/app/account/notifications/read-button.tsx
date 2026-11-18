@@ -4,10 +4,11 @@ import { Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { marketplaceRequest } from "@/components/marketplace/session";
+import type { MarketId } from "@/config/markets";
 import { accountText, type AccountLanguage } from "@/lib/marketplace/account-language";
 
-export function NotificationReadButton({ keys, label, context, language }: {
-  keys: string[]; label: string; context?: string; language: AccountLanguage;
+export function NotificationReadButton({ keys, label, context, language, market }: {
+  keys: string[]; label: string; context?: string; language: AccountLanguage; market: MarketId;
 }) {
   const router = useRouter();
   const [refreshing, startTransition] = useTransition();
@@ -18,7 +19,7 @@ export function NotificationReadButton({ keys, label, context, language }: {
     setError("");
     setSaving(true);
     try {
-      await marketplaceRequest({ action: "read-order-notifications", market: "bd", keys }, "/api/marketplace/account");
+      await marketplaceRequest({ action: "read-order-notifications", market, keys }, `/api/marketplace/account?market=${market}`);
       startTransition(() => router.refresh());
     } catch {
       setError(accountText(language, "Couldn’t update the notification. Try again.", "বিজ্ঞপ্তি আপডেট হয়নি। আবার চেষ্টা করুন।"));

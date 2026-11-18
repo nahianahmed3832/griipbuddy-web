@@ -89,6 +89,11 @@ function hybridRouting(request: NextRequest) {
     return NextResponse.redirect(target, { headers });
   }
 
+  if (path === "/api/marketplace/account" && request.method === "POST") {
+    // A notification action uses the market of its tab without changing the shared cookie.
+    const explicitMarket = target.searchParams.get("market");
+    if (isStorefrontMarketId(explicitMarket, fixtureMarketEnabled())) incoming.set(marketRequestHeader, explicitMarket);
+  }
   if (!isRegionalStorePath(bare) || !["GET", "HEAD"].includes(request.method)) {
     return NextResponse.next({ request: { headers: incoming }, headers });
   }

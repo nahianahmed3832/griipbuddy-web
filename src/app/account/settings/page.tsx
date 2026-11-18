@@ -9,6 +9,7 @@ import { currentMarket } from "@/lib/market-server";
 import { accountMarketName, accountText } from "@/lib/marketplace/account-language";
 import { currentAccountLanguage, marketAccountProfile } from "@/lib/marketplace/account-language-server";
 import { getShopper } from "@/lib/marketplace/auth";
+import { orderCenterEnabled } from "@/lib/marketplace/order-center-config";
 import { hybridDemoMode, marketplaceMode } from "@/lib/release-config";
 
 export const metadata = { title: "Account settings", robots: { index: false, follow: false } };
@@ -80,6 +81,9 @@ export default async function AccountSettings({ searchParams }: { searchParams: 
       {shopper && <section className="commerce-panel">
         <h2>{t("Offers & promotions", "অফার ও প্রচার")}</h2>
         <MarketingForm {...settings} enabled={profile?.marketingOptIn ?? false} />
+        {orderCenterEnabled(market.id) && <p><Link href={href("/account/notifications")}>
+          {t("View order and refund notifications", "অর্ডার ও টাকা ফেরতের বিজ্ঞপ্তি দেখুন")}
+        </Link></p>}
       </section>}
     </>}
 

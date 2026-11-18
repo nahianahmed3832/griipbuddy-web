@@ -5,24 +5,25 @@ import { BangladeshOrderHubForms } from "@/components/marketplace/bd-order-hub-f
 import { LegacyOrderRow } from "@/components/marketplace/legacy-order";
 import { OrderDocumentLink } from "@/components/marketplace/order-document-link";
 import { SignInGate } from "@/components/marketplace/session";
-import { marketList, type Currency, type MarketId } from "@/config/markets";
+import { marketDirectory, type Currency, type MarketId } from "@/config/markets";
 import { marketStoreHref } from "@/config/regional-path";
 import { store } from "@/config/store";
 import { storefrontPath } from "@/config/storefront-path";
 import { guestCookie, readGuestKey } from "@/lib/commerce/guest";
 import { cashDueOnDelivery, customerOrderDate, customerOrderMoney, customerOrderStatus, customerPaymentStatus } from "@/lib/commerce/account-order";
-import { bangladeshOrderDocumentKind } from "@/lib/commerce/bd-order-document";
+import { orderDocumentKind } from "@/lib/commerce/order-document";
 import { listGuestOrders } from "@/lib/commerce/orders";
 import { integratedCheckout, listRecoveredOrders } from "@/lib/commerce/integrated-checkout";
 import { bangladeshTrackingUrl, usesBangladeshCheckout } from "@/lib/commerce/bangladesh-handoff";
 import { currentMarket } from "@/lib/market-server";
-import { hybridDemoMode, marketplaceMode } from "@/lib/release-config";
+import { fixtureMarketEnabled, hybridDemoMode, marketplaceMode } from "@/lib/release-config";
 import { accountMarketName, accountText } from "@/lib/marketplace/account-language";
 import { currentAccountLanguage } from "@/lib/marketplace/account-language-server";
 import { getShopper } from "@/lib/marketplace/auth";
 import { bdLegacyAccess } from "@/lib/marketplace/bd-order-hub";
 import { bdOrderHubConfig, legacyCursor, legacyOrderHistory } from "@/lib/marketplace/bd-order-hub-bridge";
 import { caseKindLabel, caseProgressLabel } from "@/lib/marketplace/case-language";
+import { orderCenterEnabled } from "@/lib/marketplace/order-center-config";
 import { shopperOrders } from "@/lib/marketplace/data";
 import { orderRecoveryEnabled } from "@/lib/commerce/order-recovery";
 import { reportFailure } from "@/lib/db/observability";
@@ -60,6 +61,7 @@ export default async function CustomerOrdersPage({ searchParams }: {
   const t = (english: string, bangla: string) => accountText(language, english, bangla);
   const href = (path: string) => marketStoreHref(path, regional ? active.id : undefined);
   const hub = active.id === "bd" && Boolean(bdOrderHubConfig());
+  const orderCenter = orderCenterEnabled(active.id);
   const view = hub && (params.view === "order" || params.view === "preorder") ? params.view : undefined;
   const before = hub && shopper ? legacyCursor.safeParse(params.before).data : undefined;
   const [orders, history]: [OrderListEntry[], Awaited<ReturnType<typeof historicalOrders>> | null] = await Promise.all([
@@ -90,11 +92,11 @@ export default async function CustomerOrdersPage({ searchParams }: {
             "বাংলাদেশের অর্ডার ও প্রি-অর্ডার ট্র্যাক করুন, অথবা অতিথি হিসেবে করা অর্ডার পুনরুদ্ধার করুন।") : shopper ? t("Open an order to track its delivery or get help.", "ডেলিভারি ট্র্যাক করতে বা সহায়তা পেতে অর্ডারটি খুলুন।")
             : t("Open a recent order in the browser you used for checkout.", "যে ব্রাউজারে অর্ডার করেছেন, সেখানে সাম্প্রতিক অর্ডার খুলুন।")}</p>}
         {regional && <nav className="mp-panel-links" aria-label={t("Order country", "অর্ডারের দেশ")}>
-          {marketList.map(({ id }) => id === active.id
+          {marketDirectory(fixtureMarketEnabled()).map(({ id }) => id === active.id
             ? <strong aria-current="true" key={id}>{accountMarketName(language, id)}</strong>
             : <a key={id} href={storefrontPath(marketStoreHref("/orders", id))}>{t("View orders in", "অর্ডার দেখুন:")} {accountMarketName(language, id)}</a>)}
         </nav>}
-        {hub && shopper && <Link className="button button--outline order-updates-link" href={href("/account/notifications")}>
+        {orderCenter && shopper && <Link className="button button--outline order-updates-link" href={href("/account/notifications")}>
           <Bell size={17} aria-hidden="true" />{t("Order and refund updates", "অর্ডার ও টাকা ফেরতের আপডেট")}
         </Link>}
       </div>
@@ -125,7 +127,11 @@ export default async function CustomerOrdersPage({ searchParams }: {
           const { order } = entry;
           const marketId = order.marketId ?? active.id;
           const orderPath = "/orders/" + order.id;
-          const showAfterSales = marketId === "bd" && shopper && shopper.id === order.shopperId;
+          const owned = Boolean(shopper && shopper.id === order.shopperId);
+          const showAccountActions = owned && (marketId === "bd" || orderCenter);
+          const documentCurrency = orderCenter && marketId === active.id && order.currency === active.currency ? order.currency : undefined;
+          const showPayPalRefund = orderCenter && marketId === "us" && order.payment?.method === "PAYPAL" &&
+            (order.payment.status === "REFUND_PENDING" || order.payment.status === "REFUNDED");
           const cashDue = order.currency ? cashDueOnDelivery({ ...order, marketId, currency: order.currency, payment: order.payment ?? null }) : null;
           const extra = (order._count?.items ?? 0) - (order.items?.length ?? 0);
           return <li className="staff-order-row commerce-panel account-order-row" key={order.id}>
@@ -138,11 +144,12 @@ export default async function CustomerOrdersPage({ searchParams }: {
                 {order.items.map((item, index) => <li key={item.productName + index}>{item.productName} × {number.format(item.quantity)}</li>)}
                 {extra > 0 && <li>{t("More items", "আরও পণ্য")} · {number.format(extra)}</li>}
               </ul>}
-              {showAfterSales && <div className="account-order-actions">
-                <Link href={href(orderPath + "#order-support")}>{t("Manage order", "অর্ডার পরিচালনা করুন")}</Link>
-                {hub && order.currency === "BDT" && <OrderDocumentLink orderPath={orderPath} reference={order.reference}
-                  language={language} kind={bangladeshOrderDocumentKind(order.payment ?? null)} />}
-                {order.cases?.map(request => {
+              {showAccountActions && <div className="account-order-actions">
+                <Link href={href(orderPath + "#order-support")}>{marketId === "bd" ? t("Manage order", "অর্ডার পরিচালনা করুন") : "Help with order"}</Link>
+                {documentCurrency && <OrderDocumentLink orderPath={orderPath} reference={order.reference} market={marketId}
+                  language={language} kind={orderDocumentKind(order.payment, documentCurrency)} />}
+                {showPayPalRefund && <Link href={href(orderPath + "#refund-progress")}>Track refund</Link>}
+                {marketId === "bd" && order.cases?.map(request => {
                   const refund = request.refundConfirmedAt || request.status === "REFUND_APPROVED" || request.status === "REFUND_FAILED";
                   return <Link key={request.id} href={href(orderPath + "/cases/" + request.id + (refund ? "#refund-progress" : ""))}>
                     {refund ? t("Track refund", "টাকা ফেরত ট্র্যাক করুন") : caseKindLabel(language, request.kind)}

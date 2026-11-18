@@ -48,7 +48,7 @@ export default async function HistoricalOrderPage({ params }: { params: Promise<
       <h1 className="display-type">{historicalKind(order, language)} {order.reference}</h1>
       <time dateTime={order.createdAt}>{customerOrderDate(new Date(order.createdAt), "bd", language)}</time>
       <div className="order-detail-actions"><OrderDocumentLink orderPath={`/orders/history/${order.kind}/${order.id}`}
-        reference={order.reference} kind="order-summary" language={language} className="button button--outline" /></div>
+        reference={order.reference} market="bd" kind="order-summary" language={language} className="button button--outline" /></div>
     </div>
     <section className="commerce-panel commerce-summary">
       <h2>{t("Status and payment", "অবস্থা ও পেমেন্ট")}</h2>

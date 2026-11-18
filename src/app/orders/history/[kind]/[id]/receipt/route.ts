@@ -1,5 +1,5 @@
-import { earlierBangladeshOrderDocument } from "@/lib/commerce/bd-order-document";
-import { bangladeshDocumentShopper, downloadOrderDocument, unavailableOrderDocument } from "@/lib/commerce/bd-order-document-download";
+import { earlierBangladeshOrderDocument } from "@/lib/commerce/order-document";
+import { bangladeshDocumentShopper, downloadOrderDocument, unavailableOrderDocument } from "@/lib/commerce/order-document-download";
 import { reportFailure } from "@/lib/db/observability";
 import { bdLegacyAccess } from "@/lib/marketplace/bd-order-hub";
 import { legacyId, legacyKind, legacyOrderDetail, OrderHubBridgeError } from "@/lib/marketplace/bd-order-hub-bridge";

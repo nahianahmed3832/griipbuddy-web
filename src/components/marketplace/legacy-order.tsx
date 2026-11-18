@@ -53,7 +53,7 @@ export function LegacyOrderRow({ order, href, language }: { order: LegacyOrder; 
         {remaining > 0 && <li>{accountText(language, "More items", "আরও পণ্য")} · {count.format(remaining)}</li>}
       </ul>}
       <div className="account-order-actions"><OrderDocumentLink orderPath={`/orders/history/${order.kind}/${order.id}`}
-        reference={order.reference} kind="order-summary" language={language} /></div>
+        reference={order.reference} market="bd" kind="order-summary" language={language} /></div>
     </div>
     <LegacyOrderSummary order={order} language={language} />
   </li>;

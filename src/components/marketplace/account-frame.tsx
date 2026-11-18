@@ -6,7 +6,7 @@ import { marketStoreHref } from "@/config/regional-path";
 import { accountMarketName, accountText, type AccountLanguage } from "@/lib/marketplace/account-language";
 import { getShopper } from "@/lib/marketplace/auth";
 import { chooseStorefrontHref, identityHomeHref, isHandoffMarket, registeredStorefrontHref, shopperIdentityDirectory, storefrontHandoffUrl } from "@/lib/marketplace/identity-directory";
-import { bdOrderHubConfig } from "@/lib/marketplace/bd-order-hub-bridge";
+import { orderCenterEnabled } from "@/lib/marketplace/order-center-config";
 import { AccountLanguageForm } from "./account";
 import "./customer-account.css";
 
@@ -25,7 +25,7 @@ export async function AccountFrame({ market, language, hybrid, section, children
     addresses: { path: "/account/addresses", label: t("Saved addresses", "সংরক্ষিত ঠিকানা"), icon: MapPin },
   };
   const shopping: AccountSection[] = ["home", "orders"];
-  if (market === "bd" && bdOrderHubConfig()) shopping.push("notifications");
+  if (orderCenterEnabled(market)) shopping.push("notifications");
   shopping.push("help");
   const groups: { label: string; ids: AccountSection[] }[] = [
     { label: t("Shopping", "কেনাকাটা"), ids: shopping },
@@ -34,7 +34,7 @@ export async function AccountFrame({ market, language, hybrid, section, children
   const active = links[section];
   const other = market === "bd" ? "us" : "bd";
   const directory = hybrid ? shopperIdentityDirectory() : null;
-  const returnPath = section === "notifications" ? "/account" : active.path;
+  const returnPath = section === "notifications" && !orderCenterEnabled(other) ? "/account" : active.path;
   const selectedStore = directory && isHandoffMarket(other) && directory.current !== directory.stores[other]
     ? (await getShopper())
       ? storefrontHandoffUrl("start", directory.stores[other], { market: other, return: returnPath }).href

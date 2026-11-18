@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import PDFDocument from "pdfkit";
+import { markets } from "../../config/markets.ts";
 import { store } from "../../config/store.ts";
-import type { BangladeshOrderDocument } from "./bd-order-document.ts";
+import type { OrderDocument } from "./order-document.ts";
 
 const ink = "#191C2D";
 const muted = "#4C5269";
@@ -17,12 +18,13 @@ function scriptRuns(text: string) {
   return text.match(/[\u0980-\u09ff\u200c\u200d]+|[^\u0980-\u09ff\u200c\u200d]+/gu) ?? [];
 }
 
-function drawDocument(doc: PDFKit.PDFDocument, data: BangladeshOrderDocument) {
-  const number = new Intl.NumberFormat("en-BD");
-  const decimal = new Intl.NumberFormat("en-BD", {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
+function drawDocument(doc: PDFKit.PDFDocument, data: OrderDocument) {
+  const { minorDigits, locale } = markets[data.marketId];
+  const number = new Intl.NumberFormat(locale);
+  const decimal = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: minorDigits, maximumFractionDigits: minorDigits,
   });
-  const money = (minor: number) => `BDT ${decimal.format(minor / 100)}`;
+  const money = (minor: number) => `${data.currency} ${decimal.format(minor / 10 ** minorDigits)}`;
   const right = doc.page.width - margin;
   const width = right - margin;
   const limit = doc.page.height - 71;
@@ -189,10 +191,10 @@ function drawDocument(doc: PDFKit.PDFDocument, data: BangladeshOrderDocument) {
   }
 }
 
-export async function orderDocumentPdf(data: BangladeshOrderDocument) {
+export async function orderDocumentPdf(data: OrderDocument) {
   // The OFL font sits under public/ so the standalone image ships its local copy.
   const font = resolve("public", "fonts", "NotoSansBengali.ttf");
-  const doc = new PDFDocument({ size: "A4", margin, font, bufferPages: true, lang: "en",
+  const doc = new PDFDocument({ size: data.marketId === "bd" ? "A4" : "LETTER", margin, font, bufferPages: true, lang: "en",
     info: { Title: `${data.title} ${data.reference}`, Author: store.name } });
   const chunks: Buffer[] = [];
   doc.on("data", (chunk: Buffer) => chunks.push(chunk));

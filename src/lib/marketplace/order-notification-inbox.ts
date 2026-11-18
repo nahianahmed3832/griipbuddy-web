@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { MarketId } from "../../config/markets.ts";
 import { Prisma } from "../../generated/prisma/client.ts";
 import type { BangladeshShipmentStatus, FulfillmentStatus, OrderCaseKind, OrderCaseStatus } from "../../generated/prisma/enums.ts";
 import { getDb } from "../db/client.ts";
@@ -23,7 +24,8 @@ type OrderMilestone = Exclude<FulfillmentStatus, "UNFULFILLED"> | BangladeshShip
 export type ShopOrderNotice = CommonNotice & (
   { type: "order"; status: OrderMilestone; caseId: null; caseKind: null } |
   { type: "case"; status: OrderCaseStatus; caseId: string; caseKind: OrderCaseKind } |
-  { type: "refund"; status: "REFUND_APPROVED" | "REFUND_FAILED" | "REFUND_CONFIRMED"; caseId: string; caseKind: OrderCaseKind }
+  { type: "refund"; status: "REFUND_APPROVED" | "REFUND_FAILED" | "REFUND_CONFIRMED"; caseId: string; caseKind: OrderCaseKind } |
+  { type: "refund"; status: "REFUND_REQUESTED" | "REFUND_CONFIRMED"; caseId: null; caseKind: null }
 );
 
 export function readNoticeCursor(value: unknown): NoticeCursor | undefined {
@@ -35,13 +37,19 @@ export function readNoticeCursor(value: unknown): NoticeCursor | undefined {
 
 // Use the records committed by checkout, fulfillment and after-sales. The feed
 // includes history after a verified guest claim and never depends on mail delivery.
-function noticeSource(shopperId: string, orderId?: string) {
+function noticeSource(shopperId: string, marketId: MarketId, orderId?: string) {
   const orderScope = orderId ? Prisma.sql`AND o."id" = ${orderId}::uuid` : Prisma.empty;
   return Prisma.sql`
     WITH owned AS (
-      SELECT o."id", o."reference", o."createdAt", o."cancelledAt"
+      SELECT o."id", o."reference", o."createdAt", o."cancelledAt", o."attemptId"
       FROM "Order" o
-      WHERE o."shopperId" = ${shopperId} AND o."marketId" = 'bd' ${orderScope}
+      WHERE o."shopperId" = ${shopperId} AND o."marketId" = ${marketId}::"MarketCode" ${orderScope}
+    ), paypal AS (
+      SELECT o."id", o."cancelledAt", p."createdAt" AS "paidAt", p."status", pp."refundStartedAt", pp."refundId"
+      FROM owned o JOIN "PayPalCheckout" pp ON pp."attemptId" = o."attemptId"
+      JOIN "Payment" p ON p."orderId" = o."id"
+      WHERE pp."state" = 'COMPLETED' AND pp."captureId" IS NOT NULL
+        AND p."method" = 'PAYPAL' AND p."status" IN ('PAID', 'REFUND_PENDING', 'REFUNDED')
     ), notices("key", "orderId", "type", "status", "at", "caseId", "caseKind") AS (
       SELECT 'order:' || o."id" || ':' || lower(state.status), o."id", 'order', state.status, state.at, NULL::uuid, NULL::text
       FROM owned o
@@ -73,8 +81,26 @@ function noticeSource(shopperId: string, orderId?: string) {
         COALESCE(p."collectedAt", p."createdAt"), NULL, NULL
       FROM owned o JOIN "Payment" p ON p."orderId" = o."id"
       WHERE (p."method" = 'COD' AND p."collectedAt" IS NOT NULL)
-        OR (p."method" <> 'COD' AND p."status" IN ('PAID', 'REFUND_PENDING', 'REFUNDED')
+        OR (p."method" NOT IN ('COD', 'PAYPAL') AND p."status" IN ('PAID', 'REFUND_PENDING', 'REFUNDED')
           AND (p."collectedAt" IS NOT NULL OR p."method" = 'SSLCOMMERZ'))
+
+      UNION ALL
+      SELECT 'order:' || pp."id" || ':paid', pp."id", 'order',
+        'PAYMENT_CONFIRMED', pp."paidAt", NULL, NULL
+      FROM paypal pp
+
+      UNION ALL
+      SELECT 'order:' || pp."id" || ':refund_requested', pp."id", 'refund',
+        'REFUND_REQUESTED', pp."refundStartedAt", NULL, NULL
+      FROM paypal pp
+      WHERE pp."status" IN ('REFUND_PENDING', 'REFUNDED') AND pp."refundStartedAt" IS NOT NULL
+
+      UNION ALL
+      SELECT 'order:' || pp."id" || ':refund_confirmed', pp."id", 'refund',
+        'REFUND_CONFIRMED', pp."cancelledAt", NULL, NULL
+      FROM paypal pp
+      WHERE pp."status" = 'REFUNDED' AND pp."refundId" IS NOT NULL
+        AND pp."refundStartedAt" IS NOT NULL AND pp."cancelledAt" IS NOT NULL
 
       UNION ALL
       SELECT 'case:' || e."id", o."id",
@@ -89,14 +115,14 @@ function noticeSource(shopperId: string, orderId?: string) {
   `;
 }
 
-export async function shopOrderNotifications(shopperId: string, { orderId, filter, before }: {
+export async function shopOrderNotifications(shopperId: string, marketId: MarketId, { orderId, filter, before }: {
   orderId?: string; filter: OrderNoticeFilter; before?: NoticeCursor;
 }) {
   const category = filter === "all" ? Prisma.empty : filter === "refunds"
     ? Prisma.sql`AND n."type" = 'refund'` : Prisma.sql`AND n."type" <> 'refund'`;
   const cursor = before ? Prisma.sql`AND (n."at", n."key") < (${before.at}::timestamp, ${before.key})` : Prisma.empty;
   const rows = await getDb().$queryRaw<ShopOrderNotice[]>`
-    ${noticeSource(shopperId, orderId)}
+    ${noticeSource(shopperId, marketId, orderId)}
     SELECT n.*, o."reference", (r."eventKey" IS NOT NULL) AS "read"
     FROM notices n JOIN owned o ON o."id" = n."orderId"
     LEFT JOIN "ShopperOrderNotificationRead" r ON r."shopperId" = ${shopperId} AND r."eventKey" = n."key"
@@ -109,10 +135,10 @@ export async function shopOrderNotifications(shopperId: string, { orderId, filte
   return { notices, next: last && rows.length > orderNoticePageSize ? `${last.at.toISOString()}~${last.key}` : null };
 }
 
-export async function markShopOrderNotificationsRead(shopperId: string, keys: string[]) {
+export async function markShopOrderNotificationsRead(shopperId: string, marketId: MarketId, keys: string[]) {
   if (!keys.length) return;
   await getDb().$executeRaw`
-    ${noticeSource(shopperId)}
+    ${noticeSource(shopperId, marketId)}
     INSERT INTO "ShopperOrderNotificationRead" ("shopperId", "orderId", "eventKey")
     SELECT ${shopperId}, "orderId", "key" FROM notices WHERE "key" IN (${Prisma.join(keys)})
     ON CONFLICT ("shopperId", "eventKey") DO NOTHING
