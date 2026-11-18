@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import PDFDocument from "pdfkit";
 import { store } from "../../config/store.ts";
-import { accountText } from "../marketplace/account-language.ts";
 import type { BangladeshOrderDocument } from "./bd-order-document.ts";
 
 const ink = "#191C2D";
@@ -19,9 +18,8 @@ function scriptRuns(text: string) {
 }
 
 function drawDocument(doc: PDFKit.PDFDocument, data: BangladeshOrderDocument) {
-  const t = (en: string, bn: string) => accountText(data.language, en, bn);
-  const number = new Intl.NumberFormat(data.language === "bn" ? "bn-BD" : "en-BD");
-  const decimal = new Intl.NumberFormat(data.language === "bn" ? "bn-BD" : "en-BD", {
+  const number = new Intl.NumberFormat("en-BD");
+  const decimal = new Intl.NumberFormat("en-BD", {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   });
   const money = (minor: number) => `BDT ${decimal.format(minor / 100)}`;
@@ -80,7 +78,7 @@ function drawDocument(doc: PDFKit.PDFDocument, data: BangladeshOrderDocument) {
 
   function topBar() {
     line(store.name, margin, margin, 20, accent);
-    line(t("STAGING PREVIEW", "স্টেজিং প্রিভিউ"), right, margin + 4, 10, accent, true);
+    line("STAGING PREVIEW", right, margin + 4, 10, accent, true);
     horizontalRule(margin + 37);
     y = margin + 55;
   }
@@ -100,13 +98,12 @@ function drawDocument(doc: PDFKit.PDFDocument, data: BangladeshOrderDocument) {
   }
 
   function itemHeader() {
-    const label = t("Items in this order", "এই অর্ডারের পণ্য");
-    heading(label);
+    heading("Items in this order");
     doc.rect(margin, y, width, 27).fill(paper);
-    line(t("Item", "পণ্য"), margin + 10, y + 6, 10, muted);
-    line(t("Qty", "সংখ্যা"), right - 113, y + 6, 10, muted, true);
+    line("Item", margin + 10, y + 6, 10, muted);
+    line("Qty", right - 113, y + 6, 10, muted, true);
     if (data.items.some(item => item.minor !== undefined)) {
-      line(t("Line total", "পণ্যের মোট"), right - 10, y + 6, 10, muted, true);
+      line("Line total", right - 10, y + 6, 10, muted, true);
     }
     y += 32;
   }
@@ -171,7 +168,7 @@ function drawDocument(doc: PDFKit.PDFDocument, data: BangladeshOrderDocument) {
   if (data.refunds.length) {
     y += 16;
     if (y + 60 > limit) nextPage();
-    heading(t("Confirmed refunds", "নিশ্চিত টাকা ফেরত"));
+    heading("Confirmed refunds");
     for (const refund of data.refunds) amountRow(refund.label, refund.minor);
     if (data.netPaid) amountRow(data.netPaid.label, data.netPaid.minor, true);
   }
@@ -195,7 +192,7 @@ function drawDocument(doc: PDFKit.PDFDocument, data: BangladeshOrderDocument) {
 export async function orderDocumentPdf(data: BangladeshOrderDocument) {
   // The OFL font sits under public/ so the standalone image ships its local copy.
   const font = resolve("public", "fonts", "NotoSansBengali.ttf");
-  const doc = new PDFDocument({ size: "A4", margin, font, bufferPages: true, lang: data.language,
+  const doc = new PDFDocument({ size: "A4", margin, font, bufferPages: true, lang: "en",
     info: { Title: `${data.title} ${data.reference}`, Author: store.name } });
   const chunks: Buffer[] = [];
   doc.on("data", (chunk: Buffer) => chunks.push(chunk));

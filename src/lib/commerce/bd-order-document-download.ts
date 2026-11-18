@@ -23,6 +23,7 @@ export async function downloadOrderDocument(data: BangladeshOrderDocument) {
   return new Response(new Uint8Array(pdf), { headers: {
     ...headers,
     "Content-Type": "application/pdf",
+    "Content-Language": "en",
     "Content-Disposition": `attachment; filename="${filename}"`,
     "Content-Length": `${pdf.byteLength}`,
     "X-Content-Type-Options": "nosniff",
