@@ -81,9 +81,10 @@ const workspace = z.object({
   from: z.iso.date().optional(), to: z.iso.date().optional(), creator: z.enum(["USER", "GUEST"]).optional(),
 }).strict().refine(value => !value.from || !value.to || value.from <= value.to);
 const reporting = z.object({
-  view: z.literal("reporting"), locations: warehouseIds.optional(), from: z.iso.date().optional(), to: z.iso.date().optional(), active: z.literal("1").optional(),
+  view: z.literal("reporting"), locations: warehouseIds.optional(), from: z.iso.date().optional(), to: z.iso.date().optional(),
+  active: z.literal("1").optional(), costs: z.literal("1").optional(),
 }).strict().refine(value => !value.from || !value.to || value.from <= value.to);
-type OrderQuery = { kind: "detail"; id: string } | { kind: "list"; limit: number; search: string; after?: Cursor } |
+type OrderQuery = { kind: "detail"; id: string; costs?: boolean } | { kind: "list"; limit: number; search: string; after?: Cursor } |
   { kind: "workspace"; filters: z.infer<typeof workspace> } | { kind: "reporting"; filters: z.infer<typeof reporting> };
 const workspaceLimit = 10_000;
 
@@ -111,10 +112,15 @@ export function readDevAdminOrderQuery(params: URLSearchParams): OrderQuery | nu
     const parsed = reporting.safeParse(Object.fromEntries(params));
     return parsed.success ? { kind: "reporting", filters: parsed.data } : null;
   }
-  const allowed = ["id", "limit", "search", "after"];
+  const allowed = ["id", "limit", "search", "after", "costs"];
   if (provided.some(key => !allowed.includes(key))) return null;
   const id = params.get("id");
-  if (id !== null) return provided.length === 1 && idFormat.safeParse(id).success ? { kind: "detail", id } : null;
+  const costs = params.get("costs");
+  if (id !== null) {
+    return idFormat.safeParse(id).success && provided.every(key => key === "id" || key === "costs") && (costs === null || costs === "1")
+      ? { kind: "detail", id, ...(costs && { costs: true }) } : null;
+  }
+  if (costs !== null) return null;
   const limit = params.get("limit") ?? "30";
   const search = params.get("search")?.trim() ?? "";
   const cursor = params.get("after");
@@ -125,7 +131,12 @@ export function readDevAdminOrderQuery(params: URLSearchParams): OrderQuery | nu
 
 export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
   if (query.kind === "detail") {
-    const row = await db.order.findFirst({ where: { ...devAdminOrderScope, id: query.id }, select: detail });
+    const readCost = query.costs === true;
+    const returnCost = readCost && { select: { amountMinor: true, evidenceReference: true } };
+    const row = await db.order.findFirst({ where: { ...devAdminOrderScope, id: query.id }, select: {
+      ...detail, bangladeshRefusedParcelReceipt: { select: { ...detail.bangladeshRefusedParcelReceipt.select, returnCost } },
+      cases: { ...detail.cases, select: { ...detail.cases.select, id: readCost, returnDisposition: readCost, returnCost } },
+    } });
     if (!row) return null;
     const { items, subtotalMinor, discountMinor, deliveryMinor, taxMinor, payment, ...summaryFields } = row;
     const manualProof = payment?.manualProof;
@@ -154,7 +165,7 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
   }
 
   if (query.kind === "reporting") {
-    const { from, to, active, locations } = query.filters;
+    const { from, to, active, locations, costs } = query.filters;
     const range = { ...(from && { gte: new Date(from + "T00:00:00.000+06:00") }),
       ...(to && { lte: new Date(to + "T23:59:59.999+06:00") }) };
     const dated: Prisma.OrderWhereInput[] = from || to ? [
@@ -169,8 +180,14 @@ export async function readDevAdminOrders(db: DbReader, query: OrderQuery) {
       { cases: { some: { kind: "RETURN", status: { in: ["OPEN", "IN_REVIEW", "RETURN_APPROVED"] } } } },
     ] : [];
     const matched = [...dated, ...current];
-    const rows = await db.order.findMany({ where: { ...devAdminOrderScope, ...(locations && { shippingWarehouseId: { in: locations } }), ...(matched.length && { OR: matched }) },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: workspaceLimit + 1, select: reportingSummary });
+    const returnCost = costs === "1" && { select: { amountMinor: true } };
+    const rows = await db.order.findMany({ where: { ...devAdminOrderScope,
+      ...(locations && { shippingWarehouseId: { in: locations } }), ...(matched.length && { OR: matched }) },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: workspaceLimit + 1, select: {
+        ...reportingSummary,
+        bangladeshRefusedParcelReceipt: { select: { ...reportingSummary.bangladeshRefusedParcelReceipt.select, returnCost } },
+        cases: { ...reportingSummary.cases, select: { ...reportingSummary.cases.select, returnDisposition: true, returnCost } },
+      } });
     return { reportOrders: rows.length > workspaceLimit ? [] : rows.map(orderSummary), tooMany: rows.length > workspaceLimit };
   }
 

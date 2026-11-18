@@ -17,11 +17,18 @@ const operator = z.object({
   name: z.string().trim().min(1).max(120).regex(/^[^\u0000-\u001f\u007f]+$/u),
   canReturn: z.boolean(),
   assignedWarehouseId: warehouseId.optional(),
+  canRecordReturnCost: z.boolean().optional(),
 }).strict();
 
 const text = z.string().trim().min(1).max(500);
+export const returnCostCommand = z.object({
+  action: z.literal("record-return-cost"), caseId: z.uuid().optional(),
+  amountMinor: z.number().int().min(0).max(2147483647),
+  evidence: z.string().trim().min(3).max(120).regex(/^[^\u0000-\u001f\u007f]+$/u),
+}).strict();
 const tracking = z.enum(["OUT_FOR_DELIVERY", "DELIVERED", "REFUSED"]);
 const command = z.discriminatedUnion("action", [
+  returnCostCommand,
   z.object({ action: z.literal("advance"), next: z.enum(["PACKING", "READY_TO_SHIP", "SHIPPED", "DELIVERED"]),
     carrier: text.optional(), trackingReference: text.optional(), simulate: z.boolean().optional(),
     warehouse: devAdminWarehouse.optional() }).strict(),

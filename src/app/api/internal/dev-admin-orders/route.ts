@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db/client";
 import { privateHeaders } from "@/lib/db/http";
 import { canReadDevAdminOrders, readDevAdminOrderQuery, readDevAdminOrders } from "@/lib/staff/dev-admin-orders";
 import { readDevAdminOrderProof } from "@/lib/staff/dev-admin-order-proof";
+import { recordHybridReturnCost } from "@/lib/staff/hybrid-return-cost";
 import { receiveBangladeshRefusedParcel } from "@/lib/commerce/bangladesh-returns";
 import { advanceFulfillment, cancelOrder, collectCash, OperationError, recordBangladeshTracking, reviewManualPayment } from "@/lib/staff/operations";
 
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
   const { id, operator, command } = proof;
   try {
     switch (command.action) {
+      case "record-return-cost": await recordHybridReturnCost(operator, id, command); break;
       case "advance": await advanceFulfillment(operator, id, command); break;
       case "track": await recordBangladeshTracking(operator, id, command); break;
       case "receive": await receiveBangladeshRefusedParcel(operator, id, command); break;
