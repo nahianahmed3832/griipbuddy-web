@@ -1,0 +1,18 @@
+.acquisition { display: grid; gap: 16px; min-width: 0; }
+.acquisition > .commerce-intro { margin-bottom: 4px; }
+.acquisition-table,
+.acquisition-payload { overflow: auto; min-width: 0; max-width: 100%; }
+.acquisition-table table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.acquisition-table :is(th, td) { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--color-line); }
+.acquisition-table thead th { background: var(--color-surface); white-space: nowrap; }
+.acquisition-table td:first-child { min-width: 150px; }
+.acquisition-table tbody tr:last-child :is(td, th) { border-bottom: 0; }
+.acquisition-table caption { padding: 4px 0 8px; text-align: left; font-weight: 650; }
+.acquisition-payload { padding: 14px; border: 1px solid var(--color-line); border-radius: 8px; }
+.acquisition-scores, .acquisition-search { display: grid; gap: 12px; margin: 0; }
+.acquisition-scores { grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
+.acquisition-scores > div { display: grid; align-content: start; gap: 4px; padding: 12px; border: 1px solid var(--color-line); border-radius: 8px; }
+.acquisition-scores dt, .acquisition-scores dd + dd { font-size: .9rem; }
+.acquisition-scores dd { margin: 0; font-variant-numeric: tabular-nums; }
+.acquisition-scores dt + dd { font-size: 1.65rem; font-weight: 650; }
+.acquisition-search { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }

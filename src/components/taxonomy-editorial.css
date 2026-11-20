@@ -1,0 +1,55 @@
+.taxonomy-editorial-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(235px, 30%);
+  gap: 16px;
+  align-items: start;
+}
+
+.taxonomy-editorial-grid.taxonomy-collection-layout {
+  grid-template-columns: minmax(225px, 28%) minmax(0, 1fr);
+}
+
+.taxonomy-editorial-grid > * { min-width: 0; }
+
+.taxonomy-editor-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.taxonomy-editor-list fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.taxonomy-editor-list legend {
+  padding: 0 6px;
+  font-weight: 750;
+}
+
+.taxonomy-editorial-sidebar nav ol {
+  margin: 0;
+  padding-inline-start: 20px;
+}
+
+.taxonomy-editorial-sidebar nav li + li { margin-top: 8px; }
+
+.taxonomy-collection-choices { display: grid; gap: 8px; }
+
+.taxonomy-collection-choices li {
+  display: grid;
+  gap: 3px;
+  padding: 9px 0;
+  overflow-wrap: anywhere;
+}
+
+.taxonomy-collection-choices li + li { border-top: 1px solid var(--line); }
+
+@media (max-width: 780px) {
+  .taxonomy-editorial-grid,
+  .taxonomy-editorial-grid.taxonomy-collection-layout { grid-template-columns: minmax(0, 1fr); }
+}

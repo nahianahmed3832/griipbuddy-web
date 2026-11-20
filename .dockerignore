@@ -1,0 +1,11 @@
+.git
+.DS_Store
+.env*
+.local
+.next
+node_modules
+src/generated
+test-results
+playwright-report
+docs/screenshots
+*.tsbuildinfo

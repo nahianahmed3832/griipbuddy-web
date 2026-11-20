@@ -1,53 +1,39 @@
-import { randomBytes } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { defineConfig } from '@playwright/test';
+import { config } from "dotenv";
+import { defineConfig } from "@playwright/test";
 
-const api = process.env.GRIIPBUDDY_TEST_SOURCE === 'api';
-const release = process.env.GRIIPBUDDY_TEST_SOURCE === 'release';
-const port = api ? 4321 : release ? 4322 : 4320;
-const baseURL = 'http://127.0.0.1:' + port;
-const peer = 4323;
-const paused = 4324;
-const token = () => randomBytes(32).toString('hex');
-
-if (release || api) {
-  process.env.GRIIPBUDDY_E2E_DIR ??= mkdtempSync(join(tmpdir(), 'griipbuddy-release-'));
-  process.env.GRIIPBUDDY_E2E_OPERATOR ??= token();
-  process.env.GRIIPBUDDY_E2E_STRIPE ??= token();
-  process.env.GRIIPBUDDY_E2E_PAYPAL ??= token();
-  process.env.GRIIPBUDDY_E2E_PAUSED = 'http://127.0.0.1:' + paused;
-  process.env.GRIIPBUDDY_E2E_PEER = 'http://127.0.0.1:' + peer;
+const isolated = process.env.GRIIPBUDDY_ENV_FILE === ".env.test";
+const stageURL = process.env.GRIIPBUDDY_STAGE_URL;
+const executablePath = process.env.GRIIPBUDDY_BROWSER;
+if (stageURL && (!stageURL.startsWith("https://") || isolated || !process.env.STAGING_USER || !process.env.STAGING_PASSWORD)) {
+  throw new Error("Use a dedicated HTTPS staging URL and its review credentials.");
+}
+if (isolated) {
+  config({ path: [".env.test", ".local/test-staff.env"], override: true, quiet: true });
+  const database = new URL(process.env.DATABASE_URL ?? "postgresql://invalid/invalid");
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(database.hostname) || database.pathname !== "/griipbuddy_test" || database.search) {
+    throw new Error("The database browser suite requires the isolated local test database.");
+  }
 }
 
-const server = (number: number) => ({
-  command: 'npm run start -- --port ' + number,
-  env: {
-    GRIIPBUDDY_CATALOG_API: api ? 'http://127.0.0.1:38100/api/v1' : '',
-    GRIIPBUDDY_COUNTRY_HEADER: 'x-griipbuddy-country',
-    GRIIPBUDDY_INTERNATIONAL_COUNTRY: 'US',
-    GRIIPBUDDY_SHIPPING_RATES: api ? '{"BD":{"currency":"BDT","feeMinor":8000}}' : '{"BD":{"currency":"BDT","feeMinor":8000},"US":{"currency":"USD","feeMinor":700}}',
-    GRIIPBUDDY_CHECKOUT_METHODS: '',
-    GRIIPBUDDY_CHECKOUT_PAUSED: number === paused ? '1' : '',
-    GRIIPBUDDY_CHECKOUT: release || api ? 'synthetic' : '',
-    GRIIPBUDDY_CHECKOUT_DIR: process.env.GRIIPBUDDY_E2E_DIR ?? '',
-    GRIIPBUDDY_CHECKOUT_OPERATOR_SECRET: process.env.GRIIPBUDDY_E2E_OPERATOR ?? '',
-    GRIIPBUDDY_STRIPE_SIM_SECRET: process.env.GRIIPBUDDY_E2E_STRIPE ?? '',
-    GRIIPBUDDY_PAYPAL_SIM_SECRET: process.env.GRIIPBUDDY_E2E_PAYPAL ?? '',
-    GRIIPBUDDY_CANONICAL_ORIGIN: baseURL,
-  },
-  url: 'http://127.0.0.1:' + number,
-  reuseExistingServer: false,
-  timeout: 30000,
-});
+const baseURL = stageURL ?? (isolated ? "http://127.0.0.1:3101" : "http://127.0.0.1:3100");
 
 export default defineConfig({
-  testDir: './tests',
-  outputDir: './test-results/' + (api ? 'api' : release ? 'release' : 'fixture'),
-  testMatch: release ? ['release-checkout.spec.ts', 'release-quality.spec.ts'] : api
-    ? ['catalog-api.spec.ts', 'cart-api.spec.ts', 'account-api.spec.ts'] : ['storefront.spec.ts', 'catalog.spec.ts', 'cart.spec.ts', 'account.spec.ts'],
-  reporter: 'list',
-  use: { baseURL, browserName: 'chromium', trace: 'retain-on-failure' },
-  webServer: release ? [server(port), server(peer), server(paused)] : server(port),
+  testDir: "./tests",
+  testMatch: "*.spec.ts",
+  fullyParallel: true,
+  workers: 2,
+  reporter: "list",
+  expect: { timeout: stageURL ? 15_000 : 5_000 },
+  use: {
+    baseURL, launchOptions: executablePath ? { executablePath, args: process.env.TEST_NO_DEFAULT_GPC === "1" ? ["--disable-features=BraveGlobalPrivacyControl"] : [] } : undefined, trace: "retain-on-failure",
+    httpCredentials: stageURL ? { username: process.env.STAGING_USER!, password: process.env.STAGING_PASSWORD!, origin: new URL(stageURL).origin } : undefined,
+  },
+  projects: [
+    { name: "desktop", use: { browserName: "chromium", viewport: { width: 1440, height: 1000 } } },
+    { name: "narrow-mobile", use: { browserName: "chromium", viewport: { width: 320, height: 780 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 } },
+  ],
+  webServer: stageURL ? undefined : {
+    command: isolated ? "npm start -- 3101" : "npm start",
+    url: baseURL, reuseExistingServer: !isolated, timeout: 45_000,
+  },
 });

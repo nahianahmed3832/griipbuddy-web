@@ -1,0 +1,36 @@
+.intelligence { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 20px; }
+.intel-header { display: grid; gap: 10px; padding: clamp(20px, 5vw, 44px); background: var(--color-surface); border-radius: 16px; border: 1px solid var(--color-line); }
+.intel-header h1 { font-size: clamp(2.15rem, 5vw, 4rem); line-height: 1.02; letter-spacing: -.05em; }
+.intel-header p { max-width: 65ch; }
+.intel-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--color-muted); font-size: .89rem; }
+.intel-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.intel-tabs .button { min-height: 44px; }
+.intel-scores { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 10px; margin: 0; }
+.intel-scores > div { padding: 15px; background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 10px; }
+.intel-scores dt { color: var(--color-muted); font-size: .84rem; }
+.intel-scores dd { margin: 3px 0 0; font-size: clamp(1.15rem, 3vw, 1.65rem); font-weight: 800; font-variant-numeric: tabular-nums; }
+.intel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 345px), 1fr)); gap: 12px; }
+.intel-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; padding: 16px; border: 1px solid var(--color-line); border-radius: 10px; overflow-wrap: anywhere; }
+.intel-card h3, .intel-panel h3 { font-weight: 800; font-size: 1rem; }
+.intel-card ul, .intel-panel ul { display: grid; gap: 5px; margin: 0; padding-inline-start: 1.3em; }
+.intel-card .intel-meta { font-weight: 650; }
+.intel-panel { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 12px; }
+.intel-panel details { min-width: 0; }
+.intel-panel h2 { font-size: 1.16rem; }
+.intel-table { width: 100%; min-width: 0; overflow-x: auto; }
+.intel-table table { width: 100%; border-collapse: collapse; font-size: .875rem; font-variant-numeric: tabular-nums; }
+.intel-table :is(th, td) { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--color-line); }
+.intel-table thead th { background: var(--color-surface); white-space: nowrap; }
+.intel-table tbody tr:last-child :is(th, td) { border: 0; }
+.intel-table tbody th { min-width: 145px; overflow-wrap: anywhere; }
+.intel-table a, .intel-panel a:not(.button), .intel-card a { color: var(--color-plum); text-decoration: underline; }
+.intel-definitions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 10px; margin: 0; }
+.intel-definitions dt { font-weight: 750; }
+.intel-definitions dd { margin: 2px 0 0; color: var(--color-muted); overflow-wrap: anywhere; }
+.intel-draft-form { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
+.intel-draft-form label { max-width: 100%; }
+.intel-draft-form [role=status] { flex-basis: 100%; }
+.intel-observation { margin: 12px 0 0; }
+.intel-observation textarea, .intelligence textarea { box-sizing: border-box; width: 100%; }
+.intel-panel summary { cursor: pointer; font-weight: 750; }
+.intel-muted { color: var(--color-muted); font-size: .88rem; }

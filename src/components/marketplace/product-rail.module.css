@@ -1,0 +1,65 @@
+.rail { min-width: 0; }
+
+.controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-block: 0 10px;
+}
+
+.controls button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: #151515;
+  background: #fff;
+  border: 1px solid #d5d5d5;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.controls button:hover { background: #f3f3f3; }
+
+.track {
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: inline mandatory;
+  padding: 4px 4px 12px;
+}
+
+.rail .track > :global(.product-grid) {
+  display: grid;
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - 48px) / 4);
+  gap: 16px;
+}
+
+.track li { scroll-snap-align: start; }
+
+.deviceLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.deviceLinks a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 13px;
+  color: currentColor;
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
+  background: #fff;
+  text-decoration: none;
+}
+
+.deviceLinks a:hover { border-color: currentColor; }
+
+@media (max-width: 700px) {
+  .rail .track > :global(.product-grid) { grid-auto-columns: min(44%, 240px); }
+  .track { scroll-padding-inline-start: 4px; }
+}
