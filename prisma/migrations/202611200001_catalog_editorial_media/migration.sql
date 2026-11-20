@@ -1,0 +1,1 @@
+ALTER TABLE "CatalogMedia" ADD COLUMN "editorial" BOOLEAN NOT NULL DEFAULT false;

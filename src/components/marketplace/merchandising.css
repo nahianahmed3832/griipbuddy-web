@@ -1,0 +1,173 @@
+.mp-prepaid-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 8px 13px;
+  background: #fbefda;
+  color: #663604;
+  font-size: .85rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.mp-prepaid-banner:hover { text-decoration: underline; }
+.mp-prepaid-banner svg { flex: none; }
+.mp-prepaid-banner + .mp-sale-banner, .mp-prepaid-banner + .mp-hero { margin-top: 7px; }
+
+.mp-sale-banner {
+  --sale-ink: #651d07;
+  --sale-paper: #fff5dc;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(12px, 3vw, 48px);
+  min-height: clamp(280px, 32vw, 420px);
+  padding: clamp(14px, 3vw, 44px);
+  overflow: hidden;
+  background: linear-gradient(117deg, #fbb66c, #f8834e 54%, #f58d88);
+  color: var(--sale-ink);
+}
+
+.mp-sale-banner[data-market="us"] {
+  --sale-ink: #fff4e8;
+  --sale-paper: #fff3ea;
+  background: linear-gradient(120deg, #470e15, #811523 57%, #a72a27);
+}
+
+.mp-sale-message { display: grid; justify-items: start; gap: 10px; }
+
+.mp-sale-message > p {
+  margin: 0;
+  font-size: .87rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.mp-sale-message h1 {
+  max-width: 11ch;
+  margin: 0;
+  font-size: clamp(2.65rem, 6.5vw, 6.25rem);
+  font-weight: 900;
+  line-height: .92;
+  letter-spacing: -.075em;
+}
+
+.mp-sale-terms {
+  min-height: 1.7em;
+  font-size: .88rem;
+  font-weight: 720;
+}
+
+.mp-sale-terms strong { font-variant-numeric: tabular-nums; }
+
+.mp-sale-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 9px 14px;
+  background: #221813;
+  color: #fff;
+  font-size: .88rem;
+  font-weight: 800;
+}
+
+.mp-sale-cta:hover { text-decoration: underline; }
+
+.mp-sale-products {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(6px, 1.5vw, 18px);
+}
+
+.mp-sale-product {
+  display: block;
+  overflow: hidden;
+  border: 3px solid var(--sale-paper);
+  background: var(--sale-paper);
+  color: #731c13;
+  transition: transform 150ms ease;
+}
+
+.mp-sale-product:hover { transform: translateY(-4px); }
+
+.mp-sale-photo { display: block; position: relative; aspect-ratio: .83; }
+.mp-sale-photo img { object-fit: cover; }
+
+.mp-sale-price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 6px;
+  padding: 5px;
+  font-size: clamp(.71rem, 1.6vw, 1.04rem);
+}
+
+.mp-sale-price del { color: #685144; font-size: .83em; }
+.mp-deals-section { margin-top: 17px; }
+
+.mp-subcategory-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.mp-subcategory-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 1px solid #dad6d3;
+  border-radius: 20px;
+  background: #fff;
+  color: #333;
+  font-weight: 700;
+}
+
+.mp-subcategory-links a:hover { border-color: #232323; }
+
+.mp-offer-percent {
+  position: absolute;
+  inset: 7px auto auto 7px;
+  padding: 4px 7px;
+  border-radius: 2px;
+  background: #a72c15;
+  color: #fff;
+  font-size: .75rem;
+  font-weight: 800;
+}
+
+.product-card .mp-card-low-stock,
+.product-card .mp-card-rating,
+.product-card .mp-card-sold {
+  margin: 3px 0 0;
+  font-size: .77rem;
+  font-weight: 700;
+}
+
+.mp-card-low-stock { color: #9e2e17; }
+.mp-card-rating > span:first-child { color: #9e4d08; }
+.mp-card-rating-count, .mp-card-sold { color: #555; }
+
+@media (max-width: 730px) {
+  .mp-sale-banner {
+    grid-template-columns: minmax(105px, 1.15fr) minmax(0, 1fr);
+    min-height: 210px;
+  }
+
+  .mp-sale-message { gap: 7px; }
+  .mp-sale-message h1 { font-size: clamp(2.05rem, 8vw, 3.35rem); }
+  .mp-sale-message > p, .mp-sale-terms { font-size: .74rem; }
+  .mp-sale-products { grid-template-columns: minmax(0, 1fr); }
+  .mp-sale-product + .mp-sale-product { display: none; }
+  .mp-sale-photo { aspect-ratio: 1.02; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-sale-product { transition: none; }
+  .mp-sale-product:hover { transform: none; }
+}

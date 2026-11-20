@@ -1,0 +1,74 @@
+.heading, .orderHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.hold {
+  padding: 5px 10px;
+  border: 1px solid #d9b885;
+  border-radius: 6px;
+  background: #fcf4e8;
+  color: #65441e;
+  font-size: .875rem;
+  font-weight: 700;
+}
+
+.summary, .orders {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-block-start: 14px;
+}
+
+.balance {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid #d5ded5;
+  border-radius: 11px;
+  padding: 15px;
+  background: #f5f8f4;
+}
+
+.balance > strong {
+  font-size: clamp(1.6rem, 4vw, 2.5rem);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.balance > strong span { font-size: 1rem; }
+.order h3 { font-weight: 700; }
+.orderBalance { text-align: end; }
+
+.breakdown div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-block-end: 1px solid #ddd;
+  padding-block: 5px;
+}
+
+.breakdown dd { text-align: end; font-variant-numeric: tabular-nums; }
+.breakdown + p { margin-block-start: 10px; }
+
+.progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-block: 12px 8px;
+}
+
+.progress div { padding: 7px 8px; background: #f5f5f5; border-radius: 6px; }
+.progress dt { font-size: .8rem; }
+.progress dd { font-weight: 650; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .summary, .orders { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 360px) {
+  .progress { grid-template-columns: minmax(0, 1fr); }
+}

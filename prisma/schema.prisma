@@ -1,0 +1,2035 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MarketCode {
+  bd
+  us
+}
+
+enum CurrencyCode {
+  BDT
+  USD
+}
+
+enum CollectionSelection {
+  CURATED
+  NEW
+  FEATURED
+}
+
+enum PublicationState {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum CatalogMigrationStatus {
+  RUNNING
+  PAUSED
+  FAILED
+  COMPLETED
+}
+
+enum DepartmentKind {
+  DEPARTMENT
+  CATEGORY
+  SUBCATEGORY
+}
+
+enum CatalogAttributeScope {
+  PRODUCT
+  VARIANT
+}
+
+enum CatalogAttributeType {
+  TEXT
+  NUMBER
+  BOOLEAN
+  ENUM
+}
+
+enum MenuPage {
+  HOME
+  SEARCH
+  SHOP
+}
+
+enum TaxTreatment {
+  MERCHANDISE_RATE
+}
+
+enum CommerceEvidence {
+  fixture
+  sandbox
+  production
+}
+
+enum OrderStatus {
+  PLACED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  COD
+  PAYPAL
+  SSLCOMMERZ
+}
+
+enum InventoryReservationState {
+  HELD
+  COMMITTED
+  RELEASED
+  EXPIRED
+  CANCELLED
+  PAYMENT_EXCEPTION
+}
+
+enum InventoryMovementKind {
+  RECEIPT
+  DISPATCH
+  RETURN
+  TRANSFER_IN
+  TRANSFER_OUT
+  ADJUSTMENT
+}
+
+enum PaymentStatus {
+  AWAITING_COLLECTION
+  COLLECTED
+  VOIDED
+  PAID
+  REFUND_PENDING
+  REFUNDED
+}
+
+enum CodRemittanceStatus {
+  DISCREPANCY
+  MATCHED
+}
+
+enum PayPalCheckoutState {
+  CREATING
+  APPROVAL
+  CAPTURING
+  COMPLETED
+  CANCELLED
+}
+
+enum PrepaidCheckoutState {
+  PREPARING
+  AWAITING_PAYMENT
+  PAID
+  CLOSED
+}
+
+enum FulfillmentStatus {
+  UNFULFILLED
+  PACKING
+  READY_TO_SHIP
+  SHIPPED
+  DELIVERED
+}
+
+enum SellerPreparationStatus {
+  PREPARING
+  READY
+  HANDED_OFF
+}
+
+enum FulfillmentEventType {
+  ORDER_PLACED
+  STATUS_CHANGED
+  ORDER_CANCELLED
+}
+
+enum StaffRole {
+  OWNER
+  PACKER
+}
+
+enum AuditAction {
+  STAFF_CREATED
+  STAFF_REVOKED
+  FULFILLMENT_CHANGED
+  ORDER_CANCELLED
+  CASH_COLLECTION_RECORDED
+  STOCK_CHANGED
+  PRICE_CHANGED
+  PRODUCT_SAVED
+  TAXONOMY_SAVED
+  MARKET_SETTINGS_CHANGED
+  MERCHANDISING_REVIEW
+  COUPON_CHANGED
+  MARKETPLACE_GRANT_CHANGED
+  BD_REFUSED_PARCEL_RECEIVED
+  BD_RETURN_CASE_RECEIVED
+  BD_CASE_PICKUP_SCHEDULED
+  BD_CASE_CANCELLATION_APPROVED
+  BD_CASE_REFUND_APPROVED
+  BD_EXCHANGE_SHIPPED
+}
+
+model Department {
+  id          String    @id
+  slug        String    @unique
+  name        String
+  shortName   String
+  description String
+  imageSrc    String
+  imageAlt    String
+  bannerSrc   String?  @db.VarChar(100)
+  bannerAlt   String?  @db.VarChar(180)
+  seoTitle    String?  @db.VarChar(120)
+  seoDescription String? @db.VarChar(320)
+  position    Int
+  parentId    String?
+  parent      Department?  @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children    Department[] @relation("DepartmentTree")
+  products    Product[]
+  kind        DepartmentKind?
+  state       PublicationState @default(ACTIVE)
+  revision    Int @default(0)
+  secondaryProducts ProductSecondaryCategory[]
+  translations DepartmentTranslation[]
+  slugAliases DepartmentSlugAlias[]
+  marketPresentations DepartmentMarketPresentation[]
+  attributeTemplates CategoryAttributeTemplate[]
+  menuItems MarketMenuItem[]
+
+  @@index([parentId, position])
+  @@index([parentId, position, id])
+}
+
+model DepartmentTranslation {
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  locale       String     @db.VarChar(35)
+  name         String
+  shortName    String
+  description  String
+  slug         String?    @db.VarChar(120)
+
+  @@id([departmentId, locale])
+  @@unique([locale, slug])
+  @@index([slug])
+}
+
+model DepartmentSlugAlias {
+  locale       String     @db.VarChar(35)
+  slug         String     @db.VarChar(120)
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  @@id([locale, slug])
+  @@index([slug])
+  @@index([departmentId])
+}
+
+model DepartmentMarketPresentation {
+  departmentId        String
+  department          Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  marketId            MarketCode
+  visibleInNavigation Boolean?
+  position            Int?
+  imageSrc            String?
+  imageAlt            String?
+
+  @@id([departmentId, marketId])
+  @@index([marketId, visibleInNavigation, position])
+}
+
+model CatalogAttributeDefinition {
+  id               String @id
+  name             String
+  scope            CatalogAttributeScope
+  dataType         CatalogAttributeType
+  allowedValues    String[] @default([])
+  variantOptionKey String? @unique
+  templates        CategoryAttributeTemplate[]
+}
+
+model CategoryAttributeTemplate {
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  attributeId  String
+  attribute    CatalogAttributeDefinition @relation(fields: [attributeId], references: [id], onDelete: Restrict)
+  required     Boolean @default(false)
+  filterable   Boolean @default(false)
+  position     Int @default(0)
+  inheritable  Boolean @default(true)
+  excluded     Boolean @default(false)
+
+  @@id([departmentId, attributeId])
+  @@index([attributeId])
+}
+
+model Product {
+  id             String              @id
+  slug           String              @unique
+  departmentId   String
+  department     Department          @relation(fields: [departmentId], references: [id])
+  name           String
+  brand          String?             @db.VarChar(70)
+  description    String
+  shortDescription String?
+  specifications Json
+  keywords       String[]
+  addedOn        DateTime            @db.Date
+  position       Int
+  newArrival     Boolean             @default(false)
+  featured       Boolean             @default(false)
+  active         Boolean             @default(true)
+  publication    PublicationState    @default(DRAFT)
+  demo           Boolean             @default(false)
+  revision       Int                 @default(0)
+  personalizationPrompt String? @db.VarChar(180)
+  personalizationRequired Boolean @default(false)
+  images         ProductImage[]
+  variants       Variant[]
+  collections    CollectionProduct[]
+  marketplaceShopId String? @db.Uuid
+  marketplaceShop MarketplaceShop? @relation(fields: [marketplaceShopId], references: [id], onDelete: Restrict)
+  favorites ShopperFavorite[]
+  savedIn ShopperListItem[]
+  reviews ShopperReview[]
+  secondaryCategories ProductSecondaryCategory[]
+  foundation     Boolean             @default(false)
+  attributeValues Json?
+  translations ProductTranslation[]
+  optionDefinitions ProductOption[]
+  migrationRedirects CatalogMigrationRedirect[] @relation("ProductMigrationTarget")
+  migratedFromSlug CatalogMigrationRedirect? @relation("ProductMigrationSource")
+
+  @@unique([id, departmentId])
+  @@index([departmentId])
+  @@index([publication, position])
+  @@index([marketplaceShopId, publication])
+}
+
+model CatalogMigrationRun {
+  id              String                 @id @db.Char(64)
+  version         String
+  status          CatalogMigrationStatus @default(RUNNING)
+  expectedBatches Int
+  failureCode     String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  checkpoints     CatalogMigrationCheckpoint[]
+  mappings        CatalogMigrationMapping[]
+}
+
+model CatalogMigrationCheckpoint {
+  runId        String              @db.Char(64)
+  run          CatalogMigrationRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  batchKey     String
+  sourceDigest String              @db.Char(64)
+  targetDigest String              @db.Char(64)
+  report       Json
+  completedAt  DateTime            @default(now())
+
+  @@id([runId, batchKey])
+}
+
+model CatalogMigrationMapping {
+  sourceSystem String
+  entity       String
+  sourceId     String
+  targetId     String
+  runId        String              @db.Char(64)
+  run          CatalogMigrationRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  createdAt    DateTime            @default(now())
+
+  @@id([sourceSystem, entity, sourceId])
+  @@index([entity, targetId])
+  @@index([runId])
+}
+
+model CatalogMigrationRedirect {
+  slug            String  @id
+  productId       String
+  product         Product @relation("ProductMigrationTarget", fields: [productId], references: [id], onDelete: Restrict)
+  sourceProductId String  @unique
+  sourceProduct   Product @relation("ProductMigrationSource", fields: [sourceProductId], references: [id], onDelete: Restrict)
+
+  @@index([productId])
+}
+
+model ProductTranslation {
+  productId        String
+  product          Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  locale           String  @db.VarChar(35)
+  name             String
+  description      String
+  shortDescription String?
+
+  @@id([productId, locale])
+}
+
+model ProductOption {
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id        String
+  key       String  @db.VarChar(40)
+  label     String
+  position  Int
+  values    ProductOptionValue[]
+
+  @@id([productId, id])
+  @@unique([productId, key])
+  @@index([productId, position, id])
+}
+
+model ProductOptionValue {
+  productId  String
+  optionId   String
+  option     ProductOption @relation(fields: [productId, optionId], references: [productId, id], onDelete: Cascade)
+  id         String
+  value      String
+  label      String
+  position   Int
+  selections VariantOptionSelection[]
+
+  @@id([productId, optionId, id])
+  @@unique([productId, optionId, value])
+  @@index([productId, optionId, position, id])
+}
+
+model ProductSecondaryCategory {
+  productId           String
+  primaryDepartmentId String
+  product             Product @relation(fields: [productId, primaryDepartmentId], references: [id, departmentId], onDelete: Cascade, onUpdate: Cascade)
+  departmentId        String
+  department          Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  @@id([productId, departmentId])
+  @@index([departmentId, productId])
+}
+
+model CatalogMedia {
+  id        String   @id @db.Char(64)
+  data      Bytes
+  editorial Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model MerchandisingCandidate {
+  id              String   @id @db.Char(64)
+  productId       String
+  source          Json
+  sourceVersion   String   @db.Char(64)
+  draft           Json
+  baseline        Json?
+  baseRevision    Int?
+  revision        Int      @default(1)
+  decision        String   @default("pending")
+  approval        Json?
+  ownsDraft       Boolean  @default(false)
+  catalogRevision Int?
+  stagedRevision  Int?
+  publishedAt     DateTime?
+  launch          Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([updatedAt])
+  @@index([productId, ownsDraft])
+}
+
+model ProductImage {
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  position  Int
+  src       String
+  alt       String
+  isPrimary Boolean @default(false)
+
+  @@id([productId, position])
+  @@index([src])
+}
+
+model Variant {
+  id        String        @id
+  sku       String        @unique
+  gtin      String?       @db.VarChar(14)
+  mpn       String?       @db.VarChar(70)
+  identifiersNotAssigned Boolean @default(false)
+  productId String
+  product   Product       @relation(fields: [productId], references: [id])
+  options   Json
+  label     String
+  imageSrc  String?
+  imageAlt  String?
+  position  Int
+  active    Boolean       @default(true)
+  inventory Inventory?
+  locationInventory LocationInventory[]
+  offers    MarketOffer[]
+  purchases OrderItem[]
+  exchangeReplacements OrderCaseReturnLine[] @relation("ExchangeReplacement")
+  shopperWatches ShopperVariantWatch[]
+  optionSignature String?
+  isDefault Boolean @default(false)
+  archivedAt DateTime?
+  attributeValues Json?
+  optionSelections VariantOptionSelection[]
+  compatibility VariantCompatibility[]
+  images VariantImage[]
+  managedInventory Boolean @default(false)
+  inventoryPools InventoryPool[]
+  offerIdentities MarketOfferIdentity[]
+
+  @@unique([id, productId])
+  @@unique([productId, optionSignature])
+  @@index([productId])
+  @@index([imageSrc])
+}
+
+model VariantOptionSelection {
+  variantId     String
+  productId     String
+  optionId      String
+  optionValueId String
+  variant       Variant            @relation(fields: [variantId, productId], references: [id, productId], onDelete: Cascade)
+  optionValue   ProductOptionValue @relation(fields: [productId, optionId, optionValueId], references: [productId, optionId, id], onDelete: Restrict)
+
+  @@id([variantId, optionId])
+  @@index([productId, optionId, optionValueId, variantId])
+}
+
+model VariantImage {
+  variantId String
+  variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  position  Int
+  src       String
+  alt       String
+  isPrimary Boolean @default(false)
+
+  @@id([variantId, position])
+  @@unique([variantId, src])
+  @@index([src])
+}
+
+model DeviceModel {
+  id            String @id
+  brand         String
+  name          String
+  lookupKey     String @unique
+  revision      Int    @default(0)
+  aliases       DeviceModelAlias[]
+  compatibility VariantCompatibility[]
+}
+
+model DeviceModelAlias {
+  lookupKey String @id
+  modelId   String
+  model     DeviceModel @relation(fields: [modelId], references: [id], onDelete: Restrict)
+  label     String
+
+  @@index([modelId])
+}
+
+model VariantCompatibility {
+  variantId String
+  variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  modelId   String
+  model     DeviceModel @relation(fields: [modelId], references: [id], onDelete: Restrict)
+
+  @@id([variantId, modelId])
+  @@index([modelId, variantId])
+}
+
+model Collection {
+  id          String              @id
+  slug        String              @unique
+  name        String
+  description String
+  selection   CollectionSelection @default(CURATED)
+  position    Int
+  imageSrc    String?
+  imageAlt    String?
+  revision    Int                 @default(0)
+  defaultPublished Boolean        @default(true)
+  products    CollectionProduct[]
+  menuItems   MarketMenuItem[]
+  marketPublications CollectionMarketPublication[]
+}
+
+model CollectionMarketPublication {
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  marketId     MarketCode
+  published    Boolean
+
+  @@id([collectionId, marketId])
+  @@index([marketId, published])
+}
+
+model MarketMenu {
+  id        String     @id @default(cuid())
+  marketId  MarketCode
+  key       String
+  locale    String     @default("") @db.VarChar(35)
+  revision  Int        @default(0)
+  items     MarketMenuItem[]
+
+  @@unique([marketId, key, locale])
+}
+
+model MarketMenuItem {
+  menuId       String
+  menu         MarketMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  position     Int
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+  page         MenuPage?
+  label        String? @db.VarChar(80)
+  visible      Boolean @default(true)
+
+  @@id([menuId, position])
+  @@index([departmentId])
+  @@index([collectionId])
+}
+
+model CollectionProduct {
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  position     Int?
+
+  @@id([collectionId, productId])
+  @@index([productId])
+  @@index([collectionId, position])
+}
+
+model MarketOffer {
+  variantId          String
+  variant            Variant      @relation(fields: [variantId], references: [id])
+  marketId           MarketCode
+  currency           CurrencyCode
+  amountMinor        Int
+  eligible           Boolean      @default(true)
+  discountMinor      Int?
+  discountStartsAt   DateTime?
+  discountEndsAt     DateTime?
+  offerId            String?      @unique @db.Uuid
+  identity           MarketOfferIdentity? @relation(fields: [offerId, variantId, marketId], references: [id, variantId, marketId], onDelete: Restrict)
+  publication        PublicationState @default(ACTIVE)
+  revision           Int          @default(0)
+
+  @@id([variantId, marketId])
+  @@unique([offerId, variantId, marketId])
+  @@index([marketId, eligible])
+}
+
+model MarketOfferIdentity {
+  id           String          @id @default(uuid()) @db.Uuid
+  variantId    String
+  variant      Variant         @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  marketId     MarketCode
+  sellerId     String          @db.Uuid
+  seller       MarketplaceShop @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  retiredAt    DateTime?
+  retiredTerms Json?
+  current      MarketOffer?
+  allocations  InventoryAllocation[]
+
+  @@unique([id, variantId, marketId])
+  @@index([variantId, marketId])
+  @@index([sellerId, marketId])
+}
+
+// Shared dispatch stock for variants that have not moved to location inventory.
+model Inventory {
+  variantId String   @id
+  variant   Variant  @relation(fields: [variantId], references: [id])
+  available Int
+  updatedAt DateTime @updatedAt
+}
+
+model DispatchLocation {
+  id        String              @id @default(cuid())
+  name      String              @db.VarChar(120)
+  marketId  MarketCode?
+  shopId    String?             @db.Uuid
+  shop      MarketplaceShop?    @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  active    Boolean             @default(true)
+  priority  Int                 @default(100)
+  inventory LocationInventory[]
+  parcels   OrderParcel[]
+  marketServices DispatchLocationMarket[]
+  pools InventoryPool[]
+
+  @@index([marketId, active, priority])
+  @@index([shopId])
+}
+
+model LocationInventory {
+  variantId  String
+  variant    Variant          @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  locationId String
+  location   DispatchLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  available  Int
+  updatedAt  DateTime         @updatedAt
+
+  @@id([variantId, locationId])
+  @@index([locationId])
+}
+
+model DispatchLocationMarket {
+  locationId String
+  location   DispatchLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  marketId   MarketCode
+  active     Boolean          @default(true)
+  priority   Int              @default(100)
+  districts  String[]         @default([])
+  methods    String[]         @default([])
+
+  @@id([locationId, marketId])
+  @@index([marketId, active, priority])
+}
+
+model InventoryPool {
+  id          String           @id @default(uuid()) @db.Uuid
+  variantId   String
+  variant     Variant          @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  ownerId     String           @db.Uuid
+  owner       MarketplaceShop  @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  locationId  String
+  location    DispatchLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  onHand      Int              @default(0)
+  reserved    Int              @default(0)
+  updatedAt   DateTime         @updatedAt
+  allocations InventoryAllocation[]
+  movements   InventoryMovement[] @relation("InventoryMovementPool")
+  relatedMovements InventoryMovement[] @relation("InventoryMovementRelatedPool")
+
+  @@unique([variantId, ownerId, locationId])
+  @@index([ownerId, locationId])
+  @@index([locationId])
+}
+
+model InventoryReservation {
+  id               String                    @id @default(uuid()) @db.Uuid
+  attemptId        String                    @unique @db.Uuid
+  attempt          CheckoutAttempt           @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  marketId         MarketCode
+  paymentMethod    PaymentMethod
+  state            InventoryReservationState @default(HELD)
+  requestHash      String                    @db.Char(64)
+  expiresAt        DateTime
+  orderId          String?                   @unique @db.Uuid
+  order            Order?                    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentReference String?
+  paymentAmountMinor Int?
+  paymentCurrency    CurrencyCode?
+  exceptionReason  String?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  allocations      InventoryAllocation[]
+
+  @@unique([paymentMethod, paymentReference])
+  @@index([state, expiresAt])
+  @@index([marketId, state])
+}
+
+model InventoryAllocation {
+  id            String               @id @default(uuid()) @db.Uuid
+  reservationId String               @db.Uuid
+  reservation   InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  offerId       String               @db.Uuid
+  offer         MarketOfferIdentity  @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  poolId        String               @db.Uuid
+  pool          InventoryPool        @relation(fields: [poolId], references: [id], onDelete: Restrict)
+  quantity      Int
+  amountMinor   Int
+  currency      CurrencyCode
+  offerRevision Int
+  dispatched    Int                  @default(0)
+  returned      Int                  @default(0)
+  movements     InventoryMovement[]
+
+  @@unique([reservationId, offerId, poolId])
+  @@unique([id, poolId])
+  @@index([offerId])
+  @@index([poolId])
+}
+
+model InventoryMovement {
+  id             String             @id @default(uuid()) @db.Uuid
+  poolId         String             @db.Uuid
+  pool           InventoryPool      @relation("InventoryMovementPool", fields: [poolId], references: [id], onDelete: Restrict)
+  relatedPoolId  String?            @db.Uuid
+  relatedPool    InventoryPool?     @relation("InventoryMovementRelatedPool", fields: [relatedPoolId], references: [id], onDelete: Restrict)
+  allocationId   String?            @db.Uuid
+  allocation     InventoryAllocation? @relation(fields: [allocationId, poolId], references: [id, poolId], onDelete: Restrict)
+  idempotencyKey String
+  kind           InventoryMovementKind
+  quantity       Int
+  reason         String
+  reference      String
+  actorId        String?
+  createdAt      DateTime           @default(now())
+
+  @@unique([poolId, idempotencyKey])
+  @@index([poolId, createdAt])
+  @@index([allocationId])
+  @@index([relatedPoolId])
+  @@index([kind, reference])
+}
+
+model CheckoutPolicy {
+  marketId       MarketCode   @id
+  countryCode    String       @db.Char(2)
+  currency       CurrencyCode
+  enabled        Boolean      @default(false)
+  codEnabled     Boolean      @default(false)
+  revision       Int          @default(0)
+  taxTreatment   TaxTreatment?
+  taxBasisPoints Int?
+  taxLabel       String?
+  deliveryZones  DeliveryZone[]
+}
+
+model DeliveryZone {
+  marketId      MarketCode
+  policy        CheckoutPolicy @relation(fields: [marketId], references: [marketId])
+  district      String
+  districtLabel String
+  method        String
+  label         String
+  chargeMinor   Int?
+  guidance      String?
+  codEligible   Boolean        @default(true)
+  revision      Int            @default(0)
+  enabled       Boolean        @default(true)
+
+  @@id([marketId, district, method])
+}
+
+model CheckoutAttempt {
+  id          String   @id @db.Uuid
+  guestKey    String   @db.VarChar(64)
+  requestHash String   @db.VarChar(64)
+  createdAt   DateTime @default(now())
+  abandonedAt DateTime?
+  recoveredCart Json?
+  marketId    MarketCode?
+  paymentMethod PaymentMethod?
+  commerceEvidence CommerceEvidence?
+  commercialSnapshot Json?
+  order       Order?
+  paypal      PayPalCheckout?
+  prepaid     PrepaidCheckout?
+  measurement MeasurementAttempt?
+  inventoryReservation InventoryReservation?
+
+  @@index([marketId, commerceEvidence])
+}
+
+model PayPalCheckout {
+  attemptId       String              @id @db.Uuid
+  attempt         CheckoutAttempt     @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  state           PayPalCheckoutState @default(CREATING)
+  checkout        Json?
+  quote           Json?
+  stockAllocations Json?
+  shopperId       String?
+  providerOrderId String?             @unique
+  approvalUrl     String?
+  captureId       String?             @unique
+  captureStartedAt DateTime?
+  refundId        String?             @unique
+  refundStartedAt DateTime?
+  refundActorId   String?
+  providerFailedAt DateTime?
+  providerFailureCode String? @db.VarChar(24)
+  expiresAt       DateTime
+
+  @@index([state, expiresAt])
+  @@index([providerFailedAt])
+}
+
+model PrepaidCheckout {
+  attemptId           String               @id @db.Uuid
+  attempt             CheckoutAttempt      @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  providerId          String               @unique @db.VarChar(30)
+  state               PrepaidCheckoutState @default(PREPARING)
+  checkout            Json?
+  quote               Json?
+  stockAllocations    Json?
+  marketplaceShopIds  Json?
+  shopperId           String?
+  direct              Boolean              @default(false)
+  couponCode          String?              @db.VarChar(32)
+  redirectUrl         String?
+  bankTransactionId   String?              @unique
+  providerFailedAt    DateTime?
+  providerFailureCode String?              @db.VarChar(24)
+  expiresAt           DateTime
+
+  @@index([state, expiresAt])
+  @@index([couponCode, state])
+  @@index([providerFailedAt])
+}
+
+model Order {
+  id                String            @id @default(uuid()) @db.Uuid
+  reference         String            @unique
+  attemptId         String            @unique @db.Uuid
+  attempt           CheckoutAttempt   @relation(fields: [attemptId], references: [id])
+  marketId          MarketCode
+  currency          CurrencyCode
+  status            OrderStatus       @default(PLACED)
+  fulfillmentStatus FulfillmentStatus @default(UNFULFILLED)
+  customerName      String
+  phone             String
+  email             String?
+  district          String
+  districtLabel     String
+  locality          String
+  address           String
+  postalCode        String?
+  deliveryMethod    String
+  deliveryLabel     String
+  deliveryGuidance  String?
+  taxLabel          String
+  subtotalMinor     Int
+  discountMinor     Int
+  deliveryMinor     Int
+  taxMinor          Int
+  totalMinor        Int
+  carrier           String?
+  trackingReference String?
+  cancelledAt       DateTime?
+  // Null identifies historical rows whose test/live classification is unknown.
+  measurementTest   Boolean?
+  commerceEvidence  CommerceEvidence?
+  commercialSnapshot Json?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  items             OrderItem[]
+  payment           Payment?
+  events            FulfillmentEvent[]
+  codRemittances    CodRemittance[]
+  contributionEvidence OrderContributionEvidence?
+  sellerFulfillments MarketplaceSellerFulfillment[]
+  measurement       MeasurementOrder?
+  shopperId         String?
+  shopper           Shopper? @relation(fields: [shopperId], references: [id], onDelete: SetNull)
+  gift              Boolean @default(false)
+  giftNote          String?
+  couponCode        String?           @db.VarChar(32)
+  couponDiscountMinor Int             @default(0)
+  prepaidDiscountMinor Int            @default(0)
+  requests          ShopperRequest[]
+  reviews           ShopperReview[]
+  cases             OrderCase[]
+  bangladeshShipment BangladeshShipment?
+  bangladeshRefusedParcelReceipt BangladeshRefusedParcelReceipt?
+  parcels           OrderParcel[]
+  inventoryReservation InventoryReservation?
+
+  @@index([createdAt, id])
+  @@index([status, fulfillmentStatus, createdAt])
+  @@index([shopperId, createdAt])
+  @@index([couponCode])
+  @@index([marketId, measurementTest, createdAt])
+}
+
+model OrderContributionEvidence {
+  orderId String @id @db.Uuid
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  currency CurrencyCode
+  source String @db.VarChar(64)
+  verifiedThrough DateTime
+  revenueBeforeRefundsMinor Int?
+  refundsMinor Int?
+  itemCostMinor Int?
+  packagingMinor Int?
+  outboundMinor Int?
+  returnMinor Int?
+  paymentFeesMinor Int?
+}
+
+enum MeasurementKind {
+  PRODUCT_VIEW
+  CART_ADD
+  CHECKOUT_START
+  PRODUCT_IMPRESSION
+  HOMEPAGE_SECTION_IMPRESSION
+  PRODUCT_CLICK
+  SEARCH
+  SEARCH_FILTER
+  CART_UPDATE
+  CART_REMOVE
+  WISHLIST_ADD
+  WISHLIST_REMOVE
+  CHECKOUT_STEP
+  CHECKOUT_FAILURE
+  ACCOUNT_ASSOCIATED
+  EXPERIMENT_EXPOSURE
+  CATEGORY_IMPRESSION
+  CATEGORY_CLICK
+  CATEGORY_FILTER
+  VARIANT_SELECTION
+}
+
+model MeasurementJourney {
+  id        String   @id @db.VarChar(64)
+  test      Boolean
+  automated Boolean  @default(false)
+  grantedAt DateTime @default(now())
+  expiresAt DateTime
+  events    MeasurementEvent[]
+  orders    MeasurementOrder[]
+  attempts  MeasurementAttempt[]
+  bridgeHandoffs BridgeMeasurement[]
+  experimentAssignments RecommendationExperimentAssignment[]
+  recommendationPreference RecommendationPreference?
+
+  @@index([expiresAt])
+}
+
+model ProductIntelligenceSnapshot {
+  marketId          MarketCode
+  test              Boolean
+  variantId         String
+  slot              DateTime
+  observedAt        DateTime
+  currency          CurrencyCode
+  priceMinor        Int
+  discountMinor     Int
+  available         Int?
+  deliveryAvailable Boolean?
+  source            String      @db.VarChar(32)
+
+  @@id([marketId, test, variantId, slot], map: "ProductIntelligenceSnapshot_pkey")
+  @@index([marketId, test, observedAt], map: "ProductIntelligenceSnapshot_window_idx")
+}
+
+model RecommendationPreference {
+  journeyId    String             @id @db.VarChar(64)
+  journey      MeasurementJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  enabled      Boolean            @default(false)
+  since        DateTime           @default(now())
+  shopperKey   String?            @db.VarChar(64)
+  associatedAt DateTime?
+}
+
+model RecommendationAccountReset {
+  shopperId String   @id
+  shopper   Shopper  @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  since     DateTime @default(now())
+}
+
+enum BridgeOutcomeKind {
+  ORDER_ACCEPTED
+  ORDER_DELIVERED
+  COD_COLLECTED
+  COD_REMITTED
+}
+
+model BridgeOrder {
+  id             String           @id @db.VarChar(64)
+  authority      String           @db.VarChar(64)
+  marketId       MarketCode
+  evidence       CommerceEvidence
+  currency       CurrencyCode
+  paymentMethod  PaymentMethod
+  createdAt      DateTime
+  subtotalMinor  Int?
+  discountMinor  Int?
+  taxMinor       Int?
+  deliveryMinor  Int?
+  totalMinor     Int
+  lines          Json?
+  importedAt     DateTime         @default(now())
+  measurementClaimed Boolean     @default(false)
+  events         BridgeOutcome[]
+  measurement    BridgeMeasurement?
+
+  @@index([marketId, evidence, createdAt])
+}
+
+model BridgeOutcome {
+  id              String            @id @db.VarChar(64)
+  orderId         String            @db.VarChar(64)
+  order           BridgeOrder       @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  kind            BridgeOutcomeKind
+  at              DateTime
+  amountMinor     Int?
+  grossMinor      Int?
+  deductionsMinor Int?
+
+  @@unique([orderId, kind])
+}
+
+model BridgeMeasurement {
+  id         String             @id @db.VarChar(64)
+  authority  String             @db.VarChar(64)
+  marketId   MarketCode
+  journeyId  String             @db.VarChar(64)
+  journey    MeasurementJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  sessionId  String             @db.Uuid
+  cartDigest String             @db.VarChar(64)
+  issuedAt   DateTime
+  expiresAt  DateTime
+  orderId    String?            @unique @db.VarChar(64)
+  order      BridgeOrder?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([journeyId])
+}
+
+model MeasurementEvent {
+  id        String             @id @db.VarChar(64)
+  journeyId String             @db.VarChar(64)
+  journey   MeasurementJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  kind      MeasurementKind
+  marketId  MarketCode
+  productId String?            @db.VarChar(100)
+  variantId String?            @db.VarChar(100)
+  quantity  Int?
+  campaign  String?            @db.VarChar(64)
+  campaignSource String?       @db.VarChar(32)
+  schemaVersion Int            @default(1)
+  sessionId String?            @db.Uuid
+  accountKey String?           @db.VarChar(64)
+  amountMinor Int?
+  currency CurrencyCode?
+  placement String?            @db.VarChar(100)
+  position Int?
+  homepageConfig String?       @db.VarChar(100)
+  experimentAssignment String? @db.VarChar(100)
+  recommendationVersion String? @db.VarChar(100)
+  details Json?
+  at        DateTime           @default(now())
+  receivedAt DateTime          @default(now())
+
+  @@index([journeyId, marketId, kind, at])
+  @@index([at, id])
+  @@index([marketId, at])
+  @@index([experimentAssignment, kind])
+}
+
+enum RecommendationExperimentVariant {
+  control
+  personalized
+}
+
+model RecommendationExperimentAssignment {
+  id            String @id @db.VarChar(64)
+  experimentId  String @db.VarChar(64)
+  marketId      MarketCode
+  journeyId     String @db.VarChar(64)
+  journey       MeasurementJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  variant       RecommendationExperimentVariant
+  assignedAt    DateTime @default(now())
+  preferenceSince DateTime
+  latencyMs     Int?
+
+  @@unique([experimentId, marketId, journeyId], map: "RecommendationExperimentAssignment_unit_key")
+  @@index([journeyId])
+  @@index([marketId, experimentId, assignedAt], map: "RecommendationExperimentAssignment_cohort_idx")
+}
+
+model MeasurementOrder {
+  orderId   String             @id @db.Uuid
+  order     Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  journeyId String             @db.VarChar(64)
+  journey   MeasurementJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  sessionId String?            @db.Uuid
+
+  @@index([journeyId])
+}
+
+model MeasurementAttempt {
+  attemptId String             @id @db.Uuid
+  attempt   CheckoutAttempt    @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  journeyId String             @db.VarChar(64)
+  journey   MeasurementJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  marketId  MarketCode
+  sessionId String             @db.Uuid
+
+  @@index([journeyId])
+}
+
+model OrderItem {
+  id                String       @id @default(uuid()) @db.Uuid
+  orderId           String       @db.Uuid
+  order             Order        @relation(fields: [orderId], references: [id])
+  variantId         String
+  variant           Variant      @relation(fields: [variantId], references: [id])
+  productName       String
+  sku               String
+  variantName       String
+  quantity          Int
+  unitPriceMinor    Int
+  unitDiscountMinor Int
+  lineTotalMinor    Int
+  couponDiscountMinor Int @default(0)
+  prepaidDiscountMinor Int @default(0)
+  currency          CurrencyCode
+  marketplaceShopId String? @db.Uuid
+  personalization   String  @default("") @db.VarChar(120)
+  productIdSnapshot String?
+  offerIdSnapshot   String? @db.Uuid
+  cartOfferIdSnapshot String? @db.Uuid
+  cartVariantIdSnapshot String?
+  optionsSnapshot   Json?
+  imageSrcSnapshot  String?
+  imageAltSnapshot  String?
+  marketplaceShopNameSnapshot String?
+  returnCaseLines   OrderCaseReturnLine[]
+  parcelItems       OrderParcelItem[]
+
+  @@unique([orderId, variantId, personalization])
+  @@index([marketplaceShopId, orderId])
+}
+
+model Payment {
+  orderId        String        @id @db.Uuid
+  order          Order         @relation(fields: [orderId], references: [id])
+  method         PaymentMethod
+  status         PaymentStatus @default(AWAITING_COLLECTION)
+  amountMinor    Int
+  currency       CurrencyCode
+  collectedAt    DateTime?
+  collectedById  String?
+  collectedBy    User?         @relation("PaymentCollector", fields: [collectedById], references: [id])
+  createdAt      DateTime      @default(now())
+}
+
+enum BangladeshShipmentStatus {
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  REFUSED
+}
+
+enum BangladeshShipmentSource {
+  MANUAL
+  DEV_SIMULATOR
+}
+
+enum OrderParcelStatus {
+  PLANNED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  REFUSED
+  RETURNED
+}
+
+model OrderParcel {
+  id                String                      @id @default(uuid()) @db.Uuid
+  orderId           String                      @db.Uuid
+  order             Order                       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  locationId        String
+  location          DispatchLocation            @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  locationName      String                      @db.VarChar(120)
+  status            OrderParcelStatus           @default(PLANNED)
+  carrier           String?                     @db.VarChar(60)
+  trackingReference String?                     @db.VarChar(80)
+  source            BangladeshShipmentSource?
+  statusUpdatedAt   DateTime                    @default(now())
+  receivedAt        DateTime?
+  returnDisposition BangladeshReturnDisposition?
+  items             OrderParcelItem[]
+  events            OrderParcelEvent[]
+
+  @@unique([orderId, locationId])
+  @@unique([orderId, trackingReference])
+  @@index([locationId])
+}
+
+model OrderParcelItem {
+  parcelId    String      @db.Uuid
+  parcel      OrderParcel @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  orderItemId String      @db.Uuid
+  orderItem   OrderItem   @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  quantity    Int
+
+  @@id([parcelId, orderItemId])
+  @@index([orderItemId])
+}
+
+model OrderParcelEvent {
+  parcelId   String            @db.Uuid
+  parcel     OrderParcel       @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  status     OrderParcelStatus
+  actorId    String?
+  evidence   String?           @db.VarChar(200)
+  recordedAt DateTime          @default(now())
+
+  @@id([parcelId, status])
+}
+
+model BangladeshShipment {
+  orderId           String                   @id @db.Uuid
+  order             Order                    @relation(fields: [orderId], references: [id])
+  carrier           String                   @db.VarChar(60)
+  trackingReference String                   @db.VarChar(80)
+  status            BangladeshShipmentStatus
+  source            BangladeshShipmentSource
+  statusUpdatedAt   DateTime                 @default(now())
+  events            BangladeshShipmentEvent[]
+}
+
+model BangladeshShipmentEvent {
+  orderId    String                   @db.Uuid
+  shipment   BangladeshShipment       @relation(fields: [orderId], references: [orderId])
+  status     BangladeshShipmentStatus
+  actorId    String
+  evidence   String?                  @db.VarChar(200)
+  recordedAt DateTime                 @default(now())
+
+  @@id([orderId, status])
+}
+
+model CodRemittance {
+  orderId            String              @db.Uuid
+  order              Order               @relation(fields: [orderId], references: [id])
+  attempt            Int
+  status             CodRemittanceStatus
+  reference          String              @db.VarChar(80)
+  expectedGrossMinor Int
+  grossMinor         Int
+  deductionsMinor    Int
+  netMinor           Int
+  actorId            String?
+  actor              User?               @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt          DateTime            @default(now())
+
+  @@id([orderId, attempt])
+  @@index([status, orderId])
+}
+
+model FulfillmentEvent {
+  id          String               @id @default(uuid()) @db.Uuid
+  orderId     String               @db.Uuid
+  order       Order                @relation(fields: [orderId], references: [id])
+  actorId     String?
+  actor       User?                @relation("FulfillmentActor", fields: [actorId], references: [id])
+  type        FulfillmentEventType
+  status      FulfillmentStatus
+  createdAt   DateTime             @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model StaffAccess {
+  userId    String    @id
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      StaffRole
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  marketGrants StaffMarketAccess[]
+}
+
+model StaffMarketAccess {
+  userId        String
+  staff         StaffAccess @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  marketId      MarketCode
+  merchandising Boolean    @default(false)
+  reporting     Boolean    @default(false)
+  operations    Boolean    @default(false)
+  commercial    Boolean    @default(false)
+
+  @@id([userId, marketId])
+}
+
+model HomepageContent {
+  key             String            @id @db.VarChar(60)
+  marketId        MarketCode?
+  locale          String?           @db.VarChar(35)
+  draft           Json
+  revision        Int               @default(1)
+  publishedId     String?           @unique @db.Uuid
+  published       HomepageRelease?  @relation("PublishedHomepage", fields: [publishedId], references: [id], onDelete: Restrict)
+  history         HomepageRelease[] @relation("HomepageHistory")
+  updatedAt       DateTime          @updatedAt
+}
+
+model HomepageRelease {
+  id          String           @id @default(uuid()) @db.Uuid
+  scopeKey    String           @db.VarChar(60)
+  scope       HomepageContent  @relation("HomepageHistory", fields: [scopeKey], references: [key], onDelete: Restrict)
+  activeIn    HomepageContent? @relation("PublishedHomepage")
+  content     Json
+  actorId     String
+  restoredFrom String?         @db.Uuid
+  publishedAt DateTime         @default(now())
+
+  @@index([scopeKey, publishedAt])
+}
+
+model AuditEvent {
+  id         String      @id @default(uuid()) @db.Uuid
+  actorId    String?
+  actor      User?       @relation("AuditActor", fields: [actorId], references: [id])
+  action     AuditAction
+  target     String
+  changes    Json
+  createdAt  DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([target, createdAt])
+}
+
+enum IntelligenceDraftKind {
+  COLLECTION
+  PRODUCT_TEST
+  PURCHASING
+}
+
+enum IntelligenceOutcome {
+  POSITIVE
+  NEGATIVE
+  INCONCLUSIVE
+}
+
+enum OperationalWorkflowKind {
+  MARKET_TEST
+  HOMEPAGE
+  PURCHASING
+  CONVERSION
+  LISTING
+}
+
+enum OperationalWorkflowAction {
+  HOME_DRAFT
+  HOME_PUBLISH
+  HOME_ROLLBACK
+  PURCHASE_PROPOSAL
+  TEST_PLAN
+  CONVERSION_TASK
+  LISTING_DRAFT
+}
+
+enum OperationalWorkflowStatus {
+  DRAFT
+  READY
+  AWAITING_DECISION
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum OperationalWorkflowJobStatus {
+  QUEUED
+  LEASED
+  DONE
+  DEAD
+  CANCELLED
+}
+
+enum OperationalWorkflowOutcome {
+  SUCCESSFUL
+  UNSUCCESSFUL
+  INCONCLUSIVE
+}
+
+model OperationalWorkflow {
+  id                  String                     @id @default(uuid()) @db.Uuid
+  marketId            MarketCode
+  test                Boolean
+  kind                OperationalWorkflowKind
+  action              OperationalWorkflowAction
+  status              OperationalWorkflowStatus @default(DRAFT)
+  ownerId             String
+  agentRole           String?                    @db.VarChar(24)
+  requestKey          String                     @db.VarChar(120)
+  inputFingerprint    String                     @db.Char(64)
+  targetKey           String                     @db.VarChar(240)
+  resourceKey         String                     @db.VarChar(260)
+  resourceHeld        Boolean                    @default(false)
+  policyVersion       String                     @db.VarChar(120)
+  approvedBy          String?
+  approvedPolicy      String?                    @db.VarChar(120)
+  title               String                     @db.VarChar(220)
+  expectedOutcome     String                     @db.VarChar(500)
+  uncertainty         String                     @db.VarChar(500)
+  evidence            Json
+  payload             Json
+  benefit             Int?
+  confidence          Int?
+  effort              Int?
+  stock               Int?
+  budgetMinor         Int?
+  budgetCurrency      CurrencyCode?
+  budgetLedgerKey     String?                    @db.VarChar(120)
+  committedMinor      Int                        @default(0)
+  spentMinor          Int                        @default(0)
+  evidenceExpiresAt   DateTime
+  outcomeReviewAt     DateTime
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  completedAt         DateTime?
+  blockReason         String?                    @db.VarChar(500)
+  result              Json?
+  job                 OperationalWorkflowJob?
+  events              OperationalWorkflowEvent[]
+  reviews             OperationalWorkflowReview[]
+
+  @@unique([marketId, test, requestKey])
+  @@index([marketId, test, status, createdAt])
+  @@index([test, budgetLedgerKey, budgetCurrency])
+  @@index([status, outcomeReviewAt])
+}
+
+model OperationalWorkflowJob {
+  workflowId       String                       @id @db.Uuid
+  workflow         OperationalWorkflow         @relation(fields: [workflowId], references: [id], onDelete: Restrict)
+  status           OperationalWorkflowJobStatus @default(QUEUED)
+  attempts         Int                          @default(0)
+  maxAttempts      Int
+  availableAt      DateTime
+  leaseUntil       DateTime?
+  leaseToken       String?                      @db.Uuid
+  workerId         String?                      @db.VarChar(100)
+  retryable        Boolean                      @default(false)
+  lastError        String?                      @db.VarChar(500)
+  updatedAt        DateTime                     @updatedAt
+
+  @@index([status, availableAt])
+  @@index([status, leaseUntil])
+}
+
+model OperationalWorkflowEvent {
+  id          String               @id @default(uuid()) @db.Uuid
+  workflowId  String               @db.Uuid
+  workflow    OperationalWorkflow  @relation(fields: [workflowId], references: [id], onDelete: Restrict)
+  actorId     String?
+  event       String               @db.VarChar(48)
+  detail      Json
+  createdAt   DateTime             @default(now())
+
+  @@index([workflowId, createdAt])
+}
+
+model OperationalWorkflowReview {
+  id          String                     @id @default(uuid()) @db.Uuid
+  workflowId  String                     @db.Uuid
+  workflow    OperationalWorkflow        @relation(fields: [workflowId], references: [id], onDelete: Restrict)
+  reviewKey   String                     @db.VarChar(120)
+  outcome     OperationalWorkflowOutcome
+  evidence    Json
+  createdAt   DateTime                   @default(now())
+
+  @@unique([workflowId, reviewKey])
+  @@index([workflowId, createdAt])
+}
+
+model IntelligenceDraft {
+  id          String                @id @db.Char(64)
+  marketId    MarketCode
+  test        Boolean
+  kind        IntelligenceDraftKind
+  sourceId    String                @db.VarChar(120)
+  from        DateTime              @db.Date
+  through     DateTime              @db.Date
+  actorId     String
+  evidence    Json
+  createdAt   DateTime              @default(now())
+  observations IntelligenceDraftObservation[]
+
+  @@index([marketId, test, createdAt])
+}
+
+model IntelligenceDraftObservation {
+  id          String             @id @db.Char(64)
+  draftId     String             @db.Char(64)
+  draft       IntelligenceDraft  @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  actorId     String
+  result      IntelligenceOutcome
+  from        DateTime           @db.Date
+  through     DateTime           @db.Date
+  note        String             @db.VarChar(500)
+  createdAt   DateTime           @default(now())
+
+  @@index([draftId, createdAt])
+}
+
+// Better Auth's credential, session, and verification schema.
+model User {
+  id            String             @id
+  name          String
+  email         String             @unique
+  emailVerified Boolean            @default(false)
+  image         String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  staff         StaffAccess?
+  collections   Payment[]          @relation("PaymentCollector")
+  codRemittances CodRemittance[]
+  fulfillment   FulfillmentEvent[] @relation("FulfillmentActor")
+  audit         AuditEvent[]       @relation("AuditActor")
+  caseEvents    OrderCaseEvent[]
+  refusedParcelReceipts BangladeshRefusedParcelReceipt[]
+  returnCaseReceipts OrderCase[] @relation("ReturnCaseReceiver")
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@unique([providerId, accountId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model RateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+
+  @@map("rateLimit")
+}
+
+model RequestQuota {
+  key       String   @id @db.Char(64)
+  resetsAt  DateTime
+  hits      Int
+
+  @@index([resetsAt])
+}
+
+model Shopper {
+  id String @id
+  name String
+  email String @unique
+  emailVerified Boolean @default(false)
+  phoneNumber String? @unique
+  phoneNumberVerified Boolean @default(false)
+  image String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sessions ShopperSession[]
+  accounts ShopperIdentity[]
+  favorites ShopperFavorite[]
+  lists ShopperList[]
+  follows ShopperFollow[]
+  orders Order[]
+  shop MarketplaceShop?
+  reviews ShopperReview[]
+  requests ShopperRequest[]
+  addresses ShopperAddress[]
+  recommendationReset RecommendationAccountReset?
+  cart ShopperCart?
+  variantWatches ShopperVariantWatch[]
+}
+
+model ShopperCart {
+  shopperId  String                 @id
+  shopper    Shopper                @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  items      Json                   @default("[]")
+  saved      Json                   @default("[]")
+  revision   Int                    @default(0)
+  updatedAt  DateTime               @updatedAt
+  operations ShopperCartOperation[]
+}
+
+model ShopperCartOperation {
+  shopperId   String
+  cart        ShopperCart @relation(fields: [shopperId], references: [shopperId], onDelete: Cascade)
+  operationId String      @db.Uuid
+  createdAt   DateTime    @default(now())
+
+  @@id([shopperId, operationId])
+}
+
+enum VariantWatchEventKind {
+  BACK_IN_STOCK
+  PRICE_DROP
+}
+
+model ShopperVariantWatch {
+  id             String                     @id @default(uuid()) @db.Uuid
+  shopperId      String
+  shopper        Shopper                    @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  variantId      String
+  variant        Variant                    @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  marketId       MarketCode
+  backInStock    Boolean                    @default(false)
+  priceDrop      Boolean                    @default(false)
+  lastAvailable  Boolean?
+  lastPriceMinor Int?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  events         ShopperVariantWatchEvent[]
+
+  @@unique([shopperId, variantId, marketId])
+}
+
+model ShopperVariantWatchEvent {
+  id                  String                @id @default(uuid()) @db.Uuid
+  watchId             String                @db.Uuid
+  watch               ShopperVariantWatch   @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  kind                VariantWatchEventKind
+  amountMinor         Int?
+  previousAmountMinor Int?
+  createdAt           DateTime              @default(now())
+
+  @@index([watchId, createdAt])
+}
+
+model ShopperSession {
+  id String @id
+  token String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId String
+  user Shopper @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ShopperIdentity {
+  id String @id
+  accountId String
+  providerId String
+  userId String
+  user Shopper @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken String?
+  refreshToken String?
+  idToken String?
+  accessTokenExpiresAt DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope String?
+  password String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model ShopperVerification {
+  id String @id
+  identifier String
+  value String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model MarketplaceCoupon {
+  code         String @id @db.VarChar(32)
+  marketId     MarketCode @default(bd)
+  shopId       String? @db.Uuid
+  shop         MarketplaceShop? @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  kind         String
+  value        Int
+  minimumMinor Int @default(0)
+  useLimit     Int?
+  enabled      Boolean @default(true)
+  endsAt       DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([shopId])
+  @@index([marketId, createdAt])
+}
+
+model MarketplaceShop {
+  id String @id @default(uuid()) @db.Uuid
+  ownerId String? @unique
+  owner Shopper? @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  slug String @unique
+  name String
+  announcement String
+  about String
+  published Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  listings Product[]
+  followers ShopperFollow[]
+  coupons MarketplaceCoupon[]
+  requests ShopperRequest[]
+  fulfillments MarketplaceSellerFulfillment[]
+  marketGrants MarketplaceShopMarket[]
+  dispatchLocations DispatchLocation[]
+  offerIdentities MarketOfferIdentity[]
+  inventoryPools InventoryPool[]
+}
+
+enum MarketplaceMarketStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
+model MarketplaceShopMarket {
+  shopId String @db.Uuid
+  shop MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  marketId MarketCode
+  status MarketplaceMarketStatus @default(PENDING)
+  requestedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([shopId, marketId])
+  @@index([marketId, status])
+}
+
+model MarketplaceSellerFulfillment {
+  orderId   String                  @db.Uuid
+  order     Order                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopId    String                  @db.Uuid
+  shop      MarketplaceShop          @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  status    SellerPreparationStatus
+  updatedAt DateTime                @updatedAt
+
+  @@id([orderId, shopId])
+  @@index([shopId])
+}
+
+model ShopperFavorite {
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([shopperId, productId])
+  @@index([shopperId, createdAt])
+}
+
+model ShopperList {
+  id String @id @default(uuid()) @db.Uuid
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  name String
+  registry Boolean @default(false)
+  public Boolean @default(false)
+  createdAt DateTime @default(now())
+  items ShopperListItem[]
+
+  @@index([shopperId, createdAt])
+}
+
+model ShopperListItem {
+  listId String @db.Uuid
+  list ShopperList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([listId, productId])
+  @@index([listId, createdAt])
+}
+
+model ShopperFollow {
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  shopId String @db.Uuid
+  shop MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([shopperId, shopId])
+}
+
+model ShopperReview {
+  id String @id @default(uuid()) @db.Uuid
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  orderId String @db.Uuid
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  stars Int
+  text String
+  visible Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orderId, productId])
+  @@index([productId, visible, createdAt])
+}
+
+model ShopperRequest {
+  id String @id @default(uuid()) @db.Uuid
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Restrict)
+  shopId String @db.Uuid
+  shop MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  orderId String? @db.Uuid
+  order Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  subject String
+  closed Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages ShopperMessage[]
+
+  @@index([shopperId, updatedAt])
+  @@index([shopId, updatedAt])
+}
+
+model ShopperMessage {
+  id String @id @default(uuid()) @db.Uuid
+  requestId String @db.Uuid
+  request ShopperRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fromShop Boolean @default(false)
+  text String
+  createdAt DateTime @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+model ShopperAddress {
+  id String @id @default(uuid()) @db.Uuid
+  shopperId String
+  shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  label String
+  details Json
+  createdAt DateTime @default(now())
+
+  @@index([shopperId, createdAt])
+}
+
+enum OrderCaseKind {
+  RETURN
+  DISPUTE
+  CANCEL
+  EXCHANGE
+}
+
+enum OrderCaseStatus {
+  OPEN
+  IN_REVIEW
+  RETURN_APPROVED
+  DECLINED
+  RESOLVED
+  WITHDRAWN
+  RETURN_RECEIVED
+  PICKUP_SCHEDULED
+  REFUND_APPROVED
+  EXCHANGE_SHIPPED
+}
+
+model OrderCase {
+  id        String          @id @default(uuid()) @db.Uuid
+  orderId   String          @db.Uuid
+  order     Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  kind      OrderCaseKind
+  status    OrderCaseStatus @default(OPEN)
+  revision  Int            @default(0)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  events    OrderCaseEvent[]
+  returnLines OrderCaseReturnLine[]
+  returnReceivedAt DateTime?
+  returnReceivedById String?
+  returnReceivedBy User? @relation("ReturnCaseReceiver", fields: [returnReceivedById], references: [id], onDelete: SetNull)
+  returnDisposition BangladeshReturnDisposition?
+  pickupAt DateTime?
+  pickupReference String? @db.VarChar(80)
+  refundAmountMinor Int?
+  replacementTrackingReference String? @db.VarChar(80)
+
+  @@index([orderId, updatedAt])
+  @@index([status, updatedAt])
+}
+
+enum BangladeshReturnDisposition {
+  RESTOCK
+  HOLD
+}
+
+model BangladeshRefusedParcelReceipt {
+  orderId       String                     @id @db.Uuid
+  order         Order                      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  receivedAt    DateTime                   @default(now())
+  receivedById  String?
+  receivedBy    User?                      @relation(fields: [receivedById], references: [id], onDelete: SetNull)
+  disposition   BangladeshReturnDisposition
+  restockedUnits Int
+  note          String                     @db.VarChar(500)
+}
+
+model OrderCaseReturnLine {
+  caseId      String    @db.Uuid
+  orderCase   OrderCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  orderItemId String    @db.Uuid
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  quantity    Int
+  replacementVariantId String?
+  replacementVariant   Variant? @relation("ExchangeReplacement", fields: [replacementVariantId], references: [id], onDelete: Restrict)
+  replacementVariantName String?
+
+  @@id([caseId, orderItemId])
+  @@index([orderItemId])
+  @@index([replacementVariantId])
+}
+
+model OrderCaseEvent {
+  id        String          @id @default(uuid()) @db.Uuid
+  caseId    String          @db.Uuid
+  orderCase OrderCase       @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  status    OrderCaseStatus
+  note      String?
+  actorId   String?
+  actor     User?           @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  revision  Int
+  createdAt DateTime       @default(now())
+
+  @@unique([caseId, revision])
+}

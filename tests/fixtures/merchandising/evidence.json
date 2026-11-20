@@ -1,0 +1,161 @@
+{
+  "merch-demo-mug": {
+    "sourceProductId": "SUP-MUG",
+    "sourceRecord": "SAMPLE-SPEC-SUP-MUG",
+    "supplierSkus": {
+      "MERCH-MUG-CREAM": "CER-240"
+    },
+    "images": [
+      {
+        "src": "/catalog/mug-cream.webp",
+        "evidence": "FIXTURE-PHOTO-MUG-CREAM",
+        "usage": "Approved for staging review and fixture publication"
+      }
+    ],
+    "markets": [
+      {
+        "market": "bd",
+        "delivery": "FIXTURE-DELIVERY-BD",
+        "content": "FIXTURE-EN",
+        "decision": "FIXTURE-MARKET-BD"
+      }
+    ],
+    "scenarios": [
+      {
+        "market": "bd",
+        "sku": "MERCH-MUG-CREAM",
+        "quantity": 2,
+        "productCost": {
+          "minor": 45000,
+          "currency": "BDT",
+          "evidence": "FIXTURE-QUOTE-01"
+        },
+        "direct": {
+          "shipping": {
+            "minor": 12000,
+            "evidence": "FIXTURE-COST-SHIPPING"
+          },
+          "packaging": {
+            "minor": 3000,
+            "evidence": "FIXTURE-COST-PACKAGING"
+          },
+          "transaction": {
+            "minor": 4000,
+            "evidence": "FIXTURE-COST-TRANSACTION"
+          },
+          "tax": {
+            "minor": 0,
+            "evidence": "FIXTURE-COST-TAX"
+          },
+          "other": {
+            "minor": 0,
+            "evidence": "FIXTURE-COST-OTHER"
+          }
+        }
+      }
+    ],
+    "supplierAvailability": "Supplier quoted 500 units. No warehouse receipt recorded.",
+    "confirmations": [
+      {
+        "field": "Material",
+        "value": "Ceramic",
+        "status": "verified",
+        "evidence": "FIXTURE-SAMPLE-INSPECTION"
+      }
+    ]
+  },
+  "merch-demo-missing": {
+    "sourceProductId": "SUP-POUCH",
+    "sourceRecord": "SAMPLE-SPEC-SUP-POUCH",
+    "supplierSkus": {
+      "MERCH-POUCH": "POUCH-0"
+    },
+    "images": [],
+    "markets": [
+      {
+        "market": "bd",
+        "delivery": "FIXTURE-DELIVERY-BD",
+        "content": "FIXTURE-EN",
+        "decision": "FIXTURE-MARKET-BD"
+      }
+    ]
+  },
+  "merch-demo-tote": {
+    "sourceProductId": "SUP-TOTE",
+    "sourceRecord": "SAMPLE-SPEC-SUP-TOTE",
+    "supplierSkus": {
+      "MERCH-TOTE-OAT": "CAN-O",
+      "MERCH-TOTE-PLUM": "CAN-P"
+    },
+    "images": [
+      {
+        "src": "/catalog/tote-oat.webp",
+        "evidence": "FIXTURE-PHOTO-TOTE-OAT",
+        "usage": "Approved for staging review and fixture publication"
+      },
+      {
+        "src": "/catalog/tote-plum.webp",
+        "evidence": "FIXTURE-PHOTO-TOTE-PLUM",
+        "usage": "Approved for staging review and fixture publication"
+      }
+    ],
+    "markets": [
+      {
+        "market": "bd",
+        "delivery": "FIXTURE-DELIVERY-BD",
+        "content": "FIXTURE-EN",
+        "decision": "FIXTURE-MARKET-BD"
+      }
+    ]
+  },
+  "merch-demo-us": {
+    "sourceProductId": "SUP-BOTTLE",
+    "sourceRecord": "SAMPLE-SPEC-SUP-BOTTLE",
+    "supplierSkus": {
+      "MERCH-BOTTLE-US": "BOT-US"
+    },
+    "images": [
+      {
+        "src": "/catalog/water-bottle.webp",
+        "evidence": "FIXTURE-PHOTO-WATER-BOTTLE",
+        "usage": "Approved for staging review and fixture publication"
+      }
+    ],
+    "markets": [
+      {
+        "market": "us",
+        "delivery": "FIXTURE-DELIVERY-US",
+        "content": "FIXTURE-EN",
+        "decision": "FIXTURE-MARKET-US"
+      }
+    ]
+  },
+  "merch-demo-dual": {
+    "sourceProductId": "SUP-STAND",
+    "sourceRecord": "SAMPLE-SPEC-SUP-STAND",
+    "supplierSkus": {
+      "MERCH-STAND-BD": "STD-20"
+    },
+    "images": [
+      {
+        "src": "/catalog/phone-stand.webp",
+        "evidence": "FIXTURE-PHOTO-PHONE-STAND",
+        "usage": "Approved for staging review and fixture publication"
+      }
+    ],
+    "markets": [
+      {
+        "market": "bd",
+        "delivery": "FIXTURE-DELIVERY-BD",
+        "content": "FIXTURE-EN",
+        "decision": "FIXTURE-MARKET-BD"
+      },
+      {
+        "market": "us",
+        "delivery": "FIXTURE-DELIVERY-US",
+        "content": "FIXTURE-EN",
+        "decision": "FIXTURE-MARKET-US"
+      }
+    ]
+  }
+}
