@@ -19,6 +19,9 @@ test("the signed Marketplace workspace keeps seller grants and checkout changes 
   const packer = { id: `${prefix}-packer`, legacyId: randomBytes(12).toString("hex"), role: "PACKER" } as const;
   const staff = [owner, packer];
   const shopId = randomUUID();
+  const orderId = randomUUID();
+  const attemptId = randomUUID();
+  const caseId = randomUUID();
   const secret = randomBytes(48).toString("hex");
   const homepageSecret = randomBytes(48).toString("hex");
   const district = `fixture-${suffix.replace(/\d/g, digit => String.fromCharCode(97 + Number(digit)))}`;
@@ -40,6 +43,11 @@ test("the signed Marketplace workspace keeps seller grants and checkout changes 
       else process.env[key] = value;
     }
     await db.auditEvent.deleteMany({ where: { actorId: owner.id } });
+    await db.fulfillmentEvent.deleteMany({ where: { orderId } });
+    await db.payment.deleteMany({ where: { orderId } });
+    await db.orderItem.deleteMany({ where: { orderId } });
+    await db.order.deleteMany({ where: { id: orderId } });
+    await db.checkoutAttempt.deleteMany({ where: { id: attemptId } });
     await db.deliveryZone.deleteMany({ where: { marketId, district } });
     if (originalPolicy) await db.checkoutPolicy.update({ where: { marketId }, data: originalPolicy });
     else await db.checkoutPolicy.deleteMany({ where: { marketId } });
@@ -70,6 +78,19 @@ test("the signed Marketplace workspace keeps seller grants and checkout changes 
       offers: { create: { marketId, currency: "BDT", amountMinor: 999 } },
     } },
   } });
+  await db.order.create({ data: {
+    id: orderId, reference: prefix, marketId: "us", currency: "USD", customerName: "Test Shopper", phone: "01000000200",
+    district: "new-york", districtLabel: "New York", locality: "Test", address: "123 Fixture Avenue", deliveryMethod: "test",
+    deliveryLabel: "Test shipment", taxLabel: "Test tax", subtotalMinor: 999, discountMinor: 0, deliveryMinor: 0, taxMinor: 0,
+    totalMinor: 999, measurementTest: true,
+    attempt: { create: { id: attemptId, marketId: "us", paymentMethod: "PAYPAL", guestKey: randomBytes(32).toString("hex"),
+      requestHash: randomBytes(32).toString("hex") } },
+    payment: { create: { method: "PAYPAL", status: "PAID", currency: "USD", amountMinor: 999 } },
+    items: { create: { variantId: `${prefix}-variant`, sku: `${prefix}-SKU`, marketplaceShopId: shopId, productName: "Fixture order",
+      variantName: "Default", quantity: 1, unitPriceMinor: 999, unitDiscountMinor: 0, lineTotalMinor: 999, currency: "USD" } },
+    sellerFulfillments: { create: { shopId, status: "READY" } },
+    cases: { create: { id: caseId, kind: "RETURN" } },
+  } });
 
   function signed(operation: object, options: { actor?: typeof staff[number]; market?: "bd" | "us"; key?: string } = {}) {
     const actor = options.actor ?? owner;
@@ -94,6 +115,31 @@ test("the signed Marketplace workspace keeps seller grants and checkout changes 
   await send(read, 401, { key: homepageSecret });
   await send(read, 403, { actor: packer });
   await send({ ...read, marketId: "us" }, 400);
+  await send({ read: "products" }, 400);
+  await send({ action: "product.save", input: {} }, 400);
+
+  const orders = { read: "orders", queue: "all" };
+  const order = { read: "order", id: orderId };
+  const orderCase = { read: "order-case", id: caseId };
+  const us = { market: "us" } as const;
+  await send(orders, 403, { actor: packer });
+  await send(order, 404);
+  await send(orderCase, 404);
+  const orderList = (await send(orders, 200, us)).data.rows;
+  const listed = orderList.find((row: { id: string }) => row.id === orderId);
+  assert.equal(listed.currency, "USD");
+  assert.equal(listed.payment.status, "PAID");
+  assert.equal(typeof listed.fulfillment, "string");
+  assert.equal((await send(orders)).data.rows.some((row: { id: string }) => row.id === orderId), false);
+  const detail = (await send(order, 200, us)).data;
+  assert.equal(detail.currency, "USD");
+  assert.equal(detail.sellers[0].id, shopId);
+  assert.equal(detail.sellers[0].preparation, "Ready for pickup");
+  assert.equal((await send(orderCase, 200, us)).data.order.id, orderId);
+  const advance = { action: "order.advance", input: { orderId, next: "PACKING" } };
+  await send(advance, 404);
+  await send(advance, 200, us);
+  assert.equal((await send(order, 200, us)).data.next, "READY_TO_SHIP");
 
   const bangladesh = (await send(read)).data;
   const unitedStates = (await send(read, 200, { market: "us" })).data;
@@ -128,10 +174,12 @@ test("the signed Marketplace workspace keeps seller grants and checkout changes 
   const policy = { action: "marketplace.policy.save", input: {
     revision: originalPolicy?.revision ?? null, enabled: false, codEnabled: true, taxBasisPoints: 0, taxLabel: "Test tax",
   } };
+  const pause = { action: "marketplace.policy.pause", input: {} };
   const delivery = { action: "marketplace.delivery.save", input: { revision: null, district, districtLabel: "Fixture district",
-    method: "test-delivery", label: "Fixture delivery", guidance: "Isolated test option", chargeMinor: 0, enabled: false, codEligible: true,
+    method: "test-delivery", label: "Fixture delivery", guidance: "Isolated test option", chargeMinor: 0, enabled: true, codEligible: true,
   } };
   await send(policy, 403, { market: "us" });
+  await send(pause, 403, { market: "us" });
   await send(delivery, 403, { market: "us" });
   await send(policy);
   await send(policy, 422);
@@ -140,9 +188,17 @@ test("the signed Marketplace workspace keeps seller grants and checkout changes 
   const saved = (await send(read)).data.checkout;
   assert.equal(saved.enabled, false);
   assert.equal(saved.taxBasisPoints, 0);
-  assert.deepEqual(saved.deliveryZones.find((zone: { district: string }) => zone.district === district),
+  assert.equal(saved.deliveryZones.find((zone: { district: string }) => zone.district === district)?.chargeMinor, 0);
+  assert.deepEqual(await db.deliveryZone.findUnique({ where: { marketId_district_method: { marketId, district, method: delivery.input.method } } }),
     { marketId, ...delivery.input, revision: 0 });
+  await send({ ...policy, input: { ...policy.input, revision: saved.revision, enabled: true } });
+  assert.equal((await send(read)).data.checkout.enabled, true);
+  await send(pause);
+  await send(pause);
+  const paused = (await send(read)).data.checkout;
+  assert.equal(paused.enabled, false);
+  assert.equal(paused.revision, saved.revision + 2);
   assert.deepEqual((await send(read, 200, { market: "us" })).data.checkout, unitedStates.checkout);
   assert.equal(await db.auditEvent.count({ where: { actorId: owner.id, target: shopId } }), 2);
-  assert.equal(await db.auditEvent.count({ where: { actorId: owner.id, action: "MARKET_SETTINGS_CHANGED" } }), 2);
+  assert.equal(await db.auditEvent.count({ where: { actorId: owner.id, action: "MARKET_SETTINGS_CHANGED" } }), 4);
 });

@@ -92,7 +92,7 @@ export async function listStaffOrders(actorId: string, filter: QueueFilter, page
     skip: (page - 1) * pageSize, take: pageSize + 1,
     select: {
       id: true, reference: true, status: true, fulfillmentStatus: true, districtLabel: true, createdAt: true,
-      marketId: true, totalMinor: true, payment: { select: { status: true } }, _count: { select: { items: true } },
+      marketId: true, currency: true, totalMinor: true, payment: { select: { status: true } }, _count: { select: { items: true } },
       bangladeshShipment: { select: { status: true } },
       bangladeshRefusedParcelReceipt: { select: { receivedAt: true } },
       parcels: { select: { status: true } },

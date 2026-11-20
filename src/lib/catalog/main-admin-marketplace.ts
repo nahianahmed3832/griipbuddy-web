@@ -6,6 +6,7 @@ import { storeShop } from "../marketplace/constants.ts";
 import { applyMarketplaceCommand, MarketplaceError } from "../marketplace/write.ts";
 import { firstPartyStoreMode, marketplaceMode, orderIntakeOpen } from "../release-config.ts";
 import { getMarketSettings, pauseMarketCheckout, saveDeliveryZone, saveMarketPolicy } from "../staff/market-settings.ts";
+import { mainAdminOrderCommandInput, mainAdminOrderReads, readMainAdminOrders, runMainAdminOrderCommand } from "../staff/main-admin-orders.ts";
 import { CatalogWriteError } from "../staff/operation-error.ts";
 
 const sellerId = z.string().uuid();
@@ -23,10 +24,12 @@ export const mainAdminMarketplaceInput = z.union([
     revision, district: z.string().max(40), districtLabel: z.string().max(80), method: z.string().max(40), label: z.string().max(100),
     guidance: z.string().max(500), chargeMinor: z.int().min(0).max(10000000).nullable(), enabled: z.boolean(), codEligible: z.boolean(),
   }) }),
+  ...mainAdminOrderReads,
+  mainAdminOrderCommandInput,
 ]);
 
 type Operation = z.infer<typeof mainAdminMarketplaceInput>;
-type Read = Extract<Operation, { read: string }>;
+type Read = Extract<Operation, { read: "marketplace-workspace" }>;
 const pageSize = 20;
 
 function canConfigureCheckout(market: MarketConfiguration) {
@@ -63,7 +66,8 @@ async function workspace(actorId: string, marketId: MarketId, request: Read) {
 
 export async function mainAdminMarketplace(actorId: string, marketId: MarketId, operation: Operation) {
   if (!marketplaceMode()) throw new CatalogWriteError("not_found", "Marketplace management is unavailable.");
-  if ("read" in operation) return workspace(actorId, marketId, operation);
+  if ("read" in operation) return operation.read === "marketplace-workspace" ? workspace(actorId, marketId, operation)
+    : readMainAdminOrders(actorId, true, marketId, operation);
   const { action, input } = operation;
   if (action === "marketplace.seller.publish" || action === "marketplace.seller.grant") {
     if (firstPartyStoreMode()) throw new CatalogWriteError("forbidden", "Third-party seller management is paused for this release.");
@@ -79,6 +83,9 @@ export async function mainAdminMarketplace(actorId: string, marketId: MarketId, 
         : error.status === 403 ? "forbidden" : "invalid_input", error.message);
       throw error;
     }
+  }
+  if (action !== "marketplace.policy.save" && action !== "marketplace.policy.pause" && action !== "marketplace.delivery.save") {
+    return runMainAdminOrderCommand(actorId, marketId, action, input);
   }
   if (!canConfigureCheckout(marketConfiguration(marketId))) {
     throw new CatalogWriteError("forbidden", "This market uses provider-managed checkout or delivery settings.");

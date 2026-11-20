@@ -1,14 +1,17 @@
 import { z } from "zod";
 import type { MarketId } from "../../config/markets.ts";
+import { fulfillmentLabels } from "../commerce/labels.ts";
 import { nextBangladeshTrackingStatuses } from "../commerce/bangladesh-shipment-status.ts";
 import { orderHasAdapter } from "../commerce/market-commerce.ts";
 import { dispatchOrderParcel, receiveRefusedOrderParcel, recordOrderParcelTracking } from "../commerce/order-parcels.ts";
-import { nextOrderParcelStatuses, orderParcelStatusLabels } from "../commerce/parcel-tracking.ts";
+import { nextOrderParcelStatuses, orderParcelStatusLabels, parcelOrderLabel, parcelWasRefused } from "../commerce/parcel-tracking.ts";
 import { purchasedOptions } from "../commerce/purchased-options.ts";
 import { getDb } from "../db/client.ts";
 import { marketConfiguration } from "../market-config.ts";
 import { caseActorRole, caseCommand, ownerCaseTransitions } from "../marketplace/case-policy.ts";
 import { casesForStaffOrder, executeOrderCase, listOrderCases, OrderCaseError, staffOrderCase } from "../marketplace/cases.ts";
+import { storeShop } from "../marketplace/constants.ts";
+import { sellerPreparationLabels } from "../marketplace/seller-preparation.ts";
 import { marketplaceMode } from "../release-config.ts";
 import { CatalogWriteError, catalogWriteInput, OperationError } from "./operation-error.ts";
 import { advanceFulfillment, cancelOrder, collectCash, listStaffOrders, queueFilter, queueFilters, recordBangladeshTracking, staffOrder } from "./operations.ts";
@@ -24,18 +27,20 @@ export const mainAdminOrderReads = [
 ] as const;
 type OrderRead = z.infer<(typeof mainAdminOrderReads)[number]>;
 
+const orderPermissions = {
+  "order.advance": "operations", "order.tracking": "operations", "order.parcel.dispatch": "operations",
+  "order.parcel.tracking": "operations", "order.parcel.receive": "operations",
+  "order.case": "owner", "order.cancel": "owner", "order.collect": "owner",
+} as const;
+type OrderAction = keyof typeof orderPermissions;
+
 export function mainAdminOrderPermission(action: string) {
-  switch (action) {
-    case "order.advance":
-    case "order.tracking":
-    case "order.parcel.dispatch":
-    case "order.parcel.tracking":
-    case "order.parcel.receive": return "operations";
-    case "order.case":
-    case "order.cancel":
-    case "order.collect": return "owner";
-  }
+  return Object.hasOwn(orderPermissions, action) ? orderPermissions[action as OrderAction] : undefined;
 }
+
+export const mainAdminOrderCommandInput = z.strictObject({
+  action: z.enum(Object.keys(orderPermissions) as OrderAction[]), input: z.record(z.string(), z.unknown()),
+});
 
 function missingOrder(): never {
   throw new CatalogWriteError("not_found", "This Marketplace order is unavailable in the selected market.");
@@ -59,6 +64,12 @@ async function readOrder(actorId: string, owner: boolean, marketId: MarketId, id
   const linesById = new Map(material.map(line => [line.id, line]));
   const canHandOff = orderHasAdapter(order, "fulfillment", "manual");
   const canReceive = orderHasAdapter(order, "returns", "manual");
+  const shopIds = [...new Set(order.items.flatMap(item => item.marketplaceShopId && item.marketplaceShopId !== storeShop.id
+    ? [item.marketplaceShopId] : []))];
+  const shops = shopIds.length ? await getDb().marketplaceShop.findMany({
+    where: { id: { in: shopIds } }, orderBy: [{ name: "asc" }, { id: "asc" }],
+    select: { id: true, name: true, fulfillments: { where: { orderId: order.id }, select: { status: true, updatedAt: true } } },
+  }) : [];
   const market = marketConfiguration(marketId);
   const { name: marketName, locale, timeZone } = market;
   return {
@@ -89,6 +100,10 @@ async function readOrder(actorId: string, owner: boolean, marketId: MarketId, id
     })),
     events: order.events.map(event => ({ id: event.id, status: event.status, kind: event.type, date: event.createdAt, actor: event.actor?.name ?? null })),
     cases: owner && marketplaceMode() ? await casesForStaffOrder(actorId, order.id) : [],
+    sellers: shops.map(({ id, name, fulfillments: [handoff] }) => ({
+      id, name, preparation: handoff ? sellerPreparationLabels[handoff.status] : "Awaiting preparation",
+      updatedAt: handoff?.updatedAt ?? null,
+    })),
   };
 }
 
@@ -112,7 +127,18 @@ async function readCase(actorId: string, marketId: MarketId, id: string) {
 
 export function readMainAdminOrders(actorId: string, owner: boolean, marketId: MarketId, request: OrderRead) {
   switch (request.read) {
-    case "orders": return listStaffOrders(actorId, queueFilter(request.queue), request.page ?? 1, marketId);
+    case "orders": return listStaffOrders(actorId, queueFilter(request.queue), request.page ?? 1, marketId).then(({ rows, hasNext }) => ({
+      hasNext, rows: rows.map(order => {
+        const fulfillment = order.status === "CANCELLED" ? "Cancelled"
+          : order.parcels.some(parcel => parcel.status !== "PLANNED") ? parcelOrderLabel(order.parcels)
+          : order.bangladeshRefusedParcelReceipt ? "Refused · received at warehouse"
+          : order.bangladeshShipment?.status === "REFUSED" ? "Refused · awaiting warehouse return"
+          : order.bangladeshShipment?.status === "OUT_FOR_DELIVERY" ? "Out for delivery"
+          : fulfillmentLabels[order.fulfillmentStatus];
+        return { ...order, fulfillment, pendingCancellation: order.cases.length > 0,
+          requiresCodReview: order.payment?.status === "AWAITING_COLLECTION" && order.parcels.some(parcelWasRefused) };
+      }),
+    }));
     case "order": return readOrder(actorId, owner, marketId, request.id);
     case "order-cases":
       requireCases();
