@@ -1,0 +1,32 @@
+.retail-options { display: grid; gap: 19px; }
+.retail-option-group { border: 0; padding: 0; margin: 0; min-width: 0; }
+.retail-option-group legend { font-size: 16px; font-weight: 750; margin-bottom: 8px; padding: 0; }
+.retail-option-group legend span { font-weight: 450; margin-left: 6px; }
+.retail-swatch-grid, .retail-option-buttons { display: flex; flex-wrap: wrap; gap: 9px; }
+.retail-swatch-grid button, .retail-option-buttons button {
+  background: white; color: #202020; min-height: 44px; min-width: 44px; padding: 5px 11px;
+  border: 1px solid #d5d5d5; border-radius: 999px; cursor: pointer;
+}
+.retail-swatch-grid button:has(img) { padding: 2px; border-radius: 3px; }
+.retail-swatch-grid img { display: block; width: 62px; height: 72px; object-fit: cover; border-radius: 1px; }
+.retail-option-group button[aria-pressed="true"] { outline: 2px solid #1d1d1d; outline-offset: -1px; }
+.retail-option-group button[data-available="false"] { opacity: .55; }
+.retail-option-group button:disabled { cursor: default; text-decoration: line-through; }
+.retail-size-guide { display: inline-flex; gap: 8px; align-items: center; justify-self: start; min-height: 44px; color: #16477c; text-decoration: underline; }
+.retail-scarcity { color: #a63012; font-weight: 700; }
+.retail-sales { color: #555; font-size: .875rem; }
+.retail-addons { border-top: 1px solid #dedede; padding-top: 14px; }
+.retail-addons h2 { font-size: 1rem; font-weight: 750; }
+.retail-addons ul { display: grid; gap: 9px; margin-top: 12px; }
+.retail-addons li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.retail-addons li a { display: flex; align-items: center; gap: 9px; font-size: .85rem; }
+.retail-addons img { object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+.retail-addons strong { display: block; }
+.retail-addons .button { min-height: 44px; }
+.retail-rating { display: grid; grid-template-columns: minmax(8rem, 1fr) 2fr; gap: 16px; margin-block: 16px; }
+.retail-rating strong { display: block; font-size: 1.5rem; }
+.retail-rating li { display: grid; grid-template-columns: 2.2rem 1fr 2rem; gap: 8px; align-items: center; }
+.retail-rating meter { width: 100%; accent-color: #282323; }
+.mp-google-preview { display: grid; justify-items: center; gap: 6px; margin-top: 16px; }
+.mp-google-preview button:disabled { cursor: default; opacity: .7; }
+@media (max-width: 450px) { .retail-rating { grid-template-columns: minmax(0, 1fr); } }

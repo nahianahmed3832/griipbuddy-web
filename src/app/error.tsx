@@ -1,11 +1,17 @@
-'use client';
+"use client";
 
-export default function CatalogErrorPage({ reset }: { reset: () => void }) {
-  return <div className="container interior">
-    <div className="empty-state">
-      <h1>Catalog unavailable</h1>
-      <p>The catalog could not be loaded. Try again in a moment.</p>
-      <button type="button" className="button button-primary" onClick={reset}>Try again</button>
+import Link from "next/link";
+import { AlertCircle } from "lucide-react";
+import { EmptyState } from "@/components/store-ui";
+
+export default function StoreError({ reset }: { error: Error; reset: () => void }) {
+  return (
+    <div className="shell inner-page">
+      <h1 className="display-type error-heading">Something went wrong</h1>
+      <EmptyState title="We couldn’t load this page" description="Try again or return to the shop to keep browsing." icon={<AlertCircle aria-hidden="true" size={27} />}>
+        <button className="button button--primary" type="button" onClick={reset}>Try again</button>
+        <Link className="button button--outline" href="/shop">Shop all</Link>
+      </EmptyState>
     </div>
-  </div>;
+  );
 }

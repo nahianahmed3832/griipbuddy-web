@@ -1,0 +1,22 @@
+.homepage-office { max-width: 900px; }
+.homepage-office > section { margin-block: 24px; }
+.homepage-office input:not([type="checkbox"]), .homepage-office textarea, .homepage-office select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+}
+.homepage-draft-form { display: grid; gap: 12px; }
+.homepage-editor-section { display: grid; gap: 14px; margin: 0; min-width: 0; padding: 18px; border: 1px solid #bfc0c3; border-radius: 12px; }
+.homepage-editor-section > button { justify-self: start; }
+.homepage-editor-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.homepage-editor-fields label, .homepage-draft-form > label { display: grid; gap: 4px; min-width: 0; }
+.homepage-editor-fields label:has(input[type="checkbox"]) { display: flex; align-items: center; }
+.homepage-editor-wide { grid-column: 1 / -1; }
+.homepage-editor-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.homepage-history { display: grid; gap: 8px; padding-inline-start: 0; list-style: none; }
+.homepage-history > li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; align-items: center; border-block-end: 1px solid #d8d9dc; padding: 8px 0; }
+.homepage-history p { margin: 0; }
+.recommendation-product-field { display: grid; gap: 6px; }
+.homepage-editor-section > .homepage-editor-fields { margin-block-start: 10px; }
+.recommendation-preview code { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .homepage-editor-fields { grid-template-columns: 1fr; } }

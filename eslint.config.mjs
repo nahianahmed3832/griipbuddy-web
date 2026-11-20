@@ -1,11 +1,10 @@
-import { FlatCompat } from '@eslint/eslintrc';
-import { fileURLToPath } from 'node:url';
+import { defineConfig, globalIgnores } from "eslint/config";
+import next from "@next/eslint-plugin-next";
+import hooks from "eslint-plugin-react-hooks";
+import ts from "typescript-eslint";
 
-const compat = new FlatCompat({ baseDirectory: fileURLToPath(new URL('.', import.meta.url)) });
-
-const config = [
-  { ignores: ['.next/**', 'next-env.d.ts', 'playwright-report/**', 'test-results/**'] },
-  ...compat.extends('next/core-web-vitals', 'next/typescript'),
-];
-
-export default config;
+export default defineConfig([
+  globalIgnores([".next/**", ".local/**", "next-env.d.ts", "src/generated/**", "test-results/**", "playwright-report/**"]),
+  ...ts.configs.recommended,
+  { files: ["**/*.{ts,tsx}"], extends: [next.configs["core-web-vitals"], hooks.configs.flat.recommended] },
+]);
