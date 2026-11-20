@@ -1,6 +1,6 @@
 import { privateHeaders, readJson, sameOrigin } from "@/lib/db/http";
 import { consumeQuota, reportFailure } from "@/lib/db/observability";
-import { getShopper } from "@/lib/marketplace/auth";
+import { shopperActor } from "@/lib/marketplace/auth";
 import { advanceSellerPreparation, SellerOrderError } from "@/lib/marketplace/seller-orders";
 import { marketplaceMode } from "@/lib/release-config";
 
@@ -10,7 +10,7 @@ export async function POST(request: Request) {
   if (!sameOrigin(request)) return reject("Open this action from the storefront.", 403);
 
   try {
-    const shopper = await getShopper();
+    const shopper = await shopperActor(request.headers);
     if (!shopper) return reject("Sign in to continue.", 401);
     if (!await consumeQuota("marketplace.seller-preparation", shopper.id, 90, 300)) {
       return reject("Too many actions. Try again shortly.", 429);

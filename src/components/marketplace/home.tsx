@@ -67,7 +67,9 @@ export async function HomeMerchandising({ market, previewScopeKey, at }: {
   const cardHref = (card: ProductCardData) => catalogProductHref({
     slug: card.slug, matchedVariantId: card.variantId, knownOptions: [],
   }, route);
-  const topBanner = panels[0]?.section.type === "BANNER";
+  const topBanner = panels[0]?.section.key === "hero" && panels[0].section.type === "BANNER";
+  const shortcutIndex = panels.some(({ tileLayout }) => tileLayout === "SHORTCUTS") ? -1
+    : panels.findIndex(({ departments }) => (departments?.length ?? 0) > 1);
   // Explicitly authored selections keep their catalogue placement when recommendation ranking is enabled.
   const feature = panels.findIndex(({ section }) => section.type === "FEATURED" && !section.productIds?.length);
   const continueIndex = panels.findIndex(({ section }) => section.type === "RECENTLY_VIEWED");
@@ -82,15 +84,16 @@ export async function HomeMerchandising({ market, previewScopeKey, at }: {
   const featuredProof = !preview && enabled.includes("recommended") ? featuredPlacementProof({
     marketId: market.id, locale: market.locale, version: ranking.version, productIds: featureIds,
   }) : undefined;
-  const excludeProductIds = panels.flatMap(({ cards }, index) => index !== feature ? (cards ?? []).map(card => card.id) : []).slice(0, 256);
+  const excludeProductIds = panels.flatMap(({ cards, tiles }, index) => index !== feature
+    ? [...(cards ?? []).map(card => card.id), ...(tiles ?? []).flatMap(tile => tile.product?.id ?? [])] : []).slice(0, 256);
   return <div id={preview ? "product-preview" : undefined} className={`shell home ${styles.home}`} lang={market.locale}>
     <HomepageRecommendations market={market} placements={enabled} featuredProductIds={featureIds} featuredProof={featuredProof} excludeProductIds={excludeProductIds}>
     {!topBanner && !preview && <h1 className="display-type">Shop {market.name}</h1>}
-    {panels.map(({ section, cards = [], departments, collections, recommendations, evidenceFallback, recommendationVersion }, index) => {
+    {panels.map(({ section, cards = [], departments, collections, tiles, tileLayout, recommendations, evidenceFallback, recommendationVersion }, index) => {
       const heading = `home-section-${section.key}`;
       const context = { placement: homepageSectionPlacements[section.type], position: index + 1, homepageConfig: measurement, recommendationVersion,
         ...(section.type !== "BANNER" && { sectionId: section.key }) };
-      if (section.type === "BANNER") {
+      if (section.type === "BANNER" && section.key === "hero") {
         const hero = section.bannerImage ?? (section.key === "hero" ? heroPhoto : cards[0]?.image ?? heroPhoto);
         const title = index === 0 && !preview ? "h1" : "h2";
         const Title = title;
@@ -130,8 +133,8 @@ export async function HomeMerchandising({ market, previewScopeKey, at }: {
       const title = evidenceFallback ? "Curated picks" : section.title;
       const editorial = <HomeSection key={section.key} marketId={market.id} context={context} preview={preview} label={heading} className={styles.editorialSection}>
         <HomeBodySection section={section} title={title} heading={heading} description={evidenceFallback ? undefined : section.description}
-          departments={departments} collections={collections} cards={cards} market={market} placement={context}
-          preview={preview} browseHref={path => catalogBrowseHref(path, route)} linkForCard={cardHref} />
+          departments={departments} collections={collections} tiles={tiles} tileLayout={tileLayout} cards={cards} market={market} placement={context}
+          preview={preview} showShortcuts={index === shortcutIndex} browseHref={path => catalogBrowseHref(path, route)} linkForCard={cardHref} />
       </HomeSection>;
       return index === feature && enabled.includes("recommended")
         ? <HomepageRecommendationSlot key={section.key} id={heading} market={market} placement="recommended" regional={route.regional}

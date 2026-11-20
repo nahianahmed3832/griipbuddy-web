@@ -18,6 +18,7 @@ export type PayPalAddress = z.infer<typeof shipping>;
 const providerCapture = z.object({ id: providerId, status: z.string(), amount });
 const providerUnit = z.object({
   reference_id: z.string(),
+  payee: z.object({ merchant_id: providerId }).optional(),
   amount: amount.optional(),
   shipping: z.object({ address: shipping }).optional(),
   payments: z.object({ captures: z.array(providerCapture).optional() }).optional(),
@@ -28,7 +29,10 @@ const providerOrder = z.object({
   links: z.array(z.object({ href: z.string(), rel: z.string() })).optional(),
   purchase_units: z.array(providerUnit).optional(),
 });
-const providerRefund = z.object({ id: providerId, status: z.string(), amount });
+const providerRefund = z.object({
+  id: providerId, status: z.string(), amount, custom_id: z.string().optional(),
+  links: z.array(z.object({ href: z.string(), rel: z.string() })).optional(),
+});
 export type PayPalOrder = z.infer<typeof providerOrder>;
 
 export class PayPalProviderError extends Error {
@@ -98,7 +102,7 @@ export async function createSandboxOrder(input: {
   lines: { productName: string; quantity: number; unitPriceMinor: number; unitDiscountMinor: number }[];
 }) {
   const config = paypalSandboxConfig();
-  if (!config) throw new Error("PayPal sandbox is disabled.");
+  if (!config?.merchantId) throw new Error("PayPal sandbox merchant is unconfigured.");
   const returnTo = (result: "return" | "cancel") => {
     const url = new URL(storefrontPath("/checkout"), config.origin);
     url.search = new URLSearchParams({ destination: config.marketId, paypal: result, attempt: input.attemptId }).toString();
@@ -107,7 +111,7 @@ export async function createSandboxOrder(input: {
   const data = providerOrder.parse(await paypalRequest("/v2/checkout/orders", {
     intent: "CAPTURE",
     purchase_units: [{
-      reference_id: input.attemptId,
+      reference_id: input.attemptId, payee: { merchant_id: config.merchantId },
       amount: {
         ...paypalUsd(input.totalMinor),
         breakdown: { item_total: paypalUsd(input.merchandiseMinor), shipping: paypalUsd(input.shippingMinor),
@@ -137,7 +141,7 @@ export async function createSandboxOrder(input: {
   return { providerOrderId: data.id, approvalUrl: approval.href };
 }
 
-function operationKey(operation: "capture" | "refund", attemptId: string) {
+function operationKey(operation: "capture" | "refund" | "refund-case", attemptId: string) {
   return createHash("sha256").update(`${operation}:${attemptId}`).digest("hex").slice(0, 36);
 }
 
@@ -151,6 +155,12 @@ export async function captureSandboxOrder(orderId: string, attemptId: string) {
 
 export async function refundSandboxCapture(captureId: string, attemptId: string) {
   return providerRefund.parse(await paypalRequest(`/v2/payments/captures/${providerId.parse(captureId)}/refund`, {}, operationKey("refund", attemptId)));
+}
+
+export async function refundSandboxCaseCapture(captureId: string, caseId: string, amountMinor: number) {
+  return providerRefund.parse(await paypalRequest(`/v2/payments/captures/${providerId.parse(captureId)}/refund`, {
+    amount: paypalUsd(amountMinor), custom_id: caseId,
+  }, operationKey("refund-case", caseId)));
 }
 
 export async function inspectSandboxRefund(refundId: string) {

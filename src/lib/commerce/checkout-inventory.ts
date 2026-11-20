@@ -5,6 +5,7 @@ import { CommerceError } from "./errors.ts";
 import { finalizeInventoryReservation, InventoryReservationError, releaseInventoryReservation, reserveInventory } from "./inventory-reservations.ts";
 import { changeAllocatedStock, lockVariantInventory, readStockAllocations, reserveCheckoutStock, type StockAllocation } from "./location-inventory.ts";
 import type { InventoryDestination } from "./physical-inventory.ts";
+import { pilotQuoteScope } from "./scoped-pilot-checkout.ts";
 
 type Tx = Prisma.TransactionClient;
 type CheckoutContext = {
@@ -101,6 +102,7 @@ async function connectedParcelLines(tx: Tx, reservation: Reservation, lines: rea
 
 export async function placeReservedPurchase(tx: Tx, context: CheckoutContext, lines: readonly QuoteLine[], legacy: readonly StockAllocation[],
   createOrder: (tx: Tx, allocations: readonly StockAllocation[]) => Promise<OrderPlaced>, verified?: PaymentProof) {
+  const pilot = await pilotQuoteScope(tx, context.marketId, context.paymentMethod, lines);
   const recovery = connectedRequest(context, lines);
   if (!recovery.lines.length) return createOrder(tx, legacy);
   await lockVariantInventory(tx, lines.map(line => line.variantId));
@@ -109,6 +111,9 @@ export async function placeReservedPurchase(tx: Tx, context: CheckoutContext, li
     : { kind: "cod", guestKey: context.guestKey, checkoutHash: context.checkoutHash };
   let placed: OrderPlaced | undefined;
   const result = await finalizeInventoryReservation(tx, context.attemptId, settlement, async (sameTransaction, reservation) => {
+    if (pilot && reservation.allocations.some(allocation => !pilot.poolIds.includes(allocation.poolId))) {
+      throw new CommerceError({ kind: "conflict", message: "The recorded reservation is outside the reviewed checkout scope." });
+    }
     placed = await createOrder(sameTransaction, [...legacy, ...await connectedParcelLines(sameTransaction, reservation, lines)]);
     return placed.orderId;
   });

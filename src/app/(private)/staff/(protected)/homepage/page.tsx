@@ -49,7 +49,9 @@ export default async function HomepageOffice({ searchParams }: { searchParams: P
   ]);
   const draft = homepageInput.safeParse(row?.draft);
   const content = draft.success ? draft.data : keys === "global:default" ? defaultHomepage : { sections: [], hiddenSections: [] };
-  const publishedPolicy = homepageInput.safeParse(row?.history.find(release => release.id === row.publishedId)?.content).data?.recommendations;
+  const live = homepageInput.safeParse(row?.history.find(release => release.id === row.publishedId)?.content).data;
+  const publishedPolicy = live?.recommendations;
+  const managedLayout = connected || [content, live].some(version => version?.sections.some(section => section.type === "TILES"));
   const previewMarkets = available.filter(market => (!picked.scope.marketId || picked.scope.marketId === market.id) &&
     (!picked.scope.locale || market.languages.includes(picked.scope.locale)));
   const keyReference = previewMarkets[0] && await publishedHomepage(previewMarkets[0].id, picked.scope.locale ?? previewMarkets[0].locale);
@@ -61,7 +63,7 @@ export default async function HomepageOffice({ searchParams }: { searchParams: P
       <button type="submit" className="button button--outline">Open editor</button>
     </Form>
 
-    {connected ? <p>{connectedUrl ? <a href={connectedUrl}>Manage homepage sections in the main admin</a> :
+    {managedLayout ? <p>{connectedUrl ? <a href={connectedUrl}>Manage homepage sections in the main admin</a> :
       "Homepage sections are managed in the main admin by enrolled staff."}</p> : <section aria-labelledby="homepage-draft"><h2 id="homepage-draft">Draft</h2>
       <p>Use an inherited section key to override it. Market and language overrides take precedence over the global template.</p>
       {keyReference && <details><summary>Published section keys</summary><ul>{mergeHomepage(keyReference.layers).map(section =>
@@ -74,6 +76,7 @@ export default async function HomepageOffice({ searchParams }: { searchParams: P
       <p>Editing {picked.label}. Settings apply in this order, with the last value taking precedence.</p>
       <p>Global template → global language → market → market language. Use an empty product override to clear an inherited list.</p>
       <p>{connected ? "Publish the saved recommendation policy. Section layout is published from the main admin." :
+        managedLayout ? "Section layout is published from the main admin." :
         "Publish the saved homepage draft to apply layout and recommendation changes. Use publishing history to restore both."}</p>
       {!isDeepStrictEqual(content.recommendations, publishedPolicy) && <p role="status">Saved recommendation changes are pending publication.</p>}
       <RecommendationPolicyEditor key={`policy:${keys}:${row?.revision ?? 0}`} scope={keys} revision={row?.revision ?? 0} draft={content.recommendations} />
@@ -82,7 +85,7 @@ export default async function HomepageOffice({ searchParams }: { searchParams: P
         Preview recommendations · {market.name}</Link>)}</div>
     </section>
 
-    {row && <section aria-labelledby="homepage-publish"><h2 id="homepage-publish">{connected ? "Publish recommendation policy" : "Preview and publish"}</h2>
+    {row && (!managedLayout || connected) && <section aria-labelledby="homepage-publish"><h2 id="homepage-publish">{connected ? "Publish recommendation policy" : "Preview and publish"}</h2>
       <div className="homepage-editor-actions">{!connected && previewMarkets.map(market => <Link className="button button--outline" key={market.id}
         href={`/staff/homepage/preview?${new URLSearchParams({ scope: keys, market: market.id, locale: picked.scope.locale ?? market.locale })}`}>
         Preview {market.name} · {picked.scope.locale ?? market.locale}</Link>)}
@@ -90,14 +93,18 @@ export default async function HomepageOffice({ searchParams }: { searchParams: P
       </div>
     </section>}
     {row && row.history.length > 0 && <section aria-labelledby="homepage-history"><h2 id="homepage-history">Publishing history</h2>
-      <ul className="homepage-history">{row.history.map(release => <li key={release.id}>
-        <div><time dateTime={release.publishedAt.toISOString()}>{release.publishedAt.toLocaleString(picked.scope.locale || "en", {
-          timeZone: picked.scope.marketId ? marketConfiguration(picked.scope.marketId).timeZone : "UTC",
-          dateStyle: "medium", timeStyle: "short",
-        })}</time> {release.id === row.publishedId ? " · Live" : release.restoredFrom && " · Restored"}
-        {homepageInput.safeParse(release.content).data?.recommendations && " · Recommendation policy"}</div>
-        {!connected && release.id !== row.publishedId && <PublishHomepage key={`${release.id}:${row.revision}`} scope={keys} revision={row.revision} restore={release.id} />}
-      </li>)}</ul>
+      <ul className="homepage-history">{row.history.map(release => {
+        const version = homepageInput.safeParse(release.content).data;
+        const canRestore = !managedLayout && release.id !== row.publishedId && !version?.sections.some(section => section.type === "TILES");
+        return <li key={release.id}>
+          <div><time dateTime={release.publishedAt.toISOString()}>{release.publishedAt.toLocaleString(picked.scope.locale || "en", {
+            timeZone: picked.scope.marketId ? marketConfiguration(picked.scope.marketId).timeZone : "UTC",
+            dateStyle: "medium", timeStyle: "short",
+          })}</time> {release.id === row.publishedId ? " · Live" : release.restoredFrom && " · Restored"}
+          {version?.recommendations && " · Recommendation policy"}</div>
+          {canRestore && <PublishHomepage key={`${release.id}:${row.revision}`} scope={keys} revision={row.revision} restore={release.id} />}
+        </li>;
+      })}</ul>
     </section>}
 
     {owner && <section aria-labelledby="homepage-access"><h2 id="homepage-access">Market staff access</h2>

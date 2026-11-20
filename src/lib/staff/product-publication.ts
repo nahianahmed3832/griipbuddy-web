@@ -32,7 +32,7 @@ const publishInput = z.strictObject({
 const image = { src: true, alt: true } as const;
 const publicationFields = {
   id: true, foundation: true, departmentId: true, description: true, demo: true, revision: true,
-  publication: true, attributeValues: true,
+  publication: true, attributeValues: true, sellerListingReviews: { take: 1, select: { marketId: true } },
   images: { select: image },
   secondaryCategories: { select: { departmentId: true } },
   optionDefinitions: { select: { id: true, key: true, values: { select: { id: true, value: true } } } },
@@ -207,6 +207,7 @@ export async function setWorkspaceProductPublication(actorId: string, raw: unkno
     await lockCatalogProductQuoteRows(tx, productId);
     const product = await tx.product.findUnique({ where: { id: productId }, select: publicationFields });
     if (!product?.foundation) throw new CatalogWriteError("not_found", "Choose a connected catalog product.");
+    if (product.sellerListingReviews.length) throw new CatalogWriteError("conflict", "Publish this listing from its market review.");
     if (product.revision !== revision) throw new CatalogWriteError("conflict", "This product changed. Reload it before changing publication.");
     if (product.publication === "ARCHIVED") throw new CatalogWriteError("conflict", "This product is archived.");
     if (publication === "ACTIVE") requirePublicationReadiness(await evaluatePublication(tx, product));

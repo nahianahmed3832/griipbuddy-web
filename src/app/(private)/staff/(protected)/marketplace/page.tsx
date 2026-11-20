@@ -7,6 +7,7 @@ import { storeShop } from "@/lib/marketplace/constants";
 import { threadsFor } from "@/lib/marketplace/data";
 import { MarketModeration, ReviewModeration, ShopModeration } from "@/components/marketplace/seller";
 import { ThreadLinks } from "@/components/marketplace/messages";
+import { currentMarket } from "@/lib/market-server";
 import { markets } from "@/config/markets";
 import { isMarketSelectable, selectableMarkets } from "@/lib/market-config";
 
@@ -14,7 +15,7 @@ export const metadata = { title: "Marketplace moderation" };
 
 export default async function MarketplaceAdmin() {
   if (!marketplaceMode()) notFound();
-  const staff = await requireStaff();
+  const [staff, market] = await Promise.all([requireStaff(), currentMarket()]);
   if (staff.role !== "OWNER") notFound();
   const sellerMarketsEnabled = !firstPartyStoreMode();
   const db = getDb();
@@ -23,9 +24,11 @@ export default async function MarketplaceAdmin() {
       select: { id: true, slug: true, name: true, about: true, published: true, marketGrants: true, listings: {
         orderBy: { addedOn: "desc" }, take: 30, select: { id: true, name: true, publication: true },
       } } }),
-    db.shopperReview.findMany({ orderBy: { updatedAt: "desc" }, take: 50, select: { id: true, visible: true, stars: true, text: true,
+    db.shopperReview.findMany({ where: { order: { marketId: market.id } },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: 50,
+      select: { id: true, visible: true, stars: true, text: true, updatedAt: true,
       product: { select: { name: true, slug: true } } } }),
-    threadsFor(staff.id, storeShop.id),
+    threadsFor({ platform: true }, market.id),
   ]);
   return <>
     <div className="commerce-intro"><h1 className="display-type">Marketplace moderation</h1></div>
@@ -41,11 +44,15 @@ export default async function MarketplaceAdmin() {
         <ul className="mp-editor-list">{shop.listings.map(item => <li key={item.id}><Link href={`/staff/catalog/products/${item.id}`}>{item.name} · {item.publication}</Link></li>)}</ul>
       </li>)}</ul>}
     </section>
-    <section className="mp-section"><h2>Reviews</h2>
+    <section className="mp-section"><h2>Reviews · {market.name}</h2>
       {reviews.length === 0 ? <p>No reviews yet.</p> : <ul className="mp-shop-grid">{reviews.map(review => <li className="mp-list-card" key={review.id}>
-        <strong>{review.stars}/5 · {review.product.name}</strong><p>{review.text}</p><ReviewModeration review={review.id} visible={review.visible}/>
+        <strong>{review.stars}/5 · {review.product.name}</strong><p>{review.text}</p><ReviewModeration review={review.id} visible={review.visible}
+          marketId={market.id} expectedUpdatedAt={review.updatedAt.toISOString()} />
       </li>)}</ul>}
     </section>
-    <section className="mp-section"><h2>GriipBuddy shop inbox</h2><ThreadLinks rows={inbox}/></section>
+    <section className="mp-section"><h2>GriipBuddy product questions · {market.name}</h2>
+      <ThreadLinks rows={inbox.filter(row => row.product)} market={market.id} /></section>
+    <section className="mp-section"><h2>GriipBuddy support inbox · {market.name}</h2>
+      <ThreadLinks rows={inbox.filter(row => !row.product)} market={market.id} /></section>
   </>;
 }

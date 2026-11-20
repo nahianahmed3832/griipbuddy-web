@@ -98,6 +98,10 @@ export default async function IntelligencePage({ searchParams }: { searchParams:
         {market && <span>{market.currency} · {market.timeZone}</span>}
         {window && market && <span>{window.from} – {window.to}</span>}
       </div>
+      {market && permission?.merchandising && <Link className="text-link" prefetch={false}
+        href={"/staff/intelligence/catalog-copy?" + new URLSearchParams({ market: market.id, ...(productId && { product: productId }) })}>
+        Catalog copy assistant
+      </Link>}
     </header>
     <Filters allowed={allowed} selection={selected} scope={scope} window={window} view={view} productId={productId} />
     {market && <nav className="intel-tabs" aria-label="Product Intelligence views">{(Object.keys(views) as IntelligenceView[]).map(tab =>

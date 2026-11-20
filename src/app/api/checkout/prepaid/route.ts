@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   const config = prepaidConfig();
   if (!config) return json({ kind: "unavailable", message: "Online payment is unavailable for this checkout." }, 404);
   if (!sameOrigin(request)) return json({ kind: "invalid", message: "Open checkout from this storefront." }, 403);
-  const marketId = checkoutDestination(request.headers, config.marketId);
+  const marketId = checkoutDestination(request.headers, config.marketId, new URL(request.url).origin);
   if (marketId !== config.marketId) return json({ kind: "invalid", message: "Select a market with this checkout method." }, 422);
   const parsed = requestBody.safeParse(await readJson(request));
   if (!parsed.success) return json({ kind: "invalid", message: "Check your checkout details." }, 400);
@@ -44,9 +44,10 @@ export async function POST(request: Request) {
     const guestKey = existing ?? readGuestKey(token);
     if (!guestKey) return json({ kind: "conflict", message: "This browser no longer has the original checkout session." }, 409);
 
-    const result = data.action === "review" ? await reviewPrepaid(data.checkout, guestKey, marketId)
-      : data.action === "start" ? await startPrepaid(data.checkout, guestKey, data.direct, (await getShopper())?.id, marketId)
-      : await recoverPrepaid(data.attemptId, guestKey, data.resume, marketId);
+    const shopperId = (await getShopper())?.id ?? null;
+    const result = data.action === "review" ? await reviewPrepaid(data.checkout, guestKey, marketId, shopperId)
+      : data.action === "start" ? await startPrepaid(data.checkout, guestKey, data.direct, shopperId, marketId)
+      : await recoverPrepaid(data.attemptId, guestKey, data.resume, marketId, shopperId);
     const status = result.kind === "changed" || result.kind === "conflict" ? 409
       : result.kind === "invalid" || result.kind === "unavailable" ? 422 : 200;
     const response = json(result, status);

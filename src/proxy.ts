@@ -7,19 +7,23 @@ import {
   countryHintHeader, isRegionalStorePath, languageRequestHeader, localizedStorePath, marketRequestHeader, productLandingPath, regionalMarket, withoutRegionalPrefix,
 } from "@/config/regional-path";
 import { secureCookies } from "@/lib/db/http";
-import { isMarketSelectable, marketConfiguration, marketLanguage, resolveMarketLocale, selectedMarketId } from "@/lib/market-config";
+import { isMarketSelectable, marketConfiguration, marketForStorefrontOrigin, marketLanguage, resolveMarketLocale, selectedMarketId } from "@/lib/market-config";
 
 const noIndex = { "X-Robots-Tag": "noindex, nofollow" };
 const restrictedPath = /^\/(?:cart|checkout|orders|staff|api|search)(?:\/|$)/;
+const trackingPage = /^\/orders\/(?:track(?:\/[^/]+)?|[^/]+\/tracking)\/?$/;
 const sellerPath = /^\/(?:sell|seller|shops|api\/marketplace\/(?:seller|listing-photo))(?:\/|$)/;
+const sellerWorkspacePath = /^\/seller(?:\/|$)/;
 const staffPath = /^\/staff(?:\/|$)/;
 const adminPath = /^\/admin(?:\/|$)/;
 const isPageRead = (request: NextRequest) => request.method === "GET" || request.method === "HEAD";
 
 function explicitMarket(request: NextRequest) {
-  if (!isPageRead(request) || !isRegionalStorePath(withoutRegionalPrefix(request.nextUrl.pathname))) return;
+  const path = withoutRegionalPrefix(request.nextUrl.pathname);
+  if (!isPageRead(request) || (!isRegionalStorePath(path) && !sellerWorkspacePath.test(path))) return;
   const values = request.nextUrl.searchParams.getAll("market");
-  if (values.length === 1 && isMarketSelectable(values[0])) return values[0];
+  const routed = marketForStorefrontOrigin(request.nextUrl.origin);
+  if (values.length === 1 && isMarketSelectable(values[0]) && (routed === undefined || routed === values[0])) return values[0];
 }
 
 function explicitLanguage(request: NextRequest, marketId: MarketId) {
@@ -37,10 +41,13 @@ function setSelectionCookie(request: NextRequest, response: NextResponse, name: 
 }
 
 function continueRequest(request: NextRequest, headers?: Record<string, string>, downstream?: Headers) {
-  const market = explicitMarket(request);
+  const selection = explicitMarket(request);
+  const market = selection ?? marketForStorefrontOrigin(request.nextUrl.origin);
   const language = request.nextUrl.searchParams.has("lang")
     ? explicitLanguage(request, market ?? selectedMarketId(request.cookies.get(marketCookie)?.value)) : undefined;
-  if (isRegionalStorePath(request.nextUrl.pathname)) headers = { ...headers, "Cache-Control": "private, no-store" };
+  if (isRegionalStorePath(request.nextUrl.pathname) || sellerWorkspacePath.test(request.nextUrl.pathname)) {
+    headers = { ...headers, "Cache-Control": "private, no-store" };
+  }
   if (!market && !language && !downstream && !request.headers.has(marketRequestHeader) && !request.headers.has(languageRequestHeader)) {
     return NextResponse.next({ headers });
   }
@@ -50,7 +57,7 @@ function continueRequest(request: NextRequest, headers?: Record<string, string>,
   if (market) downstream.set(marketRequestHeader, market);
   if (language) downstream.set(languageRequestHeader, language);
   const response = NextResponse.next({ request: { headers: downstream }, headers });
-  if (market) setSelectionCookie(request, response, marketCookie, market);
+  if (selection) setSelectionCookie(request, response, marketCookie, selection);
   if (language) setSelectionCookie(request, response, languageCookie, language);
   return response;
 }
@@ -71,13 +78,15 @@ function hybridRouting(request: NextRequest) {
   }
 
   const bare = withoutRegionalPrefix(path);
+  if (isPageRead(request) && sellerWorkspacePath.test(bare)) return continueRequest(request, headers, incoming);
   if (!isRegionalStorePath(bare) || !isPageRead(request)) {
     return NextResponse.next({ request: { headers: incoming }, headers });
   }
   const override = explicitMarket(request);
   const prior = request.cookies.get(marketCookie)?.value;
   const hintedMarket = marketList.find(item => item.countryCode === request.headers.get(countryHintHeader))?.id;
-  const market = selectedMarketId(override ?? regionalMarket(path)?.id ?? (isMarketSelectable(prior) ? prior : hintedMarket), "us");
+  const market = selectedMarketId(marketForStorefrontOrigin(request.nextUrl.origin) ?? override ?? regionalMarket(path)?.id ??
+    (isMarketSelectable(prior) ? prior : hintedMarket), "us");
   const language = explicitLanguage(request, market);
   const marketPath = localizedStorePath(bare, market);
   if (path !== marketPath) {
@@ -97,6 +106,8 @@ function hybridRouting(request: NextRequest) {
 }
 
 function accessResponse(request: NextRequest) {
+  const routed = marketForStorefrontOrigin(request.nextUrl.origin);
+  if (routed && !isMarketSelectable(routed)) return new Response(null, { status: 404, headers: noIndex });
   if (hybridDemoMode()) return hybridRouting(request);
   if (firstPartyStoreMode() && sellerPath.test(request.nextUrl.pathname)) {
     if (request.nextUrl.pathname === "/shops/griipbuddy") {
@@ -133,8 +144,13 @@ function accessResponse(request: NextRequest) {
 
 export async function proxy(request: NextRequest) {
   const response = accessResponse(request);
-  if (!(response instanceof NextResponse) || response.headers.get("x-middleware-next") !== "1") return response;
   const path = request.nextUrl.pathname;
+  if (trackingPage.test(withoutRegionalPrefix(path))) {
+    response.headers.set("Cache-Control", "private, no-store, max-age=0");
+    response.headers.set("Referrer-Policy", "no-referrer");
+    response.headers.set("X-Robots-Tag", noIndex["X-Robots-Tag"]);
+  }
+  if (!(response instanceof NextResponse) || response.headers.get("x-middleware-next") !== "1") return response;
   if (path.startsWith("/staff/catalog") || path.startsWith("/api/staff/") || path.includes("%")) {
     const { retiredCatalogBrowserResponse } = await import("@/lib/catalog/main-admin-browser");
     const retired = await retiredCatalogBrowserResponse(request, request.nextUrl,
@@ -147,8 +163,8 @@ export async function proxy(request: NextRequest) {
   const category = /^\/departments\/([^/]+)$/.exec(bare)?.[1];
   if (!product && !category) return response;
   const hybrid = hybridDemoMode();
-  const market = selectedMarketId(explicitMarket(request) ?? (hybrid ? regionalMarket(path)?.id : undefined) ??
-    request.cookies.get(marketCookie)?.value, hybrid ? "us" : undefined);
+  const market = selectedMarketId(marketForStorefrontOrigin(request.nextUrl.origin) ?? explicitMarket(request) ??
+    (hybrid ? regionalMarket(path)?.id : undefined) ?? request.cookies.get(marketCookie)?.value, hybrid ? "us" : undefined);
   let destination: URL;
   if (product) {
     const { resolveMigratedProductLanding } = await import("@/lib/catalog-migration/compatibility");

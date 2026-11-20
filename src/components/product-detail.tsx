@@ -252,7 +252,7 @@ export function ProductDetail({ product, market, initialVariantId, departmentNam
         </button>
         <AddToList product={product.id} market={market} variantId={selected.id} priceMinor={marketOffer?.amountMinor}/>
       </div>
-      {marketOffer && <ShareProductSelection market={market} variantId={selected.id} />}
+      {marketOffer && <ShareProductSelection slug={product.slug} market={market} variantId={selected.id} />}
       {watches && marketOffer && <ProductVariantAlerts key={`${market.id}/${selected.id}`} variantId={selected.id}
         variantLabel={variantLabel(selected)} marketId={market.id} shopperId={watches.shopperId}
         options={watches.options.find(watch => watch.variantId === selected.id)} />}
@@ -336,7 +336,7 @@ export function ProductDetail({ product, market, initialVariantId, departmentNam
             );
           })}
         </div>
-        {!preview && marketOffer && <ShareProductSelection market={market} variantId={selected.id} />}
+        {!preview && marketOffer && <ShareProductSelection slug={product.slug} market={market} variantId={selected.id} />}
 
         <div className="product-detail__actions">
           {available && remaining > 0 && !preview && <QuantityControl value={chosenQuantity} max={remaining} onChange={setQuantity} />}

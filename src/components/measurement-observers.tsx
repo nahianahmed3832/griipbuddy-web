@@ -159,14 +159,16 @@ export function MeasuredHomepageSection({ marketId, context, ...props }:
   return <section {...props} ref={ref}/>;
 }
 
-export function ListingMeasurement({ marketId, placement, query, resultCount, filters, active }: {
+export function ListingMeasurement({ marketId, placement, listingId, filterKey, query, resultCount, filters, active }: {
   marketId: MarketId; placement: string; query?: string; resultCount: number; filters: MeasurementFilters; active: boolean;
+  listingId?: string; filterKey?: string;
 }) {
-  const previous = useRef<{ marketId: MarketId; placement: string; query?: string; active: boolean }>(null);
-  useForegroundObservation(JSON.stringify([marketId, placement, query, filters]), true, () => {
+  const scope = JSON.stringify([marketId, placement, listingId, query]);
+  const previous = useRef<{ scope: string; active: boolean }>(null);
+  useForegroundObservation(JSON.stringify([scope, filterKey, filters]), true, () => {
     const last = previous.current;
-    previous.current = { marketId, placement, query, active };
-    const sameSearch = last?.marketId === marketId && last.placement === placement && last.query === query;
+    previous.current = { scope, active };
+    const sameSearch = last?.scope === scope;
     const safeQuery = safeSearchQuery(query);
     if (query && !sameSearch) trackMeasurement({ action: "SEARCH", marketId, query: safeQuery, resultCount, filters, placement });
     else if (active || (sameSearch && last.active)) {
@@ -176,15 +178,15 @@ export function ListingMeasurement({ marketId, placement, query, resultCount, fi
   return null;
 }
 
-export function SearchResultsMeasurement({ marketId, query, resultCount, filterKey, filterFields, sort, filters }: {
+export function SearchResultsMeasurement({ marketId, query, resultCount, filterKey, filterFields, scoped, sort, filters }: {
   marketId: MarketId; query: string; resultCount: number; filterKey: string;
-  filterFields: readonly CategoryFilterField[]; sort?: CategoryMeasurementSort; filters: MeasurementFilters;
+  filterFields: readonly CategoryFilterField[]; scoped: boolean; sort?: CategoryMeasurementSort; filters: MeasurementFilters;
 }) {
   const scope = JSON.stringify([marketId, query]);
   const previous = useRef<{ scope: string; active: boolean }>(null);
   useForegroundObservation(JSON.stringify([scope, filterKey, sort]), true, () => {
     const seen = previous.current;
-    const active = Boolean(filterFields.length || sort && sort !== "recommended");
+    const active = scoped || Boolean(filterFields.length || sort && sort !== "recommended");
     previous.current = { scope, active };
     const context = { marketId, placement: "search-results", query: safeSearchQuery(query), resultCount, filters };
     if (seen?.scope !== scope) trackMeasurement({ action: "SEARCH", ...context });

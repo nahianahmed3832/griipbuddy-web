@@ -1,15 +1,5 @@
-import Link from "next/link";
-import { EmptyState } from "@/components/store-ui";
-import { catalogBrowseHref } from "@/lib/catalog/category-browse-links";
-import { currentMarket } from "@/lib/market-server";
-import { hybridDemoMode } from "@/lib/release-config";
+import { CatalogDestinationUnavailable } from "@/components/catalog-destination-unavailable";
 
-export default async function CatalogDestinationUnavailable() {
-  const { id, locale } = await currentMarket();
-  const browse = catalogBrowseHref("/shop", { id, locale, regional: hybridDemoMode() }, new URLSearchParams({ catalogUnavailable: "category" }));
-  return <div className="shell inner-page">
-    <EmptyState title="Category unavailable" description="Browse the products and categories available in your selected market.">
-      <Link className="button button--primary" href={browse}>Browse this market</Link>
-    </EmptyState>
-  </div>;
+export default function DepartmentUnavailable() {
+  return <CatalogDestinationUnavailable destination="Category" />;
 }

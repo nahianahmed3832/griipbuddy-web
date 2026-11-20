@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { getDb } from "../src/lib/db/client";
 import { requireLocalDatabase } from "../src/lib/db/local";
-import { CART_STORAGE_KEY, decodeCart } from "../src/lib/cart/model";
+import { decodeCart, marketCartStorageKey } from "../src/lib/cart/model";
 
 const isolated = process.env.GRIIPBUDDY_ENV_FILE === ".env.test";
 test.skip(!isolated, "Order browser tests require the isolated local test database.");
@@ -57,7 +57,7 @@ test("Bangladesh guest COD checkout and protected packing from a real catalog va
     await page.getByRole("textbox", { name: "Phone number" }).fill("01700000000");
     await page.getByRole("textbox", { name: "Email (optional)" }).fill("shopper@example.test");
     await page.getByRole("combobox", { name: "District" }).selectOption("dhaka");
-    await page.getByRole("textbox", { name: "Area / Upazila" }).fill("Dhanmondi");
+    await page.getByRole("textbox", { name: "Area or upazila", exact: true }).fill("Dhanmondi");
     await page.getByRole("textbox", { name: "Street address" }).fill("10 Preview Road");
     await page.getByRole("textbox", { name: "Postal code (optional)" }).fill("1209");
     await expect(page.getByRole("radio", { name: "Cash on delivery" })).toBeChecked();
@@ -65,7 +65,7 @@ test("Bangladesh guest COD checkout and protected packing from a real catalog va
     if (!mobile) await capture(page, "checkout-desktop");
     await page.getByRole("button", { name: "Review order" }).click();
     await expect(page.getByRole("heading", { name: "Review your order" })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Order summary" }).getByText(total, { exact: false })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Review your order" }).getByText(total, { exact: false })).toBeVisible();
     await noOverflow(page);
     await capture(page, mobile ? "checkout-review-mobile" : "checkout-review-desktop");
 
@@ -82,7 +82,7 @@ test("Bangladesh guest COD checkout and protected packing from a real catalog va
     await page.getByRole("button", { name: "Place COD order" }).click();
     if (mobile) {
       await expect(page.getByRole("alert").filter({ hasText: "couldn’t confirm" })).toBeVisible();
-      const saved = await page.evaluate((key) => localStorage.getItem(key), CART_STORAGE_KEY);
+      const saved = await page.evaluate((key) => localStorage.getItem(key), marketCartStorageKey("bd"));
       expect(decodeCart(saved)).toEqual([{ variantId, quantity: 1 }]);
       await page.reload();
       await expect(page.getByRole("heading", { name: "Check your last order" })).toBeVisible();
@@ -157,7 +157,7 @@ test("Bangladesh guest COD checkout and protected packing from a real catalog va
     expect(updated.payment?.status).toBe("AWAITING_COLLECTION");
 
     await staffPage.goto("/staff/catalog");
-    await expect(staffPage.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
+    await expect(staffPage.getByRole("heading", { name: "Catalog access is unavailable", exact: true })).toBeVisible();
     await staffPage.goto("/staff");
     await expect(staffPage.getByRole("heading", { name: "Packing queue", exact: true })).toBeVisible();
     const signOutResponse = staffPage.waitForResponse("**/api/staff/sign-out");

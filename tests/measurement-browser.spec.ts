@@ -112,7 +112,9 @@ test("records visible product placements and completed searches only after conse
 
 test("associates a consented anonymous session after authentication and measures wishlist mutations", async ({ page, baseURL }, info) => {
   test.skip(process.env.TEST_MEASUREMENT_MARKETPLACE !== "1" || info.project.name !== "desktop", "Requires marketplace test mode.");
-  if (baseURL !== "http://127.0.0.1:3101") throw new Error("Expected the isolated local origin.");
+  if (!baseURL || new URL(baseURL).hostname !== "127.0.0.1" || baseURL !== process.env.BETTER_AUTH_URL) {
+    throw new Error("Expected the configured isolated local origin.");
+  }
   const events = measurements(page);
   const email = `measurement-fixture-${randomUUID()}@example.test`;
   const password = randomUUID();

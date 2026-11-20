@@ -2,12 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { requireLegacyCatalogBrowser } from "@/lib/catalog/main-admin-config";
+import { requireScopedLegacyWriter } from "@/lib/catalog/scoped-pilot";
+import { getDb } from "@/lib/db/client";
 import { getStaff } from "@/lib/staff/access";
 import { adjustStock, advanceFulfillment, cancelOrder, collectCash, OperationError, recordBangladeshTracking, updatePrice } from "@/lib/staff/operations";
 import { adjustLocationStock, createDispatchLocation, moveSharedStockToLocation } from "@/lib/staff/location-inventory";
 import { parseMinorUnits } from "@/lib/staff/catalog-input";
 import { reportFailure } from "@/lib/db/observability";
-import { dispatchOrderParcel, receiveRefusedOrderParcel, recordOrderParcelTracking } from "@/lib/commerce/order-parcels";
+import { dispatchOrderParcel, receiveRefusedOrderParcel, recordOrderParcelException, recordOrderParcelPreparation,
+  recordOrderParcelTracking, splitOrderParcel, updateOrderParcelReference } from "@/lib/commerce/order-parcels";
 import { refundPayPalOrder } from "@/lib/commerce/paypal-refund";
 import { uuid } from "@/lib/commerce/checkout-types";
 
@@ -18,7 +21,7 @@ async function perform(task: (actorId: string) => Promise<unknown>, path: string
     const staff = await getStaff();
     if (!staff) return { error: "Sign in as authorized staff to continue." };
     const catalogChange = path === "/staff/catalog" || path === "/staff/catalog/inventory";
-    if (catalogChange) requireLegacyCatalogBrowser();
+    if (catalogChange && !await requireScopedLegacyWriter(getDb())) requireLegacyCatalogBrowser();
     await task(staff.id);
     revalidatePath(path);
     if (catalogChange) revalidatePath("/", "layout");
@@ -64,7 +67,37 @@ export async function dispatchParcelAction(orderId: string, parcelId: string, _s
     carrier: form.get("carrier") ?? undefined,
     trackingReference: form.get("trackingReference") ?? undefined,
     simulate: form.get("simulate") === "yes",
+    operationId: form.get("operationId") ?? undefined,
   }), orderId, "Parcel dispatched.");
+}
+
+function parcelQuantityFields(form: FormData) {
+  return [...form.entries()].flatMap(([key, value]) => {
+    const match = /^quantity-(.+)$/.exec(key);
+    return match && value !== "" && value !== "0" ? [{ orderItemId: match[1], quantity: integer(value) }] : [];
+  });
+}
+
+export async function prepareParcelAction(orderId: string, parcelId: string, _state: ActionState, form: FormData) {
+  return updateParcel(actorId => recordOrderParcelPreparation(actorId, orderId, parcelId, {
+    operationId: form.get("operationId"), next: form.get("next"), expectedRevision: integer(form.get("revision")), items: parcelQuantityFields(form),
+  }), orderId, "Parcel quantities confirmed.");
+}
+
+export async function splitParcelAction(orderId: string, parcelId: string, _state: ActionState, form: FormData) {
+  return updateParcel(actorId => splitOrderParcel(actorId, orderId, parcelId, {
+    operationId: form.get("operationId"), reason: form.get("reason"), items: parcelQuantityFields(form),
+  }), orderId, "Parcel split saved.");
+}
+
+export async function recordParcelExceptionAction(orderId: string, parcelId: string, _state: ActionState, form: FormData) {
+  return updateParcel(actorId => recordOrderParcelException(actorId, orderId, parcelId, { reason: form.get("reason") }), orderId, "Delivery exception recorded.");
+}
+
+export async function updateParcelReferenceAction(orderId: string, parcelId: string, _state: ActionState, form: FormData) {
+  return updateParcel(actorId => updateOrderParcelReference(actorId, orderId, parcelId, {
+    carrier: form.get("carrier"), trackingReference: form.get("trackingReference"), reason: form.get("reason"), expectedRevision: integer(form.get("revision")),
+  }), orderId, "Tracking reference saved.");
 }
 
 export async function recordParcelTrackingAction(orderId: string, parcelId: string, _state: ActionState, form: FormData) {

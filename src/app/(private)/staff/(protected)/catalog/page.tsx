@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { marketList } from "@/config/markets";
 import { storefrontPath } from "@/config/storefront-path";
-import { requireStaff } from "@/lib/staff/access";
+import { requireLegacyCatalogPage } from "@/lib/catalog/main-admin-legacy-page";
 import { merchandisingEnabled } from "@/lib/staff/merchandising-config";
 import { listProductWorkspace } from "@/lib/staff/product-workspace";
 import "./taxonomy/taxonomy.css";
@@ -14,20 +14,21 @@ const root = "/staff/catalog";
 export default async function ProductManagement({ searchParams }: {
   searchParams: Promise<{ q?: string; page?: string; state?: string; source?: string; market?: string }>;
 }) {
-  const [staff, params] = await Promise.all([requireStaff(), searchParams]);
+  const [staff, params] = await Promise.all([requireLegacyCatalogPage(), searchParams]);
   const query = typeof params.q === "string" ? params.q.trim().slice(0, 80) : "";
   const page = typeof params.page === "string" && /^\d{1,4}$/.test(params.page) ? Math.max(1, Number(params.page)) : 1;
   const state = params.state === "DRAFT" || params.state === "ARCHIVED" || params.state === "ACTIVE" ? params.state : undefined;
-  const source = params.source === "connected" || params.source === "legacy" ? params.source : undefined;
+  const source = !staff.scopedLegacyPilot && (params.source === "connected" || params.source === "legacy") ? params.source : undefined;
   const market = marketList.find(row => row.id === params.market)?.id;
-  const view = await listProductWorkspace(staff.id, { q: query, state, source, market, page });
+  const view = await listProductWorkspace(staff.id, { q: query, state, source, market, page, legacyPilot: staff.scopedLegacyPilot });
   const pageHref = (number: number) => `${root}?${new URLSearchParams({ q: query, page: String(number),
     ...(state && { state }), ...(source && { source }), ...(market && { market }) })}`;
   return <div className="taxonomy-workspace connected-product-workspace">
     <header className="taxonomy-heading">
       <div><h1 className="display-type">Product management</h1>
         <p>Manage the shared catalog, physical variants and local offers.</p></div>
-      {view?.owner && <Link className="button button--primary" href="/staff/catalog/products/new">Create product</Link>}
+      {view?.owner && <Link className="button button--primary" href={staff.scopedLegacyPilot ?
+        "/staff/catalog/products/new?editor=legacy" : "/staff/catalog/products/new"}>Create product</Link>}
     </header>
     {!view ? <section className="taxonomy-card" role="status"><h2>Catalog access is unavailable</h2>
       <p>Commercial access is required to manage products and offers.</p></section> : <>
@@ -42,7 +43,7 @@ export default async function ProductManagement({ searchParams }: {
           <label>Search products<input name="q" defaultValue={query} maxLength={80} type="search" placeholder="Name, brand, ID or SKU" /></label>
           <label>Publication<select name="state" defaultValue={state ?? ""}><option value="">All states</option>
             {Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          {view.owner && <label>Catalog source<select name="source" defaultValue={source ?? ""}>
+          {view.owner && !staff.scopedLegacyPilot && <label>Catalog source<select name="source" defaultValue={source ?? ""}>
             <option value="">All products</option><option value="connected">Connected</option><option value="legacy">Legacy</option>
           </select></label>}
           <label>Offer market<select name="market" defaultValue={market ?? ""}><option value="">All accessible markets</option>

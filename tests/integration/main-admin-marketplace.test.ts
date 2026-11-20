@@ -92,16 +92,20 @@ test("the signed Marketplace workspace keeps seller grants and checkout changes 
     cases: { create: { id: caseId, kind: "RETURN" } },
   } });
 
-  function signed(operation: object, options: { actor?: typeof staff[number]; market?: "bd" | "us"; key?: string } = {}) {
+  function signed(operation: object, options: { actor?: typeof staff[number]; market?: "bd" | "us"; key?: string; browser?: boolean } = {}) {
     const actor = options.actor ?? owner;
     const body = JSON.stringify({ issuedAt: Date.now(), nonce: randomUUID(), legacyId: actor.legacyId,
       central: actor.role === "OWNER", marketId: options.market ?? marketId, request: operation });
     const signature = createHmac("sha256", options.key ?? secret).update("griip-main-admin-marketplace-v1\n").update(body).digest("hex");
     return () => handleMainAdminCatalog(new Request("http://127.0.0.1:4340/api/internal/main-admin-catalog", {
       method: "POST", body, headers: { "content-type": "application/json", "x-griip-catalog-signature": signature,
-        "x-griip-admin-channel": "marketplace" },
+        "x-griip-admin-channel": "marketplace", "sec-fetch-mode": "cors",
+        ...(options.browser && { origin: "http://127.0.0.1:4340", "sec-fetch-site": "same-origin" }),
+      },
     }));
   }
+
+  assert.equal((await signed({ read: "marketplace-workspace" }, { browser: true })()).status, 403);
 
   async function send(operation: object, status = 200, options?: Parameters<typeof signed>[1]) {
     const response = await signed(operation, options)();
@@ -127,6 +131,8 @@ test("the signed Marketplace workspace keeps seller grants and checkout changes 
   await send(orderCase, 404);
   const orderList = (await send(orders, 200, us)).data.rows;
   const listed = orderList.find((row: { id: string }) => row.id === orderId);
+  assert.equal(listed.marketId, "us");
+  assert.equal(listed.status, "PLACED");
   assert.equal(listed.currency, "USD");
   assert.equal(listed.payment.status, "PAID");
   assert.equal(typeof listed.fulfillment, "string");

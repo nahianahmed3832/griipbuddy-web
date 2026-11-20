@@ -61,8 +61,9 @@ function VariantFields({ name, variant, remove }: { name: string; variant?: Vari
   );
 }
 
-export function ProductEditor({ existing, departments, collections, production, reviewDraft }: {
+export function ProductEditor({ existing, departments, collections, production, reviewDraft, fixedCollections }: {
   existing: { product: ProductInput; revision: number } | null; departments: Choice[]; collections: Choice[]; production: boolean;
+  fixedCollections?: boolean;
   reviewDraft?: { id: string; completeHref: string };
 }) {
   const router = useRouter();
@@ -89,7 +90,7 @@ export function ProductEditor({ existing, departments, collections, production, 
         id: text("id"), slug: text("slug"), name: text("name"), brand: identifier("brand"), departmentId: text("departmentId"),
         description: text("description"), shortDescription: text("shortDescription") || undefined, specifications: asPairs(text("specifications")),
         keywords: text("keywords").split(",").map((word) => word.trim()).filter(Boolean),
-        collectionIds: form.getAll("collectionIds").map(String),
+        collectionIds: fixedCollections ? original?.collectionIds ?? [] : form.getAll("collectionIds").map(String),
           publication: reviewDraft ? "DRAFT" : text("publication") as ProductInput["publication"],
           demo: reviewDraft ? original?.demo ?? true : form.has("demo"),
         featured: form.has("featured"), newArrival: form.has("newArrival"),

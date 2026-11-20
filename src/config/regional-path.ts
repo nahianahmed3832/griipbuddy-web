@@ -3,7 +3,7 @@ import { marketList, markets, type MarketId } from "./markets.ts";
 export const marketRequestHeader = "x-griip-current-market";
 export const languageRequestHeader = "x-griip-current-language";
 export const countryHintHeader = "x-griip-country-hint";
-const storefrontRoute = /^\/(?:$|account(?:\/|$)|cart(?:\/|$)|checkout(?:\/|$)|collections(?:\/|$)|departments(?:\/|$)|favorites(?:\/|$)|gifts(?:\/|$)|help(?:\/|$)|lists(?:\/|$)|messages(?:\/|$)|orders(?:\/|$)|products(?:\/|$)|registry(?:\/|$)|search(?:\/|$)|shop(?:\/|$)|shops(?:\/|$))/;
+const storefrontRoute = /^\/(?:$|account(?:\/|$)|blog(?:\/|$)|pages(?:\/|$)|brands(?:\/|$)|compare(?:\/|$)|cart(?:\/|$)|checkout(?:\/|$)|collections(?:\/|$)|coupons(?:\/|$)|departments(?:\/|$)|favorites(?:\/|$)|gifts(?:\/|$)|help(?:\/|$)|lists(?:\/|$)|messages(?:\/|$)|orders(?:\/|$)|products(?:\/|$)|recent(?:\/|$)|registry(?:\/|$)|search(?:\/|$)|shop(?:\/|$)|shops(?:\/|$))/;
 
 export function regionalMarket(path: string) {
   return marketList.find(market => market.pathPrefix && (path === market.pathPrefix || path.startsWith(market.pathPrefix + "/")));

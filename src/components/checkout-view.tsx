@@ -6,10 +6,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useEffectEvent, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { formatMoney, type Market } from "@/config/markets";
 import { localizedStorePath } from "@/config/regional-path";
-import { storefrontPath } from "@/config/storefront-path";
 import { useCart, useCartActions } from "@/lib/cart/browser";
 import { rememberPending, usePendingCheckout } from "@/lib/cart/checkout-attempt";
-import { checkoutFailureCode, checkoutStep, measurementCheckoutHeaders, useCheckoutMeasurement, useCheckoutValidation,
+import { checkoutFailureCode, checkoutStep, useCheckoutMeasurement, useCheckoutValidation,
   useForegroundObservation } from "@/lib/measurement/browser";
 import type { CheckoutStep } from "@/lib/measurement/schema";
 import type {
@@ -17,11 +16,12 @@ import type {
   RecoverResult, ReviewResult, SubmitResult,
 } from "@/lib/commerce/checkout-types";
 import { compareCartItems, type CartItem } from "@/lib/cart/model";
-import { clearBuyPersonalization, useBuyPersonalization } from "@/lib/cart/buy-personalization";
+import { clearBuyPersonalization, rememberBuyPersonalization, useBuyPersonalization } from "@/lib/cart/buy-personalization";
 import { personalizationAvailable, personalizationText, type Personalization } from "@/lib/catalog/personalization";
 import { OrderBreakdown, PurchasedItems } from "./order-summary";
 import { PersonalizationField } from "./personalization-field";
 import { useCartPricing } from "./cart-pricing";
+import { checkoutFailures, postCheckout, sandboxApprovalUrl } from "./checkout-request";
 import "./checkout-view.css";
 
 type Address = CheckoutDetails["customer"];
@@ -30,18 +30,13 @@ type Review = { input: NativeCheckoutInput; quote: CheckoutQuote; attemptId: str
 type Notice = { message: string; issues?: string[]; error?: boolean };
 const initialAddress: Address = { name: "", phone: "", email: "", district: "", locality: "", address: "", postalCode: "" };
 
-async function checkoutRequest<T>(marketId: Market["id"], body: object, prepaid = false): Promise<T> {
-  const response = await fetch(storefrontPath(prepaid ? "/api/checkout/prepaid" : "/api/checkout"), {
-    method: "POST", headers: { "Content-Type": "application/json", "x-griipbuddy-checkout-market": marketId, ...measurementCheckoutHeaders() }, body: JSON.stringify(body),
-  });
-  if (response.status >= 500) throw new Error("Checkout response unavailable");
-  return response.json() as Promise<T>;
-}
+const checkoutPath = (prepaid: boolean) => prepaid ? "/api/checkout/prepaid" : "/api/checkout";
+const prepaidSandboxOrigin = "https://sandbox.sslcommerz.com";
 
-export type CheckoutAddress = { id: string; label: string; value: Address };
+export type CheckoutAddress = { id: string; label: string; isDefault?: boolean; value: Address };
 
 export function CheckoutView({ market, addressAdapter, choices, prepaidChoices = [], directItem, directName, directProductId, directPersonalization, personalizationIntent,
-  marketplace = false, addresses = [], shopperAddress, destinationControl, prepaidAttempt, demo = false }: {
+  marketplace = false, addresses = [], shopperAddress, destinationControl, prepaidAttempt, onPrepaidCallbackCleared, demo = false }: {
   market: Market;
   addressAdapter: "bd-district" | "us-postal";
   choices: readonly DeliveryChoice[];
@@ -51,13 +46,14 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
   addresses?: readonly CheckoutAddress[]; shopperAddress?: Partial<Address>;
   destinationControl?: ReactNode;
   prepaidAttempt?: string;
+  onPrepaidCallbackCleared: () => void;
   demo?: boolean;
 }) {
   const router = useRouter();
   const marketId = market.id;
   const postalAddress = addressAdapter === "us-postal";
   const districtLabel = postalAddress ? "State" : "District";
-  const { ready: cartReady, items: cartItems, sync, message: syncMessage } = useCart();
+  const { ready: cartReady, items: cartItems, revision, sync, message: syncMessage } = useCart();
   const { completePurchase, retrySync } = useCartActions();
   const priced = useCartPricing();
   const carriedText = useBuyPersonalization(personalizationIntent, directItem?.variantId);
@@ -68,9 +64,11 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
     personalizationAvailable(directPersonalization, personalization);
   const items = directItem ? [{ ...directItem, ...(personalization && { personalization }) }] : priced.cart?.checkoutItems ?? [];
   const pendingAttempt = usePendingCheckout(marketId);
-  const ready = cartReady || Boolean(directItem || pendingAttempt || prepaidAttempt);
-  const [callback, setCallback] = useState(prepaidAttempt);
-  const [address, setAddress] = useState({ ...initialAddress, ...shopperAddress });
+  const callback = prepaidAttempt && (!pendingAttempt || pendingAttempt.prepaid && pendingAttempt.id === prepaidAttempt)
+    ? prepaidAttempt : undefined;
+  const ready = cartReady || Boolean(directItem || pendingAttempt || callback);
+  const defaultAddress = addresses.find(item => item.isDefault && (choices.length ? choices : prepaidChoices).some(choice => choice.district === item.value.district));
+  const [address, setAddress] = useState({ ...initialAddress, ...shopperAddress, ...defaultAddress?.value });
   const [gift, setGift] = useState(false);
   const [giftNote, setGiftNote] = useState("");
   const [coupon, setCoupon] = useState("");
@@ -78,19 +76,22 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
   const [payment, setPayment] = useState<NativeCheckoutInput["paymentMethod"]>(choices.length || !prepaidChoices.length ? "COD" : "SSLCOMMERZ");
   const [review, setReview] = useState<Review | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [interrupted, setInterrupted] = useState(false);
+  const [retryPath, setRetryPath] = useState<string>();
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
   const verifiedCallback = useRef<string>(null);
   const summary = useRef<HTMLElement>(null);
+  const statusHeading = useRef<HTMLHeadingElement>(null);
   const activeChoices = payment === "COD" ? choices : prepaidChoices;
   const districts = [...new Map(activeChoices.map(choice => [choice.district, choice.districtLabel])).entries()];
   const methods = activeChoices.filter(({ district }) => district === address.district);
   const selectedMethod = methods.find(choice => choice.method === method) ?? methods[0];
   const locked = Boolean(pendingAttempt || callback);
-  const cartChanged = Boolean(review && JSON.stringify([...items].sort(compareCartItems)) !==
-    JSON.stringify([...review.input.items].sort(compareCartItems)));
+  const cartChanged = Boolean(review && (review.input.cart?.source === "cart" && review.input.cart.revision !== revision ||
+    JSON.stringify([...items].sort(compareCartItems)) !== JSON.stringify([...review.input.items].sort(compareCartItems))));
   const confirmed = review && !cartChanged ? review : null;
-  const cartEligible = Boolean(directItem || priced.cart && priced.cart.affectedLines === 0);
+  const cartEligible = Boolean(directItem || !priced.refreshing && priced.cart && priced.cart.affectedLines === 0);
   const singleLine = items.length === 1 && (directItem || cartItems.length === 1) ? items[0] : undefined;
   const checkoutContext = singleLine ? { variantId: singleLine.variantId, offerId: singleLine.offerId,
     productId: directItem ? directProductId : priced.cart?.lines.find(line => line.status === "available")?.product?.productId,
@@ -100,6 +101,9 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
   useForegroundObservation(`${marketId}-unavailable`, ready && cartEligible && items.length > 0 && !locked && !choices.length && !prepaidChoices.length,
     () => reportStep("ADDRESS", "UNAVAILABLE"));
   const reportInvalidAddress = useCheckoutValidation(marketId, checkoutContext);
+  useEffect(() => {
+    if (locked || retryPath) statusHeading.current?.focus();
+  }, [locked, retryPath]);
 
   function invalidateQuote() {
     setReview(null);
@@ -128,44 +132,66 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
     }
   }
 
-  async function finish(order: OrderPlaced, direct: boolean) {
-    if (!direct) await completePurchase(order.orderId, order.purchased);
-    if (direct) clearBuyPersonalization(personalizationIntent, directItem?.variantId);
-    rememberPending(marketId, null);
+  async function finish(order: OrderPlaced, attemptId: string, direct: boolean) {
+    const pending = pendingAttempt?.id === attemptId ? pendingAttempt : undefined;
+    const reviewed = review?.attemptId === attemptId ? review.input.cart : undefined;
+    const checkoutRevision = pending?.cartRevision ?? (reviewed?.source === "cart" ? reviewed.revision : undefined);
+    if (!direct) await completePurchase(order.orderId, order.purchased, checkoutRevision);
+    const saved = pending?.directItem;
+    if (direct) clearBuyPersonalization(saved?.personalizationIntent ?? personalizationIntent, saved?.variantId ?? directItem?.variantId);
+    if (!pendingAttempt || pendingAttempt.id === attemptId) rememberPending(marketId, null);
     const path = `/orders/${order.orderId}`;
     router.replace(demo ? localizedStorePath(path, marketId) : path);
   }
 
   function clearCallback() {
     if (!callback) return;
-    setCallback(undefined);
     const url = new URL(window.location.href);
     url.searchParams.delete("prepaid");
     window.history.replaceState(null, "", url);
+    onPrepaidCallbackCleared();
   }
 
   async function recoverOrder(attemptId: string, prepaid: boolean, resume = false) {
     if (inFlight.current) return;
     reportStep("RECOVERY");
     await run("RECOVERY", async () => {
-      const result = await checkoutRequest<RecoverResult | PrepaidPaymentResult>(marketId, { action: "recover", attemptId, ...(prepaid && { resume }) }, prepaid);
+      const result = await postCheckout<RecoverResult | PrepaidPaymentResult>(market, checkoutPath(prepaid),
+        { action: "recover", attemptId, ...(prepaid && { resume }) }, ["placed", "continue", "pending", "abandoned", ...checkoutFailures]);
       if (result.kind === "placed") {
-        await finish(result, "direct" in result ? result.direct : Boolean(pendingAttempt?.direct));
+        await finish(result, attemptId, "direct" in result ? result.direct : Boolean(pendingAttempt?.id === attemptId && pendingAttempt.direct));
         return;
       }
       if (result.kind === "continue") {
+        const approvalUrl = sandboxApprovalUrl(result.redirectUrl, prepaidSandboxOrigin);
         reportStep("PROVIDER_REDIRECT");
-        window.location.assign(result.redirectUrl);
+        window.location.assign(approvalUrl);
         return;
       }
       if (result.kind !== "pending") reportStep("RECOVERY", checkoutFailureCode(result.kind));
-      if ("message" in result) {
-        setNotice({ ...result, error: result.kind !== "pending" && result.kind !== "abandoned" });
+      if (result.kind === "pending") setInterrupted(false);
+      if ("message" in result && result.message) {
+        setNotice({ message: result.message, issues: "issues" in result ? result.issues : undefined,
+          error: result.kind !== "pending" && result.kind !== "abandoned" });
       }
       if (result.kind === "abandoned") {
-        rememberPending(marketId, null);
+        if (prepaid && interrupted && review?.attemptId === attemptId) {
+          setNotice({ message: "No active payment was found. You can retry using the same reviewed order." });
+          return;
+        }
+        const match = pendingAttempt?.id === attemptId ? pendingAttempt : null;
+        if (match) rememberPending(marketId, null);
+        if (!("message" in result)) setNotice({ message: "No order was saved. Review your order before trying again." });
         setReview(null);
+        setInterrupted(false);
         clearCallback();
+        if (match?.directItem && !directItem) {
+          const { variantId, offerId, quantity, personalizationIntent: savedIntent } = match.directItem;
+          const params = new URLSearchParams({ market: marketId, buy: variantId, quantity: String(quantity) });
+          if (offerId) params.set("offer", offerId);
+          if (savedIntent) params.set("custom", savedIntent);
+          setRetryPath(`${demo ? localizedStorePath("/checkout", marketId) : "/checkout"}?${params}`);
+        } else requestAnimationFrame(() => summary.current?.focus());
       }
     }, "We couldn’t verify your last payment. Check its status before paying again.");
   }
@@ -180,10 +206,11 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
   }, [callback, ready]);
 
   function reviewOrder() {
-    if (!selectedMethod || locked || !validPersonalization || inFlight.current) return;
+    if (!selectedMethod || locked || !cartEligible || !validPersonalization || inFlight.current) return;
     reportStep("ADDRESS");
     reportStep("DELIVERY_PAYMENT");
     const input: NativeCheckoutInput = { marketId, items: [...items],
+      cart: directItem ? { source: "buy-now" } : { source: "cart", revision },
       customer: market.countryCode === "US"
         ? { ...address, country: market.countryCode, postalCode: address.postalCode ?? "" }
         : { ...address, country: market.countryCode },
@@ -192,7 +219,8 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
       ...(marketplace && coupon.trim() && { couponCode: coupon.trim() }),
     };
     void run("REVIEW", async () => {
-      const result = await checkoutRequest<ReviewResult>(marketId, { action: "review", checkout: input }, payment === "SSLCOMMERZ");
+      const result = await postCheckout<ReviewResult>(market, checkoutPath(payment === "SSLCOMMERZ"),
+        { action: "review", checkout: input }, ["review", ...checkoutFailures]);
       if (result.kind !== "review") {
         reportStep("REVIEW", checkoutFailureCode(result.kind));
         setNotice({ ...result, error: true });
@@ -204,30 +232,49 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
     }, "Couldn’t review this order. Your cart is still saved.");
   }
 
-  function placeOrder() {
-    if (!confirmed || inFlight.current) return;
-    const prepaid = confirmed.input.paymentMethod === "SSLCOMMERZ";
-    if (locked && prepaid) return;
+  function placeOrder(order: Review) {
+    if (inFlight.current || callback || (pendingAttempt ? pendingAttempt.id !== order.attemptId : !cartEligible)) return;
+    const prepaid = order.input.paymentMethod === "SSLCOMMERZ";
     reportStep("SUBMIT");
-    rememberPending(marketId, confirmed.attemptId, Boolean(directItem), prepaid);
+    if (!pendingAttempt) {
+      const savedIntent = directItem && personalization
+        ? prepaid && (personalizationDraft !== null || !personalizationIntent)
+          ? rememberBuyPersonalization(directItem.variantId, personalization) : personalizationIntent
+        : undefined;
+      rememberPending(marketId, order.attemptId, directItem && {
+        variantId: directItem.variantId, offerId: directItem.offerId, quantity: directItem.quantity, personalizationIntent: savedIntent,
+      }, prepaid, order.input.cart?.source === "cart" ? order.input.cart.revision : undefined);
+    }
+    setInterrupted(true);
     void run("SUBMIT", async () => {
-      const result = await checkoutRequest<SubmitResult | PrepaidPaymentResult>(marketId, {
+      const result = await postCheckout<SubmitResult | PrepaidPaymentResult>(market, checkoutPath(prepaid), {
         action: prepaid ? "start" : "submit",
-        checkout: { ...confirmed.input, attemptId: confirmed.attemptId, reviewToken: confirmed.quote.reviewToken },
+        checkout: { ...order.input, attemptId: order.attemptId, reviewToken: order.quote.reviewToken },
         ...(prepaid && { direct: Boolean(directItem) }),
-      }, prepaid);
-      if (result.kind === "placed") { await finish(result, Boolean(directItem)); return; }
-      if (result.kind === "continue") {
-        reportStep("PROVIDER_REDIRECT");
-        window.location.assign(result.redirectUrl);
+      }, ["placed", "continue", "pending", "changed", "abandoned", ...checkoutFailures]);
+      if (result.kind === "error" || result.kind === "unavailable" && !result.issues?.length) {
+        reportStep("SUBMIT", result.kind === "error" ? "NETWORK" : "UNAVAILABLE");
+        setNotice({ message: result.message, error: true });
         return;
       }
+      if (result.kind === "placed") {
+        await finish(result, order.attemptId, "direct" in result ? result.direct : Boolean(directItem));
+        return;
+      }
+      if (result.kind === "continue") {
+        const approvalUrl = sandboxApprovalUrl(result.redirectUrl, prepaidSandboxOrigin);
+        reportStep("PROVIDER_REDIRECT");
+        window.location.assign(approvalUrl);
+        return;
+      }
+      setInterrupted(false);
       if (result.kind === "pending") { setNotice({ message: result.message }); return; }
       rememberPending(marketId, null);
       reportStep("SUBMIT", checkoutFailureCode(result.kind));
       if (result.kind === "changed") {
-        setReview({ ...confirmed, quote: result.quote });
-        setNotice({ message: "Your order total changed. Check the updated total before continuing." });
+        setReview({ ...order, quote: result.quote });
+        setNotice({ message: result.message ?? "Your order total changed. Check the updated total before continuing." });
+        requestAnimationFrame(() => summary.current?.focus());
         return;
       }
       setNotice({ ...result, error: true });
@@ -238,7 +285,7 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (confirmed) placeOrder();
+    if (confirmed) placeOrder(confirmed);
     else reviewOrder();
   }
 
@@ -255,18 +302,27 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
 
   if (recovering) return (
     <section className="commerce-panel commerce-form checkout-status">
-      <h2>{recovering.prepaid ? "Check your payment" : "Check your last order"}</h2>
+      <h2 ref={statusHeading} tabIndex={-1}>{recovering.prepaid ? "Check your payment" : "Check your last order"}</h2>
       <p>{recovering.prepaid ? "Your cart stays saved while the payment is confirmed." : "Check whether your order was saved before trying again."}</p>
       {message}
       <div className="checkout-status-actions">
         <button className="button button--primary" type="button" disabled={busy} onClick={() => void recoverOrder(recovering.id, recovering.prepaid)}>
           {busy ? "Checking…" : recovering.prepaid ? "Check payment status" : "Check for saved order"}
         </button>
-        {recovering.prepaid && !callback && !busy && <button className="button button--outline" type="button"
+        {recovering.prepaid && !callback && <button className="button button--outline" type="button" disabled={busy}
           onClick={() => void recoverOrder(recovering.id, true, true)}>Return to payment</button>}
+        {interrupted && !callback && review?.attemptId === recovering.id && <button className="button button--outline" type="button"
+          disabled={busy} onClick={() => placeOrder(review)}>{recovering.prepaid ? "Retry same payment" : "Retry same order"}</button>}
+        <Link href="/cart" className="text-link">Back to cart</Link>
       </div>
     </section>
   );
+
+  if (retryPath) return <section className="commerce-panel commerce-form checkout-status">
+    <h2 ref={statusHeading} tabIndex={-1}>Your checkout status</h2>
+    {message}
+    <Link className="button button--outline" href={retryPath} prefetch={false}>Review order again</Link>
+  </section>;
 
   if (!choices.length && !prepaidChoices.length) {
     return <>{destinationControl}<div className="state-panel"><p>Checkout is unavailable for this market.</p><Link href="/cart" className="button button--primary">Back to cart</Link></div></>;
@@ -295,7 +351,7 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
           <h2><span className="checkout-section-number" aria-hidden="true">1</span> Delivery address</h2>
           {demo && <p className="commerce-muted">Use sample contact and address details for this test order.</p>}
           {destinationControl}
-          {addresses.length > 0 && <label>Saved addresses<select defaultValue="" onChange={event => {
+          {addresses.length > 0 && <label>Saved addresses<select defaultValue={defaultAddress?.id ?? ""} onChange={event => {
             invalidateQuote();
             setAddress(addresses.find(item => item.id === event.target.value)?.value ?? { ...initialAddress, ...shopperAddress });
             setMethod("");
@@ -338,7 +394,6 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
             <input type="radio" name="payment" checked={payment === "SSLCOMMERZ"} disabled={!prepaidChoices.length}
               onChange={() => { invalidateQuote(); setPayment("SSLCOMMERZ"); setMethod(""); }} />
             <span><strong>Pay in full online</strong><small>{prepaidChoices.length ? "Pay securely on the SSLCOMMERZ test page." : "Online payment is unavailable for this checkout."}</small></span>
-            <span className="checkout-save">Extra 5% off</span>
           </label>}
         </fieldset>
         {directPersonalization && <fieldset className="commerce-panel commerce-form" disabled={busy}>
@@ -378,12 +433,12 @@ export function CheckoutView({ market, addressAdapter, choices, prepaidChoices =
           <summary>View order items</summary>
           <PurchasedItems lines={confirmed.quote.lines} market={market} />
         </details>}
-        <button className="button button--primary" type="submit" disabled={busy || !selectedMethod || !validPersonalization}>
+        <button className="button button--primary" type="submit" disabled={busy || !cartEligible || !selectedMethod || !validPersonalization}>
           {busy ? "Checking order…" : !confirmed ? "Review order" : payment === "COD" ? "Place COD order" : `Pay ${formatMoney(confirmed.quote.totalMinor, market)}`}
           <ArrowRight size={17} aria-hidden="true" />
         </button>
         {confirmed && <p className="commerce-muted checkout-disclaimer">
-          {payment === "COD" ? "Payment method: Cash on delivery" : "Payment method: Full prepaid"}
+          {confirmed.quote.deliveryLabel} · {payment === "COD" ? "Cash on delivery" : "Full prepaid"}
         </p>}
       </aside>
     </form>

@@ -1,0 +1,60 @@
+name: griipbuddy-storefront-stage
+services:
+  db:
+    image: ${STAGE_POSTGRES_IMAGE:-postgres:17-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: griipbuddy_stage
+      POSTGRES_PASSWORD: ${STAGE_DB_PASSWORD:?Set STAGE_DB_PASSWORD}
+      POSTGRES_DB: griipbuddy_staging
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -q -U griipbuddy_stage -d griipbuddy_staging"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 384m
+  app:
+    image: griipbuddy-storefront-stage:${APP_REVISION:?Set APP_REVISION}
+    restart: unless-stopped
+    env_file: ${STAGE_APP_ENV:?Set STAGE_APP_ENV}
+    environment:
+      APP_REVISION: ${APP_REVISION}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [database, gateway]
+    ports:
+      - "127.0.0.1:${STAGE_LOOPBACK_PORT:-4397}:3000"
+    healthcheck:
+      test: [CMD, node, "-e", "fetch('http://127.0.0.1:3000/api/health',{headers:{Authorization:'Basic '+Buffer.from(process.env.STAGING_USER+':'+process.env.STAGING_PASSWORD).toString('base64')}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 8s
+      retries: 4
+      start_period: 20s
+    mem_limit: 640m
+  operator:
+    profiles: [operator]
+    image: griipbuddy-storefront-stage-operator:${APP_REVISION}
+    env_file: ${STAGE_APP_ENV}
+    environment:
+      APP_REVISION: ${APP_REVISION}
+    networks: [database]
+    depends_on:
+      db:
+        condition: service_healthy
+  tunnel:
+    profiles: [tunnel]
+    image: ${STAGE_TUNNEL_IMAGE:-cloudflare/cloudflared:2026.10.2}
+    command: ["tunnel", "--no-autoupdate", "--url", "http://app:3000"]
+    networks: [gateway]
+    mem_limit: 128m
+
+volumes:
+  postgres:
+networks:
+  database:
+    internal: true
+  gateway:

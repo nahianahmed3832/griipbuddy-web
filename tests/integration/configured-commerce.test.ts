@@ -10,8 +10,9 @@ import { requireLocalDatabase } from "../../src/lib/db/local.ts";
 import { commerceOutcomeSelect, projectCommerceOutcomes } from "../../src/lib/measurement/outcomes.ts";
 import { cookieId, grantMeasurement, linkCheckoutAttempt, revokeMeasurement } from "../../src/lib/measurement/server.ts";
 import { codReconciliationOrder, recordCodRemittance } from "../../src/lib/staff/cod-remittance.ts";
-import { advanceFulfillment, collectCash } from "../../src/lib/staff/operations.ts";
+import { collectCash } from "../../src/lib/staff/operations.ts";
 import { executeOrderCase, staffOrderCase } from "../../src/lib/marketplace/cases.ts";
+import { prepareParcel } from "./fixtures/prepare-parcels.ts";
 
 requireLocalDatabase("griipbuddy_test");
 const db = getDb();
@@ -123,9 +124,8 @@ test("the same COD workflow uses an explicitly configured USD market with its ow
     assert.deepEqual((await outcomes()).map(({ kind, marketId, evidence, sessionId }) => [kind, marketId, evidence, sessionId]), [
       ["ORDER_ACCEPTED", "us", "fixture", session],
     ]);
-    await advanceFulfillment(owner, order.id, { next: "PACKING" });
-    await advanceFulfillment(owner, order.id, { next: "READY_TO_SHIP" });
     const parcel = order.parcels[0];
+    await prepareParcel(owner, order.id, parcel.id);
     assert.equal(parcel.locationId, locationId);
     await dispatchOrderParcel(owner, order.id, parcel.id, { carrier: "Fixture carrier", trackingReference: `fixture-${suffix}` });
     await recordOrderParcelTracking(owner, order.id, parcel.id, { status: "DELIVERED", evidence: `delivery-${suffix}` });

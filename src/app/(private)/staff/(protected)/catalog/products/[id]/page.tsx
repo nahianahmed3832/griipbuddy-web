@@ -12,7 +12,8 @@ import { getDb } from "@/lib/db/client";
 import { marketConfiguration } from "@/lib/market-config";
 import { currentMarket } from "@/lib/market-server";
 import { productionMode } from "@/lib/release-config";
-import { requireStaff } from "@/lib/staff/access";
+import { requireLegacyCatalogPage } from "@/lib/catalog/main-admin-legacy-page";
+import { legacyProductScope } from "@/lib/catalog/scoped-pilot";
 import { catalogChoices, ownerProduct } from "@/lib/staff/catalog";
 import { productIdField } from "@/lib/staff/catalog-input";
 import { productMediaUploadAvailable } from "@/lib/staff/catalog-media-upload";
@@ -33,21 +34,26 @@ const restrictedSections = [["markets", "Markets and offers"], ["inventory", "In
 const historicalSections = [["publication", "Publication"], ["variants", "Variants"], ["history", "Change history"]] as const;
 
 export default async function ProductEditorPage({ params }: { params: Promise<{ id: string }> }) {
-  const [staff, { id }, market] = await Promise.all([requireStaff(), params, currentMarket()]);
+  const [staff, { id }, market] = await Promise.all([requireLegacyCatalogPage(), params, currentMarket()]);
   if (productIdField.safeParse(id).data !== id) notFound();
+  if (staff.scopedLegacyPilot && !await getDb().product.findFirst({
+    where: { AND: [{ id }, await legacyProductScope(getDb())] }, select: { id: true },
+  })) notFound();
   const workspace = await productWorkspaceIdentity(staff.id, id);
   if (!workspace) notFound();
   const { product, owner } = workspace;
   if (!product.foundation && owner) {
-    const [existing, choices] = await Promise.all([ownerProduct(staff.id, id), catalogChoices(staff.id)]);
+    const existing = await ownerProduct(staff.id, id);
     if (!existing) notFound();
+    const choices = await catalogChoices(staff.id, staff.scopedLegacyPilot, existing.product.departmentId);
     return <>
       <div className="commerce-intro">
         <Link className="text-link" href="/staff/catalog">Product management</Link>
         <h1 className="display-type">Edit {product.name}</h1>
         <p>This listing uses the legacy catalog. Its SKU and saved market terms stay on the existing editor.</p>
       </div>
-      <ProductEditor existing={existing} departments={choices.departments} collections={choices.collections} production={productionMode()} />
+      <ProductEditor existing={existing} departments={choices.departments} collections={choices.collections}
+        fixedCollections={staff.scopedLegacyPilot} production={productionMode()} />
     </>;
   }
   const connected = owner ? await ownerProductFoundation(staff.id, id) : null;

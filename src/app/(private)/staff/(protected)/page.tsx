@@ -3,8 +3,8 @@ import Link from "next/link";
 import { formatMoney, markets } from "@/config/markets";
 import { requireStaff } from "@/lib/staff/access";
 import { listStaffOrders, queueFilter, queueFilters } from "@/lib/staff/operations";
-import { fulfillmentLabels, orderDate, paymentLabels } from "@/lib/commerce/labels";
-import { parcelOrderLabel, parcelWasRefused } from "@/lib/commerce/parcel-tracking";
+import { orderDate, paymentLabels } from "@/lib/commerce/labels";
+import { staffQueueStatus } from "@/lib/staff/order-workspace-state";
 
 export const metadata: Metadata = { title: "Staff orders" };
 
@@ -26,26 +26,24 @@ export default async function StaffOrders({ searchParams }: { searchParams: Prom
       </nav>
       {rows.length === 0 ? <p className="commerce-panel">No orders match this filter.</p> : (
         <ul className="staff-orders" aria-label="Matching orders">
-          {rows.map((order) => (
+          {rows.map((order) => {
+            const { fulfillment, requiresCodReview, pendingCancellation } = staffQueueStatus(order);
+            return (
             <li className="commerce-panel staff-order-row" key={order.id}>
               <div>
                 <Link className="staff-order-ref" href={`/staff/orders/${order.id}`} prefetch={false}>{order.reference}</Link>
                 <p>{orderDate(order.createdAt, order.marketId)} · {order.districtLabel} · {order._count.items} {order._count.items === 1 ? "line" : "lines"}</p>
               </div>
               <div>
-                <span className="staff-status">{order.status === "CANCELLED" ? "Cancelled"
-                  : order.parcels.some(parcel => parcel.status !== "PLANNED") ? parcelOrderLabel(order.parcels)
-                  : order.bangladeshRefusedParcelReceipt ? "Refused · received at warehouse"
-                  : order.bangladeshShipment?.status === "REFUSED" ? "Refused · awaiting warehouse return"
-                  : order.bangladeshShipment?.status === "OUT_FOR_DELIVERY" ? "Out for delivery"
-                  : fulfillmentLabels[order.fulfillmentStatus]}</span>
+                <span className="staff-status">{fulfillment}</span>
                 <p>{order.payment ? paymentLabels[order.payment.status] : "Payment missing"}</p>
-                {order.payment?.status === "AWAITING_COLLECTION" && order.parcels.some(parcelWasRefused) && <p><strong>Manual COD review required</strong></p>}
-                {order.cases.length > 0 && <p><strong>Cancellation pending · Shipment on hold</strong></p>}
+                {requiresCodReview && <p><strong>Manual COD review required</strong></p>}
+                {pendingCancellation && <p><strong>Cancellation pending · Shipment on hold</strong></p>}
               </div>
               <strong>{formatMoney(order.totalMinor, markets[order.marketId])}</strong>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
       {(page > 1 || hasNext) && (

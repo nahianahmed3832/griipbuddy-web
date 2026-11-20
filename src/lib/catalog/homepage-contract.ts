@@ -4,7 +4,7 @@ import { localMarketTime } from "../market-calendar.ts";
 import { recommendationPolicyInput } from "./recommendation-policy.ts";
 
 export const sectionTypes = ["BANNER", "CURATED", "COLLECTION", "BESTSELLERS", "TRENDING", "RECENTLY_VIEWED", "RELATED",
-  "DEPARTMENTS", "COLLECTIONS", "NEW", "FEATURED", "DEALS", "CATEGORY_SPOTLIGHT"] as const;
+  "DEPARTMENTS", "COLLECTIONS", "NEW", "FEATURED", "DEALS", "CATEGORY_SPOTLIGHT", "TILES", "BENEFITS"] as const;
 export const featuredCampaigns = ["home-banner", "home-curated", "home-bestsellers", "home-trending", "home-similar"] as const;
 const sectionKey = z.string().regex(/^[a-z][a-z0-9-]{0,38}$/);
 const catalogId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,119}$/);
@@ -17,6 +17,31 @@ const localTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/).refine(val
 const browseLink = z.string().max(190).regex(/^\/(?:shop|gifts|collections\/[a-z0-9-]+|departments\/[a-z0-9-]+|products\/[a-z0-9-]+)$/);
 const bannerAsset = z.string().max(140).regex(/^\/(?:catalog|editorial|media)\/[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9]+)?$/);
 const currency = z.custom<Currency>(value => Object.values(markets).some(market => market.currency === value), "Choose a configured currency.");
+
+const benefitInput = z.strictObject({
+  title: z.string().trim().min(2).max(70),
+  description: z.string().trim().min(2).max(200),
+  destination: z.enum(["delivery", "returns", "privacy", "terms"]).optional(),
+});
+const tileLayoutInput = z.enum(["SHORTCUTS", "PORTRAIT", "SHOWCASE", "DISCOVERY"]);
+const editorialImage = z.strictObject({ src: bannerAsset, alt: z.string().trim().max(130) });
+const tileImage = editorialImage.extend({ alt: z.string().trim().min(1).max(130) });
+const focalPoint = z.strictObject({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) });
+const tileInput = z.strictObject({
+  key: sectionKey, kind: z.enum(["CATEGORY", "COLLECTION", "PRODUCT"]), referenceId: catalogId,
+  title: z.string().trim().min(2).max(90).optional(),
+  ctaLabel: z.string().trim().min(2).max(40).optional(),
+  image: tileImage.optional(), mobileImage: tileImage.optional(),
+  focalPoint: focalPoint.optional(), mobileFocalPoint: focalPoint.optional(),
+});
+export type HomepageTileLayout = z.infer<typeof tileLayoutInput>;
+export type HomepageTile = z.infer<typeof tileInput>;
+const tileLayouts = {
+  SHORTCUTS: ["CATEGORY", "COLLECTION"],
+  PORTRAIT: ["CATEGORY", "COLLECTION"],
+  SHOWCASE: ["COLLECTION"],
+  DISCOVERY: ["CATEGORY", "COLLECTION", "PRODUCT"],
+} satisfies Record<HomepageTileLayout, readonly HomepageTile["kind"][]>;
 
 const sectionInput = z.strictObject({
   key: sectionKey, type: z.enum(sectionTypes), title: z.string().trim().min(2).max(90),
@@ -32,11 +57,17 @@ const sectionInput = z.strictObject({
   budget: z.strictObject({ currency, amountMinor: z.int().positive().max(2_147_483_647) }).optional(),
   startsLocal: localTime.optional(), endsLocal: localTime.optional(),
   limit: z.int().min(1).max(12).optional(),
-  bannerImage: z.strictObject({ src: bannerAsset, alt: z.string().trim().max(130) }).optional(),
+  bannerImage: editorialImage.optional(),
   link: z.strictObject({ label: z.string().trim().min(2).max(40), href: browseLink }).optional(),
+  tileLayout: tileLayoutInput.optional(),
+  tiles: z.array(tileInput).min(1).max(12).optional(),
+  benefits: z.array(benefitInput).min(1).max(6).optional(),
 }).superRefine((section, ctx) => {
   if (section.type === "CURATED" && !section.productIds?.length) {
     ctx.addIssue({ code: "custom", path: ["productIds"], message: "Supply at least one active catalog product ID." });
+  }
+  if (section.type === "BENEFITS" && !section.benefits) {
+    ctx.addIssue({ code: "custom", path: ["benefits"], message: "Add at least one service benefit." });
   }
   if (section.type === "COLLECTION" && !section.collection) {
     ctx.addIssue({ code: "custom", path: ["collection"], message: "Supply the catalog collection slug." });
@@ -46,9 +77,30 @@ const sectionInput = z.strictObject({
   }
   for (const [key, allowed] of [
     ["categoryId", "CATEGORY_SPOTLIGHT"], ["categoryIds", "DEPARTMENTS"], ["collectionIds", "COLLECTIONS"], ["budget", "DEALS"],
+    ["tileLayout", "TILES"], ["tiles", "TILES"], ["benefits", "BENEFITS"],
   ] as const) {
     if (section[key] !== undefined && section.type !== allowed) {
       ctx.addIssue({ code: "custom", path: [key], message: "This field does not apply to the section type." });
+    }
+  }
+  if (section.type === "TILES") {
+    if (!section.tileLayout || !section.tiles) {
+      ctx.addIssue({ code: "custom", path: ["tiles"], message: "Choose a tile layout and add at least one catalog destination." });
+    } else {
+      const allowed: readonly HomepageTile["kind"][] = tileLayouts[section.tileLayout];
+      const keys = new Set<string>();
+      const destinations = new Set<string>();
+      for (const [index, tile] of section.tiles.entries()) {
+        const destination = `${tile.kind}:${tile.referenceId}`;
+        if (keys.has(tile.key) || destinations.has(destination)) {
+          ctx.addIssue({ code: "custom", path: ["tiles", index], message: "Use each tile key and catalog destination once per section." });
+        }
+        if (!allowed.includes(tile.kind)) {
+          ctx.addIssue({ code: "custom", path: ["tiles", index, "kind"], message: "This destination type does not apply to the selected layout." });
+        }
+        keys.add(tile.key);
+        destinations.add(destination);
+      }
     }
   }
   if (section.startsLocal && section.endsLocal && section.startsLocal >= section.endsLocal) {
@@ -73,8 +125,13 @@ export const homepageSectionPlacements = {
   BANNER: "home-banner", CURATED: "home-curated", COLLECTION: "home-collections", COLLECTIONS: "home-collections",
   BESTSELLERS: "home-bestsellers", TRENDING: "home-trending", RECENTLY_VIEWED: "home-recently-viewed", RELATED: "home-similar",
   DEPARTMENTS: "home-departments", NEW: "home-new-arrivals", FEATURED: "home-featured", DEALS: "home-deals",
-  CATEGORY_SPOTLIGHT: "home-category-spotlight",
+  CATEGORY_SPOTLIGHT: "home-category-spotlight", TILES: "home-merchandising-tiles", BENEFITS: "home-merchandising-tiles",
 } as const satisfies Record<HomepageSection["type"], string>;
+
+export function homepageTileImages(section: HomepageSection) {
+  if (section.type !== "TILES") return [];
+  return [section.bannerImage, ...section.tiles?.flatMap(tile => [tile.image, tile.mobileImage]) ?? []].filter(image => image !== undefined);
+}
 export type HomepageContentData = z.infer<typeof homepageInput>;
 export type HomepageScope = { marketId?: MarketId; locale?: string };
 

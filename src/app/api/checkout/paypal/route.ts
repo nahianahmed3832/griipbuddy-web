@@ -16,7 +16,7 @@ import { measurementCookie } from "@/lib/measurement/server";
 
 const requestBody = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("quote"), checkout: z.unknown() }),
-  z.strictObject({ action: z.literal("create"), checkout: z.unknown(), attemptId: uuid, quoteToken: z.string().regex(/^[a-f0-9]{64}$/) }),
+  z.strictObject({ action: z.literal("create"), checkout: z.unknown(), attemptId: uuid, quoteToken: z.string().regex(/^\d{13}\.[a-f0-9]{64}$/) }),
   z.strictObject({ action: z.literal("capture"), attemptId: uuid }),
   z.strictObject({ action: z.literal("recover"), attemptId: uuid }),
   z.strictObject({ action: z.literal("cancel"), attemptId: uuid }),
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   const config = paypalSandboxConfig();
   if (!config) return json({ kind: "unavailable", message: "Test checkout is unavailable." }, 404);
   if (!sameOrigin(request)) return json({ kind: "invalid", message: "Open checkout from this storefront." }, 403);
-  const marketId = checkoutDestination(request.headers, config.marketId);
+  const marketId = checkoutDestination(request.headers, config.marketId, new URL(request.url).origin);
   if (marketId !== config.marketId) return json({ kind: "invalid", message: "Select a market with this checkout method." }, 422);
   const parsed = requestBody.safeParse(await readJson(request));
   if (!parsed.success) return json({ kind: "invalid", message: "Checkout data is incomplete or too large." }, 400);
@@ -51,11 +51,12 @@ export async function POST(request: Request) {
     const token = existingGuest ? undefined : newGuestToken();
     const guestKey = existingGuest ?? readGuestKey(token);
     if (!guestKey) throw new Error("Checkout session could not be initialized.");
+    const shopperId = (await getShopper())?.id ?? null;
     const result = action.action === "quote"
-      ? await paypalQuote(action.checkout, guestKey, marketId)
+      ? await paypalQuote(action.checkout, guestKey, marketId, shopperId)
       : action.action === "create"
-        ? await createPayPalCheckout(action.checkout, action.attemptId, action.quoteToken, guestKey, (await getShopper())?.id, marketId)
-        : await recoverPayPalCheckout(action.attemptId, guestKey, action.action, marketId);
+        ? await createPayPalCheckout(action.checkout, action.attemptId, action.quoteToken, guestKey, shopperId, marketId)
+        : await recoverPayPalCheckout(action.attemptId, guestKey, action.action, marketId, shopperId);
     const status = result.kind === "conflict" ? 409 : result.kind === "invalid" || result.kind === "unavailable" ? 422 : 200;
     const response = json(result, status);
     if (token && result.kind === "quoted") response.cookies.set(guestCookie, token, {

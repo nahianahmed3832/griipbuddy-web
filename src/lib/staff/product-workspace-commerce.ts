@@ -2,9 +2,14 @@ import { z } from "zod";
 import { markets, marketIds, type MarketId } from "../../config/markets.ts";
 import type { Prisma } from "../../generated/prisma/client.ts";
 import { validVariantId } from "../cart/model.ts";
+import { nativeSourceSystem } from "../catalog-migration/contracts.ts";
 import { connectedSellerVisibility, type CommercialActor } from "../commerce/commercial-access.ts";
 import { legacyLocationId } from "../commerce/location-inventory.ts";
-import { initializeInventoryPool, recordStockMovement, saveWarehouseService, transferStock } from "../commerce/physical-inventory.ts";
+import {
+  compensateInventoryMovement, dispatchInventoryTransfer, initializeInventoryPool, inventoryTransferView, receiveInventoryTransfer,
+  recordStockMovement, saveWarehouseService, setInventoryThreshold, transferStock,
+} from "../commerce/physical-inventory.ts";
+import { bindCommerceScope, commerceReferenceFor } from "../commerce/service-contract.ts";
 import { getDb, type DbReader } from "../db/client.ts";
 import { isMarketSelectable, marketConfiguration, marketIdInput } from "../market-config.ts";
 import { storeShop } from "../marketplace/constants.ts";
@@ -114,28 +119,40 @@ export async function readProductWorkspaceCommerce(actor: CommercialActor, produ
       }, orderBy: [{ name: "asc" }, { id: "asc" }], select: locationFields }),
       db.inventoryPool.findMany({ where: {
         variantId: { in: accessibleVariants.map(variant => variant.id) }, ...(access.shopId && { ownerId: access.shopId }),
-        location: { OR: [{ marketId }, { marketServices: { some: { marketId, active: true } } }] },
+        location: { ...(access.shopId && { shopId: access.shopId }),
+          OR: [{ marketId }, { marketServices: { some: { marketId, active: true } } }] },
       }, orderBy: [{ variantId: "asc" }, { locationId: "asc" }, { ownerId: "asc" }], select: {
-        id: true, variantId: true, ownerId: true, onHand: true, reserved: true, updatedAt: true,
+        id: true, variantId: true, ownerId: true, onHand: true, reserved: true, lowStockThreshold: true, updatedAt: true,
         location: { select: locationFields },
         owner: { select: { name: true } },
       } }),
     ]);
-    const warehouseChoices = locations.map(location => workspaceLocation(location, allowed, access.central, marketId))
-      .filter(warehouse => warehouse.canManage);
+    const stockScope = bindCommerceScope({ authority: nativeSourceSystem, marketId, currency: markets[marketId].currency });
+    const warehouseChoices = locations.map(location => ({
+      ...workspaceLocation(location, allowed, access.central, marketId), reference: commerceReferenceFor(stockScope, "warehouse", location.id),
+    })).filter(warehouse => warehouse.canManage);
     const scopedPools = pools.flatMap(({ location, owner, ...pool }) => {
       const warehouse = workspaceLocation(location, allowed, access.central, marketId);
       if (!warehouse.canManage) return [];
-      return [{ ...pool, updatedAt: pool.updatedAt.toISOString(), available: pool.onHand - pool.reserved,
-        ownerName: owner.name, warehouse, legacyOwnerMismatch: warehouse.ownerId !== pool.ownerId,
+      const available = pool.onHand - pool.reserved;
+      return [{
+        ...pool, updatedAt: pool.updatedAt.toISOString(), available, unavailable: pool.reserved,
+        isLowStock: pool.lowStockThreshold !== null && available <= pool.lowStockThreshold,
+        reference: commerceReferenceFor(stockScope, "stock_pool", pool.id),
+        variantReference: commerceReferenceFor(stockScope, "variant", pool.variantId),
+        warehouse: { ...warehouse, reference: commerceReferenceFor(stockScope, "warehouse", warehouse.id) },
+        ownerName: owner.name, legacyOwnerMismatch: warehouse.ownerId !== pool.ownerId,
       }];
     });
     const poolIds = scopedPools.map(pool => pool.id);
-    const [movements, allocations] = poolIds.length ? await Promise.all([
+    const transferScope = { fromPoolId: { in: poolIds }, toPoolId: { in: poolIds }, marketId: { in: allowed } };
+    const [movements, allocations, transfers, inbound, outbound] = poolIds.length ? await Promise.all([
       db.inventoryMovement.findMany({
         where: { poolId: { in: poolIds } },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 30,
-        select: { id: true, poolId: true, kind: true, quantity: true, createdAt: true },
+        select: { id: true, poolId: true, kind: true, quantity: true, createdAt: true, reason: true, reference: true,
+          reversesMovementId: true, relatedPoolId: true, actorKind: true, ...(actor.kind === "staff" && { actorId: true }),
+        },
       }),
       db.inventoryAllocation.findMany({
         where: { poolId: { in: poolIds }, reservation: { marketId: { in: allowed } } },
@@ -145,7 +162,16 @@ export async function readProductWorkspaceCommerce(actor: CommercialActor, produ
           reservation: { select: { marketId: true, state: true, expiresAt: true, createdAt: true } },
         },
       }),
-    ]) : [[], []];
+      db.inventoryTransfer.findMany({ where: transferScope, orderBy: [{ dispatchedAt: "desc" }, { id: "desc" }], take: 30 }),
+      db.inventoryTransfer.groupBy({
+        by: ["toPoolId"], where: { toPoolId: { in: poolIds }, marketId: { in: allowed }, receivedAt: null }, _sum: { quantity: true },
+      }),
+      db.inventoryTransfer.groupBy({
+        by: ["fromPoolId"], where: { fromPoolId: { in: poolIds }, marketId: { in: allowed }, receivedAt: null }, _sum: { quantity: true },
+      }),
+    ]) : [[], [], [], [], []];
+    const incoming = new Map(inbound.map(row => [row.toPoolId, row._sum.quantity ?? 0]));
+    const outgoing = new Map(outbound.map(row => [row.fromPoolId, row._sum.quantity ?? 0]));
 
     const defaultSellerId = product.marketplaceShopId ?? storeShop.id;
     const config = marketConfiguration(marketId);
@@ -157,7 +183,7 @@ export async function readProductWorkspaceCommerce(actor: CommercialActor, produ
         id: variant.id, sku: variant.sku, label: variant.label, active: variant.active && !variant.archivedAt,
         managedInventory: variant.managedInventory,
         legacyInventory: Boolean(variant.inventory || variant._count.locationInventory || variant._count.offers),
-        canEditOffer: assignedToSeller && (offer ? Boolean(offer.offerId) : Boolean(access.central ? approvedSellers.length :
+        canEditOffer: product.publication !== "ARCHIVED" && assignedToSeller && (offer ? Boolean(offer.offerId) : Boolean(access.central ? approvedSellers.length :
           approvedSellers.some(seller => seller.id === sellerId))),
         sellerId: assignedToSeller ? sellerId : null,
         offer: offer && assignedToSeller ? {
@@ -171,9 +197,13 @@ export async function readProductWorkspaceCommerce(actor: CommercialActor, produ
     return { marketOptions, data: {
       productId: product.id, publication: product.publication, central: access.central, actorKind: actor.kind,
       market: { ...markets[marketId], locale: config.defaultLocale, status: config.status },
-      sellers: approvedSellers, variants, warehouses: warehouseChoices, pools: scopedPools,
+      authority: nativeSourceSystem, sellers: approvedSellers, variants, warehouses: warehouseChoices,
+      pools: scopedPools.map(pool => ({ ...pool, inTransitIn: incoming.get(pool.id) ?? 0, inTransitOut: outgoing.get(pool.id) ?? 0 })),
+      transfers: transfers.map(inventoryTransferView),
       hasRestrictedPools: scopedPools.length < pools.length,
-      movements: movements.map(({ createdAt, ...movement }) => ({ ...movement, createdAt: createdAt.toISOString() })),
+      movements: movements.map(({ createdAt, relatedPoolId, ...movement }) => ({ ...movement,
+        relatedPoolId: relatedPoolId && poolIds.includes(relatedPoolId) ? relatedPoolId : null, createdAt: createdAt.toISOString(),
+      })),
       allocations: allocations.map(({ reservation, ...allocation }) => ({ ...allocation, ...reservation,
         expiresAt: reservation.expiresAt.toISOString(), createdAt: reservation.createdAt.toISOString(),
       })),
@@ -194,7 +224,8 @@ const movementInput = {
 const routing = { active: z.boolean(), priority: z.int().min(0).max(1000),
   districts: z.array(z.string().max(40)).max(100), methods: z.array(z.string().max(40)).max(30) };
 export const workspaceStockCommands: ReadonlySet<string> = new Set([
-  "inventory.initialize", "inventory.movement", "inventory.transfer", "inventory.route",
+  "inventory.initialize", "inventory.movement", "inventory.transfer", "inventory.route", "inventory.threshold", "inventory.compensate",
+  "inventory.transfer-dispatch", "inventory.transfer-receive",
 ]);
 
 export async function runWorkspaceStockCommand(actor: CommercialActor, action: string, raw: unknown) {
@@ -206,16 +237,36 @@ export async function runWorkspaceStockCommand(actor: CommercialActor, action: s
   }
   if (action === "inventory.movement") {
     const { marketId, productId, expectedUpdatedAt, ...fields } = catalogWriteInput(z.strictObject({
-      ...stockContext, ...movementInput, poolId: z.uuid(), kind: z.enum(["RECEIPT", "ADJUSTMENT"]), expectedUpdatedAt: timestamp,
+      ...stockContext, ...movementInput, poolId: z.uuid(), kind: z.enum(["RECEIPT", "ADJUSTMENT", "DAMAGE"]), expectedUpdatedAt: timestamp,
     }), raw);
     return recordStockMovement(actor, fields, { marketId, productId, expectedUpdatedAt });
   }
-  if (action === "inventory.transfer") {
+  if (action === "inventory.transfer" || action === "inventory.transfer-dispatch") {
     const { marketId, productId, expectedUpdatedAt, expectedDestinationUpdatedAt, ...fields } = catalogWriteInput(z.strictObject({
       ...stockContext, ...movementInput, fromPoolId: z.uuid(), toPoolId: z.uuid(),
       expectedUpdatedAt: timestamp, expectedDestinationUpdatedAt: timestamp,
     }), raw);
-    return transferStock(actor, fields, { marketId, productId, expectedUpdatedAt, expectedDestinationUpdatedAt });
+    const move = action === "inventory.transfer-dispatch" ? dispatchInventoryTransfer : transferStock;
+    return move(actor, fields, { marketId, productId, expectedUpdatedAt, expectedDestinationUpdatedAt });
+  }
+  if (action === "inventory.transfer-receive") {
+    const { marketId, productId, ...fields } = catalogWriteInput(z.strictObject({
+      ...stockContext, transferId: z.uuid(), idempotencyKey: movementInput.idempotencyKey,
+    }), raw);
+    return receiveInventoryTransfer(actor, fields, { marketId, productId });
+  }
+  if (action === "inventory.threshold") {
+    const { marketId, productId, expectedUpdatedAt, ...fields } = catalogWriteInput(z.strictObject({
+      ...stockContext, poolId: z.uuid(), threshold: z.int().min(0).max(1_000_000).nullable(), expectedUpdatedAt: timestamp,
+    }), raw);
+    return setInventoryThreshold(actor, fields, { marketId, productId, expectedUpdatedAt });
+  }
+  if (action === "inventory.compensate") {
+    const { marketId, productId, expectedUpdatedAt, ...fields } = catalogWriteInput(z.strictObject({
+      ...stockContext, movementId: z.uuid(), idempotencyKey: movementInput.idempotencyKey,
+      reason: movementInput.reason, reference: movementInput.reference, expectedUpdatedAt: timestamp,
+    }), raw);
+    return compensateInventoryMovement(actor, fields, { marketId, productId, expectedUpdatedAt });
   }
   if (action === "inventory.route") {
     const { productId, expected, ...fields } = catalogWriteInput(z.strictObject({

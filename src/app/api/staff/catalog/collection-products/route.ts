@@ -1,3 +1,4 @@
+import { retiredCatalogApiResponse } from "@/lib/catalog/main-admin-browser";
 import { privateHeaders } from "@/lib/db/http";
 import { reportFailure } from "@/lib/db/observability";
 import { getStaff } from "@/lib/staff/access";
@@ -9,6 +10,8 @@ function failure(status: number, code: string, message: string) {
 }
 
 export async function GET(request: Request) {
+  const retired = await retiredCatalogApiResponse(request);
+  if (retired) return retired;
   try {
     const staff = await getStaff();
     if (!staff) return failure(401, "authentication_required", "Sign in to manage collections.");

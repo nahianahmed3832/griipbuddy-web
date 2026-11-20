@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
 import { catalogVariantWhere } from "../catalog/connected-public.ts";
 import { connectedCollectionProductFilter, orderedCollectionProducts, publicCollectionScope } from "../catalog/collection-selection.ts";
-import { getDb } from "../db/client.ts";
+import { getDb, type DbReader } from "../db/client.ts";
+import { scopedCatalogPilotTargets } from "../catalog/scoped-pilot.ts";
 import { marketConfiguration, marketIdInput, marketLanguage } from "../market-config.ts";
 import { catalogImage, productIdField, slugField, textField } from "./catalog-input.ts";
 import { missingImage } from "./catalog-media.ts";
@@ -23,7 +25,28 @@ const menuInput = z.strictObject({
 
 export type EditableMarketMenuItem = z.output<typeof itemInput>;
 
-export async function saveMarketMenu(actorId: string, raw: unknown) {
+async function reviewedMerchandising(db: DbReader, collectionIds: string[]) {
+  const reviewed = await scopedCatalogPilotTargets(db);
+  if (!reviewed) throw new CatalogWriteError("unavailable", "The reviewed catalog pilot is unavailable.");
+  const collections = await db.collection.findMany({
+    where: { id: { in: collectionIds } }, select: { id: true, selection: true },
+  });
+  const selectedProducts = collections.length ? await db.product.findMany({
+    where: { id: { in: reviewed.productIds } }, select: {
+      newArrival: true, featured: true, collections: {
+        where: { collectionId: { in: collections.map(item => item.id) } }, select: { collectionId: true },
+      },
+    },
+  }) : [];
+  const curated = new Set(selectedProducts.flatMap(row => row.collections.map(item => item.collectionId)));
+  const newArrivals = selectedProducts.some(row => row.newArrival);
+  const featured = selectedProducts.some(row => row.featured);
+  const protectedCollections = new Set(collections.filter(({ id, selection }) => selection === "FEATURED" ? featured :
+    selection === "NEW" ? newArrivals : curated.has(id)).map(({ id }) => id));
+  return { protectedCategories: new Set(reviewed.categoryIds), protectedCollections };
+}
+
+export async function saveMarketMenu(actorId: string, raw: unknown, nativePilot = false) {
   const { marketId, key, locale: requestedLocale, expectedRevision, items } = catalogWriteInput(menuInput, raw);
   const locale = requestedLocale ? marketLanguage(marketConfiguration(marketId), requestedLocale) : "";
   if (locale === undefined) throw new CatalogWriteError("invalid_input", "Select a language configured for this market.");
@@ -38,6 +61,30 @@ export async function saveMarketMenu(actorId: string, raw: unknown) {
     const categories = [...new Set(items.flatMap(item => item.type === "category" ? [item.categoryId] : []))];
     const collections = [...new Set(items.flatMap(item => item.type === "collection" ? [item.collectionId] : []))];
     const visible = [...new Set(items.flatMap(item => item.type === "collection" && item.visible ? [item.collectionId] : []))];
+    const retained = new Set<number>();
+    if (nativePilot) {
+      const before = current ? await tx.marketMenuItem.findMany({ where: { menuId: current.id },
+        select: { position: true, departmentId: true, collectionId: true, visible: true, label: true },
+      }) : [];
+      const { protectedCategories, protectedCollections } = await reviewedMerchandising(tx, [
+        ...collections, ...new Set(before.flatMap(item => item.collectionId ? [item.collectionId] : [])),
+      ]);
+      const lockedItem = () => new CatalogWriteError("forbidden", "Use the main GriipBuddy admin to change reviewed catalog menu items.");
+      for (const item of before) {
+        const target = item.departmentId && protectedCategories.has(item.departmentId)
+          ? { type: "category", categoryId: item.departmentId }
+          : item.collectionId && protectedCollections.has(item.collectionId)
+            ? { type: "collection", collectionId: item.collectionId } : null;
+        if (!target) continue;
+        const replacement = items[item.position];
+        if (!replacement || !isDeepStrictEqual({ ...replacement, label: replacement.label ?? null },
+          { ...target, label: item.label, visible: item.visible })) throw lockedItem();
+        retained.add(item.position);
+      }
+      if (items.some((item, index) => !retained.has(index) &&
+          (item.type === "category" && protectedCategories.has(item.categoryId) ||
+            item.type === "collection" && protectedCollections.has(item.collectionId)))) throw lockedItem();
+    }
     if (categories.length && await tx.department.count({ where: { id: { in: categories } } }) !== categories.length) {
       throw new OperationError("A menu category does not exist.");
     }
@@ -51,12 +98,13 @@ export async function saveMarketMenu(actorId: string, raw: unknown) {
     const menu = current
       ? await tx.marketMenu.update({ where: { id: current.id }, data: { revision: { increment: 1 } }, select: { id: true, revision: true } })
       : await tx.marketMenu.create({ data: { marketId, key, locale, revision: 1 }, select: { id: true, revision: true } });
-    if (current) await tx.marketMenuItem.deleteMany({ where: { menuId: menu.id } });
-    if (items.length) await tx.marketMenuItem.createMany({ data: items.map((item, position) => ({
+    if (current) await tx.marketMenuItem.deleteMany({ where: { menuId: menu.id, position: { notIn: [...retained] } } });
+    const newItems = items.flatMap((item, position) => retained.has(position) ? [] : [{
       menuId: menu.id, position, label: item.label ?? null, visible: item.visible,
       ...(item.type === "category" ? { departmentId: item.categoryId }
         : item.type === "collection" ? { collectionId: item.collectionId } : { page: item.page }),
-    })) });
+    }]);
+    if (newItems.length) await tx.marketMenuItem.createMany({ data: newItems });
     await tx.auditEvent.create({ data: { actorId, action: "TAXONOMY_SAVED", target: menu.id,
       changes: { kind: "market-menu", marketId, key, locale, revision: menu.revision, items },
     } });
@@ -102,7 +150,7 @@ const collectionPublicationInput = z.strictObject({
   collectionId: productIdField, marketId: marketIdInput, expectedRevision: revision, published: z.boolean(),
 });
 
-export async function saveCollectionMarketPublication(actorId: string, raw: unknown) {
+export async function saveCollectionMarketPublication(actorId: string, raw: unknown, nativePilot = false) {
   const { collectionId, marketId, expectedRevision, published } = catalogWriteInput(collectionPublicationInput, raw);
   return getDb().$transaction(async tx => {
     await authorizeTaxonomyMarket(tx, actorId, marketId);
@@ -112,6 +160,9 @@ export async function saveCollectionMarketPublication(actorId: string, raw: unkn
       marketPublications: { where: { marketId }, select: { published: true } },
     } });
     if (!collection) throw new CatalogWriteError("not_found", "The collection does not exist.");
+    if (nativePilot && (await reviewedMerchandising(tx, [collectionId])).protectedCollections.has(collectionId)) {
+      throw new CatalogWriteError("forbidden", "Use the main GriipBuddy admin for this catalog collection.");
+    }
     if (collection.revision !== expectedRevision) throw new CatalogWriteError("conflict", "The collection changed. Reload it and try again.");
     if (published && !await tx.product.findFirst({ where: {
       ...connectedCollectionProductFilter(collection), variants: { some: catalogVariantWhere(marketId) },
@@ -154,6 +205,13 @@ export async function setCuratedCollectionProducts(actorId: string, raw: unknown
     if ((expectedRevision !== undefined && collection.revision !== expectedRevision) ||
       current.size !== expected.size || currentIds.some(id => !expected.has(id))) {
       throw new CatalogWriteError("conflict", "The collection changed. Reload it and try again.");
+    }
+    if (expectedRevision === undefined) {
+      // Older callers supplied a membership set. They can add or remove items without changing the order of retained products.
+      const retained = productIds.filter(id => current.has(id));
+      if (currentIds.filter(id => desired.has(id)).some((id, index) => id !== retained[index])) {
+        throw new CatalogWriteError("conflict", "Reload the collection before changing the saved product order.");
+      }
     }
     const added = productIds.filter(id => !current.has(id));
     const removed = currentIds.filter(id => !desired.has(id));

@@ -1,12 +1,14 @@
 import type { MarketId } from "../../config/markets.ts";
 import type { Prisma, PublicationState } from "../../generated/prisma/client.ts";
 import { categoryAttributesForMany, type EffectiveCategoryAttribute } from "../catalog/category-attributes.ts";
+import { catalogVariantWhere } from "../catalog/connected-public.ts";
 import { departmentAncestorPath } from "../catalog/departments.ts";
 import { getDb } from "../db/client.ts";
 import { isMarketSelectable } from "../market-config.ts";
 import { staffMarketIds } from "./market-access.ts";
 import { authorize } from "./operations.ts";
 import type { ownerProductFoundation } from "./product-foundation.ts";
+import { legacyProductScope } from "../catalog/scoped-pilot.ts";
 import { productPublicationReadiness } from "./product-publication.ts";
 import { categoryPlacementScope } from "./taxonomy-write.ts";
 
@@ -42,16 +44,18 @@ export async function productWorkspaceIdentity(actorId: string, id: string) {
 type ProductFilters = {
   q?: string; state?: PublicationState; source?: "connected" | "legacy"; market?: MarketId; page: number;
   excludeRedirected?: boolean;
+  legacyPilot?: boolean;
 };
 
 export async function listProductWorkspace(actorId: string, filters: ProductFilters) {
   const access = await productWorkspaceAccess(actorId);
   if (!access.owner && !access.marketIds.length) return null;
   const db = getDb();
-  const { q, state, source, market, page, excludeRedirected } = filters;
+  const { q, state, source, market, page, excludeRedirected, legacyPilot } = filters;
   const contains = q && { contains: q, mode: "insensitive" as const };
   const where: Prisma.ProductWhereInput = { AND: [
     permittedProduct(access.owner, access.marketIds),
+    ...(legacyPilot ? [await legacyProductScope(db)] : []),
     { ...(state && { publication: state }), ...(source && { foundation: source === "connected" }),
       ...(excludeRedirected && { migratedFromSlug: null }) },
     ...(contains ? [{ OR: [{ name: contains }, { id: contains }, { brand: contains }, { variants: { some: { sku: contains } } }] }] : []),
@@ -61,18 +65,23 @@ export async function listProductWorkspace(actorId: string, filters: ProductFilt
     where, orderBy: [{ addedOn: "desc" }, { id: "asc" }], skip: (page - 1) * rowsPerPage, take: rowsPerPage + 1,
     select: { id: true, name: true, publication: true, foundation: true, active: true, demo: true,
       department: { select: { name: true } }, _count: { select: { variants: true } },
-      variants: { where: { active: true, archivedAt: null },
-        select: { offers: { where: { publication: "ACTIVE", marketId: { in: access.marketIds } }, select: { marketId: true } } } },
     },
   });
   const visible = rows.slice(0, rowsPerPage);
+  const activeIds = visible.filter(row => row.active && row.publication === "ACTIVE").map(row => row.id);
+  const publishedMarkets = activeIds.length ? await Promise.all(access.marketIds.map(async marketId => {
+    const products = await db.product.findMany({
+      where: { id: { in: activeIds }, variants: { some: catalogVariantWhere(marketId) } }, select: { id: true },
+    });
+    return { marketId, ids: new Set(products.map(product => product.id)) };
+  })) : [];
   const details = [];
   // Limit in-flight readers against the shared Prisma pool.
   for (let index = 0; index < visible.length; index += 4) {
     details.push(...await Promise.all(visible.slice(index, index + 4).map(async row => ({
       id: row.id, name: row.name, publication: row.publication, active: row.active, foundation: row.foundation, demo: row.demo,
       category: row.department.name, variants: row._count.variants,
-      markets: [...new Set(row.variants.flatMap(variant => variant.offers.map(offer => offer.marketId)))],
+      markets: publishedMarkets.filter(market => market.ids.has(row.id)).map(market => market.marketId),
       incomplete: access.owner && row.foundation && (await productPublicationReadiness(db, row.id))?.ready === false,
     }))));
   }
@@ -116,9 +125,16 @@ export async function productWorkspaceHistory(actorId: string, productId: string
     db.inventoryMovement.findMany({
       where: { pool: { variantId: { in: variantIds }, variant: { productId } } },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 30,
-      select: { id: true, kind: true, quantity: true, createdAt: true },
+      select: { id: true, kind: true, quantity: true, createdAt: true, actorId: true,
+        pool: { select: { location: { select: { name: true } } } },
+        allocation: { select: { reservation: { select: { marketId: true } } } } },
     }),
   ]);
+  const staffIds = [...new Set(movements.flatMap(row => row.actorId ? [row.actorId] : []))];
+  const staff = staffIds.length ? await db.user.findMany({
+    where: { id: { in: staffIds }, staff: { isNot: null } }, select: { id: true, name: true },
+  }) : [];
+  const names = new Map(staff.map(row => [row.id, row.name]));
   const actions = rows.map(({ changes, actor, action, ...row }) => {
     const kind = readString(changes, "kind");
     const market = readString(changes, "marketId");
@@ -128,12 +144,15 @@ export async function productWorkspaceHistory(actorId: string, productId: string
         : kind === "publication" ? "Product publication changed" : kind === "variant-compatibility" ? "Device compatibility updated" : "Product saved";
     const fields = changes && typeof changes === "object" && "changedFields" in changes && Array.isArray(changes.changedFields)
       ? changes.changedFields.filter(field => typeof field === "string").join(", ") : undefined;
-    return { ...row, actorName: actor?.name ?? "Catalog operation", label, market, publication,
-      locale: readString(changes, "locale"), fields };
+    const changeActor = changes && typeof changes === "object" && "actor" in changes ? changes.actor : null;
+    return { ...row, actorName: actor?.name ?? (readString(changeActor, "kind") === "seller" ? "Seller" : "Catalog operation"),
+      label, market, publication, locale: readString(changes, "locale"), fields, warehouse: undefined, stock: action === "STOCK_CHANGED" };
   });
-  const stock = movements.map(({ id, kind, quantity, createdAt }) => ({
+  const stock = movements.map(({ id, kind, quantity, createdAt, actorId, pool, allocation }) => ({
     id, createdAt, label: `Stock ${kind.toLowerCase().replaceAll("_", " ")} (${quantity > 0 ? "+" : ""}${quantity})`,
-    actorName: "Inventory ledger", market: undefined, publication: undefined, locale: undefined, fields: undefined,
+    actorName: actorId ? names.get(actorId) ?? "Inventory operator" : "Inventory ledger",
+    market: allocation?.reservation.marketId, warehouse: pool.location.name, stock: true,
+    publication: undefined, locale: undefined, fields: undefined,
   }));
   return [...actions, ...stock].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id)).slice(0, 30);
 }

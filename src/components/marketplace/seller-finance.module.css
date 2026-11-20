@@ -1,0 +1,112 @@
+.workspace {
+  --finance-line: var(--seller-line, #dfdce7);
+  --finance-ink: var(--seller-ink, #25253b);
+  --finance-accent: var(--seller-accent, #583c94);
+  --finance-muted: var(--seller-muted, #5d6276);
+  display: grid;
+  gap: 16px;
+  min-inline-size: 0;
+  color: var(--finance-ink);
+}
+.panel {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-inline-size: 0;
+  padding: clamp(14px, 3vw, 22px);
+  border: 1px solid var(--finance-line);
+  border-radius: 14px;
+  background: #fff;
+}
+.panel h2 { margin: 0; font-size: 1.09rem; font-weight: 780; }
+.panel p { margin: 0; }
+.heading, .dataLine, .values > div {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.heading span, .muted, .row small { color: var(--finance-muted); font-size: .875rem; }
+.metrics, .columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.metrics > div { border-radius: 10px; padding: 12px; background: #f6f4fa; }
+.metrics dt { margin-block-end: 7px; color: var(--finance-muted); font-size: .85rem; }
+.metrics dd { margin: 0; font-size: 1.15rem; font-weight: 800; overflow-wrap: anywhere; }
+.values { margin: 0; padding: 0; }
+.values > div { border-block-end: 1px solid var(--finance-line); padding: 7px 0; }
+.values > div:last-child { border-block-end: 0; }
+.values dd { margin: 0; font-weight: 700; text-align: end; overflow-wrap: anywhere; }
+.rows { display: grid; gap: 10px; list-style: none; margin: 0; padding: 0; }
+.row { padding: 12px; border: 1px solid var(--finance-line); border-radius: 10px; min-inline-size: 0; }
+details.row > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, .95fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  cursor: pointer;
+}
+details.row > summary::after { content: "Show breakdown"; color: var(--finance-accent); font-size: .825rem; }
+details.row[open] > summary::after { content: "Hide breakdown"; }
+.row small { display: block; overflow-wrap: anywhere; }
+.row .values, .row form, .row p { margin-block-start: 10px; }
+.filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.filters label, .actionForm label { display: grid; gap: 5px; font-size: .875rem; font-weight: 700; }
+.filters input, .filters select, .actionForm input, .actionForm textarea, .actionForm select {
+  border: 1px solid #d4d0df;
+  border-radius: 8px;
+  padding: 7px 9px;
+  min-block-size: 40px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  background: #fff;
+  color: var(--finance-ink);
+  font: inherit;
+}
+.primary, .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: start;
+  min-block-size: 40px;
+  border: 1px solid var(--finance-line);
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: #fff;
+  color: var(--finance-accent);
+  font-size: .875rem;
+  font-weight: 750;
+}
+.primary { border-color: var(--finance-accent); background: var(--finance-accent); color: #fff; }
+.primary:disabled { opacity: .65; }
+.primary:focus-visible, .button:focus-visible, .panel summary:focus-visible, .panel :is(input,textarea,select):focus-visible {
+  outline: 2px solid var(--finance-accent);
+  outline-offset: 2px;
+}
+.actionForm { display: grid; gap: 8px; min-inline-size: 0; }
+.actionForm fieldset { display: grid; gap: 10px; margin: 0; border: 0; padding: 0; min-inline-size: 0; }
+.disclosure { margin-block-start: 8px; }
+.disclosure summary { cursor: pointer; color: var(--finance-accent); font-weight: 740; }
+.disclosure .actionForm { margin-block-start: 10px; }
+.badge, .warning {
+  border: 1px solid #e5dcec;
+  border-radius: 8px;
+  padding: 4px 9px;
+  background: #f4eff8;
+  font-size: .85rem;
+  font-weight: 700;
+}
+.badge[data-tone="warning"], .warning { border-color: #ecd4aa; background: #fff7e9; color: #774408; }
+.badge[data-tone="positive"], .success { background: #edf7ee; color: #225637; }
+.error, .success { padding: 8px 10px; border-radius: 8px; }
+.error { background: #fff0ec; color: #8d2c21; }
+@media (max-width: 720px) {
+  .columns { grid-template-columns: minmax(0, 1fr); }
+  details.row > summary { grid-template-columns: minmax(0, 1fr) auto; }
+  details.row > summary > strong { grid-column: 2; }
+  details.row > summary::after { grid-row: 2; grid-column: 1; }
+}

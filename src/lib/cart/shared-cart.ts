@@ -1,25 +1,40 @@
+import { createHash } from "node:crypto";
+import type { MarketId } from "../../config/markets.ts";
 import type { Prisma } from "../../generated/prisma/client.ts";
-import { integratedCheckout, readRecoveredOrder } from "../commerce/integrated-checkout.ts";
+import type { CheckoutCartContext } from "../commerce/checkout-types.ts";
 import { getDb, type DbReader } from "../db/client.ts";
-import { addToItems, cartItemKey, decodeCart, MAX_QUANTITY, purchasedCartItem, updateItems, type CartItem } from "./model.ts";
-import type { CartChange, CartSyncRequest, CartSyncSnapshot } from "./sync-contract.ts";
+import { resolveMarketScope } from "../market-config.ts";
+import { addToItems, cartItemKey, compareCartItems, decodeCart, MAX_QUANTITY, purchasedCartItem,
+  type CartItem, type CheckoutCartItem } from "./model.ts";
+import { readQuantityLots, subtractPurchasedQuantities, updateQuantityLots } from "./quantity-lots.ts";
+import type { CartSyncRequest, CartSyncSnapshot } from "./sync-contract.ts";
+import { applyLineChange, capacityMessage, staleMessage, type CartLines } from "./line-mutations.ts";
 
-type CartLines = Pick<CartSyncSnapshot, "items" | "saved">;
 type Mutation = Exclude<CartSyncRequest, { mode: "read" }>;
-type LineChange = Exclude<CartChange, { type: "complete-purchase" }>;
 type SyncResult = { status: 200; body: CartSyncSnapshot }
   | { status: 409; body: CartSyncSnapshot & { message: string } }
   | { status: 403 | 404; body: { message: string } };
 
-const cartFields = { revision: true, items: true, saved: true } satisfies Prisma.ShopperCartSelect;
-const staleMessage = "This item changed on another device. Review the updated cart and try again.";
-const capacityMessage = "The cart or saved list is full. Remove an item or reduce a quantity and try again.";
+const cartFields = { revision: true, items: true, saved: true, lots: true } satisfies Prisma.ShopperMarketCartSelect;
 
-function snapshot(shopperId: string, row: { revision: number; items: Prisma.JsonValue; saved: Prisma.JsonValue } | null): CartSyncSnapshot {
+function snapshot(shopperId: string, marketId: MarketId,
+  row: { revision: number; items: Prisma.JsonValue; saved: Prisma.JsonValue } | null): CartSyncSnapshot {
   return {
-    shopperId, revision: row?.revision ?? 0,
+    shopperId, marketId, revision: row?.revision ?? 0,
     items: row ? decodeCart(JSON.stringify(row.items)) : [], saved: row ? decodeCart(JSON.stringify(row.saved)) : [],
   };
+}
+
+export async function checkoutCartMatches(shopperId: string, marketId: MarketId, cart: CheckoutCartContext | undefined,
+  items: readonly CheckoutCartItem[], reader: DbReader = getDb(), lock = false) {
+  if (cart?.source !== "cart") return true;
+  if (lock) await reader.$queryRaw`SELECT "shopperId" FROM "ShopperMarketCart"
+    WHERE "shopperId" = ${shopperId} AND "marketId" = ${marketId}::"MarketCode" FOR SHARE`;
+  const row = await reader.shopperMarketCart.findUnique({ where: { shopperId_marketId: { shopperId, marketId } },
+    select: { revision: true, items: true } });
+  if (!row || row.revision !== cart.revision) return false;
+  const ordered = (lines: readonly CartItem[]) => [...lines].sort(compareCartItems).map(line => [cartItemKey(line), line.quantity]);
+  return JSON.stringify(ordered(decodeCart(JSON.stringify(row.items)))) === JSON.stringify(ordered(items.map(purchasedCartItem)));
 }
 
 function mergeItems(items: readonly CartItem[], incoming: readonly CartItem[]) {
@@ -32,123 +47,108 @@ function mergeItems(items: readonly CartItem[], incoming: readonly CartItem[]) {
   return merged;
 }
 
-function applyLineChange(current: CartLines, command: LineChange, stock: number): CartLines | string {
-  const { variantId, personalization, offerId } = command;
-  if (command.type === "add") {
-    const items = addToItems(current.items, variantId, command.quantity, stock, personalization, offerId);
-    return items ? { ...current, items } : capacityMessage;
-  }
-
-  const key = cartItemKey(command);
-  const source = command.type === "remove-saved" || command.type === "restore-saved" ? "saved" : "items";
-  const line = current[source].find(item => cartItemKey(item) === key);
-  if (command.expectedQuantity !== undefined && line?.quantity !== command.expectedQuantity) return staleMessage;
-  if (!line) return command.type === "remove" || command.type === "remove-saved" ? current : staleMessage;
-
-  switch (command.type) {
-    case "set": {
-      if (line.quantity === command.quantity) return current;
-      const items = updateItems(current.items, variantId, command.quantity, stock, personalization, offerId);
-      return items === current.items ? capacityMessage : { ...current, items };
-    }
-    case "move-to-saved": {
-      const saved = addToItems(current.saved.filter(item => cartItemKey(item) !== key), variantId, line.quantity, MAX_QUANTITY, personalization, offerId);
-      return saved ? { items: current.items.filter(item => cartItemKey(item) !== key), saved } : capacityMessage;
-    }
-    case "restore-saved": {
-      const items = addToItems(current.items, variantId, line.quantity, stock, personalization, offerId);
-      return items ? { items, saved: current.saved.filter(item => cartItemKey(item) !== key) } : capacityMessage;
-    }
-    case "remove":
-      return { ...current, items: current.items.filter(item => cartItemKey(item) !== key) };
-    case "remove-saved":
-      return { ...current, saved: current.saved.filter(item => cartItemKey(item) !== key) };
-  }
-}
-
-function subtractPurchase(current: CartLines, purchased: readonly CartItem[]): CartLines {
-  const quantities = new Map<string, number>();
-  for (const line of purchased) {
-    const key = cartItemKey(line);
-    quantities.set(key, (quantities.get(key) ?? 0) + line.quantity);
-  }
-  let changed = false;
-  const items = current.items.flatMap(line => {
-    const quantity = line.quantity - (quantities.get(cartItemKey(line)) ?? 0);
-    if (quantity === line.quantity) return [line];
-    changed = true;
-    return quantity > 0 ? [{ ...line, quantity }] : [];
-  });
-  return changed ? { ...current, items } : current;
-}
-
-async function purchasedItems(shopperId: string, orderId: string, guestKey?: string | null): Promise<CartItem[] | null> {
+async function purchasedItems(shopperId: string, marketId: MarketId, orderId: string, guestKey?: string | null) {
   const db = getDb();
+  const market = resolveMarketScope(marketId);
+  if (!market) return null;
   const order = await db.order.findFirst({
-    where: { id: orderId, status: "PLACED", OR: [
-      { shopperId }, ...(guestKey ? [{ shopperId: null, attempt: { guestKey } }] : []),
+    where: { id: orderId, shopperId, marketId, currency: market.currency, status: "PLACED", OR: [
+      { payment: { method: "COD", status: { in: ["AWAITING_COLLECTION", "COLLECTED"] } } },
+      { payment: { status: "PAID" } },
     ] },
-    select: { items: { select: {
+    select: { attempt: { select: { cartSource: true, cartRevision: true, reviewActor: true } }, items: { select: {
       variantId: true, personalization: true, quantity: true, cartVariantIdSnapshot: true, cartOfferIdSnapshot: true,
     } } },
   });
-  if (order) return order.items.map(({ cartVariantIdSnapshot, cartOfferIdSnapshot, ...item }) => purchasedCartItem({
-    ...item, cartVariantId: cartVariantIdSnapshot ?? undefined, cartOfferId: cartOfferIdSnapshot ?? undefined,
-  }));
-  if (!guestKey || !integratedCheckout()) return null;
-  const recovered = await readRecoveredOrder(orderId, guestKey);
-  return recovered && recovered.status !== "cancelled"
-    ? recovered.original.lines.map(line => ({ variantId: `v-${line.variantId}`, quantity: line.quantity })) : null;
+  if (order) return {
+    revision: order.attempt.cartSource === "cart" && order.attempt.reviewActor === `shopper:${shopperId}` ? order.attempt.cartRevision : null,
+    items: order.items.map(({ cartVariantIdSnapshot, cartOfferIdSnapshot, ...item }) => purchasedCartItem({
+      ...item, cartVariantId: cartVariantIdSnapshot ?? undefined, cartOfferId: cartOfferIdSnapshot ?? undefined,
+    })),
+  };
+  // A recovered receipt uses the original browser proof and an explicitly
+  // account-bound attempt. A late sign-in never authenticates an old guest cart.
+  if (marketId !== "bd" || !guestKey) return null;
+  const attempt = await db.checkoutAttempt.findFirst({
+    where: { id: orderId, guestKey, marketId, reviewActor: `shopper:${shopperId}`, cartSource: "cart" },
+    select: { cartRevision: true },
+  });
+  if (!attempt || attempt.cartRevision === null) return null;
+  const { integratedCheckout, readRecoveredOrder } = await import("../commerce/integrated-checkout.ts");
+  if (!integratedCheckout(marketId)) return null;
+  const recovered = await readRecoveredOrder(orderId, guestKey, shopperId);
+  return recovered && recovered.status !== "cancelled" ? { revision: attempt.cartRevision,
+    items: recovered.original.lines.map(line => ({ variantId: `v-${line.variantId}`, quantity: line.quantity })),
+  } : null;
 }
 
-function nextLines(current: CartLines, request: Mutation, purchase: readonly CartItem[] | null, stock: number): CartLines | string {
+function nextLines(current: CartLines, request: Mutation, stock: number): CartLines | string {
   if (request.mode === "merge") {
     const items = mergeItems(current.items, request.items);
     const saved = mergeItems(current.saved, request.saved);
     return items && saved ? { items, saved } : capacityMessage;
   }
-  return request.command.type === "complete-purchase" ? subtractPurchase(current, purchase ?? []) : applyLineChange(current, request.command, stock);
+  return request.command.type === "complete-purchase" ? current : applyLineChange(current, request.command, stock);
 }
 
-export async function syncShopperCart(shopperId: string, request: CartSyncRequest, guestKey?: string | null,
-  checkStock?: (reader: DbReader) => Promise<number | null>): Promise<SyncResult> {
+export async function syncShopperCart(shopperId: string, request: CartSyncRequest, checks?: {
+  guestKey?: string | null;
+  stock?: (reader: DbReader) => Promise<number | null>;
+  merge?: (reader: DbReader) => Promise<boolean>;
+}): Promise<SyncResult> {
   if (request.shopperId !== shopperId) return { status: 403, body: { message: "The signed-in account changed. Refresh the page." } };
+  const { marketId } = request;
+  if (!resolveMarketScope(marketId)) return { status: 403, body: { message: "This shopping market is unavailable." } };
   const db = getDb();
-  const lookup = { where: { shopperId }, select: cartFields };
+  const key = { shopperId, marketId };
+  const lookup = { where: { shopperId_marketId: key }, select: cartFields };
   if (request.mode === "read") {
-    return { status: 200, body: snapshot(shopperId, await db.shopperCart.findUnique(lookup)) };
+    return { status: 200, body: snapshot(shopperId, marketId, await db.shopperMarketCart.findUnique(lookup)) };
   }
 
   const orderId = request.mode === "change" && request.command.type === "complete-purchase" ? request.command.orderId : null;
   const operationId = orderId ?? request.operationId;
-  const operation = { shopperId, operationId };
-  const receipt = { where: { shopperId_operationId: operation }, select: { operationId: true } };
-  // Resolve payment data before acquiring the cart lock. Recovered checkout can require a separate service.
-  let purchase: CartItem[] | null = null;
+  const operation = { ...key, operationId, purchase: Boolean(orderId) };
+  const receipt = { where: { shopperId_marketId_purchase_operationId: operation }, select: { requestHash: true } };
+  const requestHash = createHash("sha256").update(JSON.stringify(orderId ? ["complete-purchase", orderId] : request)).digest("hex");
+  let purchase: Awaited<ReturnType<typeof purchasedItems>> = null;
   if (orderId) {
-    if (await db.shopperCartOperation.findUnique(receipt)) {
-      return { status: 200, body: snapshot(shopperId, await db.shopperCart.findUnique(lookup)) };
+    if (await db.shopperMarketCartOperation.findUnique(receipt)) {
+      return { status: 200, body: snapshot(shopperId, marketId, await db.shopperMarketCart.findUnique(lookup)) };
     }
-    purchase = await purchasedItems(shopperId, orderId, guestKey);
+    purchase = await purchasedItems(shopperId, marketId, orderId, checks?.guestKey);
     if (!purchase) return { status: 404, body: { message: "That completed order was not found." } };
   }
 
   return db.$transaction(async tx => {
     // INSERT ON CONFLICT safely establishes the row for shoppers using two devices for the first time.
-    await tx.shopperCart.createMany({ data: [{ shopperId, items: [], saved: [] }], skipDuplicates: true });
-    await tx.$queryRaw`SELECT "shopperId" FROM "ShopperCart" WHERE "shopperId" = ${shopperId} FOR UPDATE`;
-    const current = snapshot(shopperId, await tx.shopperCart.findUniqueOrThrow(lookup));
-    if (await tx.shopperCartOperation.findUnique(receipt)) return { status: 200, body: current };
+    await tx.shopperMarketCart.createMany({ data: [key], skipDuplicates: true });
+    await tx.$queryRaw`SELECT "shopperId" FROM "ShopperMarketCart"
+      WHERE "shopperId" = ${shopperId} AND "marketId" = ${marketId}::"MarketCode" FOR UPDATE`;
+    const stored = await tx.shopperMarketCart.findUniqueOrThrow(lookup);
+    const current = snapshot(shopperId, marketId, stored);
+    const conflict = (message: string) => ({ status: 409 as const, body: { ...current, message } });
+    const prior = await tx.shopperMarketCartOperation.findUnique(receipt);
+    if (prior) return prior.requestHash === requestHash ? { status: 200, body: current }
+      : conflict("This cart operation already used a different request.");
+    if (await tx.shopperCartOperation.findUnique({ where: { shopperId_operationId: { shopperId, operationId } }, select: { operationId: true } })) {
+      return conflict("This operation belongs to your previous cart. Review the selected market and try again.");
+    }
+    if (request.mode === "change" && request.revision !== undefined && request.revision !== current.revision) return conflict(staleMessage);
+    if (checks?.merge && !await checks.merge(tx)) return conflict("Some guest items could not be matched to this market. Your guest selections were kept.");
 
-    const stock = checkStock ? await checkStock(tx) : MAX_QUANTITY;
-    if (stock === null) return { status: 409, body: { ...current, message: "This offer or quantity is unavailable in your shopping market." } };
-    const next = nextLines(current, request, purchase, stock);
-    if (typeof next === "string") return { status: 409, body: { ...current, message: next } };
+    const stock = checks?.stock ? await checks.stock(tx) : MAX_QUANTITY;
+    if (stock === null) return conflict("This offer or quantity is unavailable in your shopping market.");
+    const currentLots = readQuantityLots(current.items, stored.lots, current.revision);
+    const bought = purchase?.revision == null ? null : subtractPurchasedQuantities(current.items, currentLots, purchase.items, purchase.revision);
+    const next = bought ? { ...current, items: bought.items } : nextLines(current, request, stock);
+    if (typeof next === "string") return conflict(next);
     const changed = next.items !== current.items || next.saved !== current.saved;
-    const row = changed ? await tx.shopperCart.update({ where: { shopperId }, data: {
+    const row = changed ? await tx.shopperMarketCart.update({ where: lookup.where, data: {
       items: [...next.items], saved: [...next.saved], revision: { increment: 1 },
+      lots: bought?.lots ?? updateQuantityLots(next.items, currentLots, current.revision + 1),
     }, select: cartFields }) : null;
-    await tx.shopperCartOperation.create({ data: operation });
-    return { status: 200, body: row ? snapshot(shopperId, row) : current };
+    await tx.shopperMarketCartOperation.create({ data: { ...operation, requestHash } });
+    return { status: 200, body: row ? snapshot(shopperId, marketId, row) : current };
   });
 }

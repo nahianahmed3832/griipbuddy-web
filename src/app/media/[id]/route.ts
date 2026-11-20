@@ -6,6 +6,7 @@ import { getShopper } from "@/lib/marketplace/auth";
 import { availableMarketEditorialMedia } from "@/lib/catalog/repository";
 import { isMarketSelectable, marketConfiguration, marketLanguage } from "@/lib/market-config";
 import { currentMarket } from "@/lib/market-server";
+import { publishedEditorial } from "@/lib/catalog/editorial";
 import { isPublishedHomepageMedia } from "@/lib/catalog/homepage-content";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -26,11 +27,17 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const locale = languages.length ? marketLanguage(market, languages[0]) : market.locale;
     if (!locale) return new Response(null, { status: 404 });
     const publicImage = (await availableMarketEditorialMedia([src], market.id)).has(src) ||
-      await isPublishedHomepageMedia(src, { ...market, locale });
+      await isPublishedHomepageMedia(src, { ...market, locale }) ||
+      (await publishedEditorial(market.id, locale)).documents.some(item => item.image?.src === src);
     if (!publicImage && (await getStaff())?.role !== "OWNER") {
       const shopper = marketplaceMode() ? await getShopper() : null;
-      if (!shopper || !await db.productImage.findFirst({ where: { src, product: { marketplaceShop: { ownerId: shopper.id } } },
-        select: { productId: true } })) return new Response(null, { status: 404 });
+      if (!shopper) return new Response(null, { status: 404 });
+      const [attached, uploaded] = await Promise.all([
+        db.productImage.findFirst({ where: { src, product: { marketplaceShop: { ownerId: shopper.id } } },
+          select: { productId: true } }),
+        db.sellerListingAsset.findFirst({ where: { mediaId: id, shop: { ownerId: shopper.id } }, select: { mediaId: true } }),
+      ]);
+      if (!attached && !uploaded) return new Response(null, { status: 404 });
     }
     const image = await db.catalogMedia.findUnique({ where: { id }, select: { data: true } });
     if (!image) return new Response(null, { status: 404 });

@@ -241,7 +241,7 @@ function compareCards(sort: CatalogListingInput["sort"], a: GroupCard, b: GroupC
 }
 
 export async function listConnectedCatalog(params: URLSearchParams, context: CatalogReadContext, db: PrismaClient = getDb(),
-  now = new Date(), options?: { browsePage?: number; search?: true; suggest?: true; keepUnmatchedFacets?: boolean }) {
+  now = new Date(), options?: { browsePage?: number; search?: true; suggest?: true; keepUnmatchedFacets?: boolean; productIds?: readonly string[] }) {
   const filters = parseCatalogListing(params);
   const scope = listingScope(filters, context);
   const { marketId, locale } = context;
@@ -249,7 +249,7 @@ export async function listConnectedCatalog(params: URLSearchParams, context: Cat
   if (!isMarketSelectable(marketId)) throw new CatalogApiError(400, "invalid_market", "Choose a browsable market.");
   const { currency } = markets[marketId];
   return db.$transaction(async tx => {
-    const productWhere: Prisma.ProductWhereInput[] = [];
+    const productWhere: Prisma.ProductWhereInput[] = options?.productIds ? [{ id: { in: [...options.productIds] } }] : [];
     let categoryId: string | null = null;
     let collectionId: string | null = null;
     let collectionOrder: ReadonlyMap<string, number> | undefined;

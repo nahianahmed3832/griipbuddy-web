@@ -10,6 +10,8 @@ import { orderIntakeOpen, productionMode } from "@/lib/release-config";
 import { paypalCheckoutAvailability } from "@/lib/commerce/paypal-config";
 import { prepaidAvailable } from "@/lib/commerce/prepaid-config";
 import { marketConfiguration, marketPayment, selectableMarkets, selectedMarketId } from "@/lib/market-config";
+import { store } from "@/config/store";
+import { catalogCopyFixture } from "@/lib/intelligence/catalog-copy-suggestions";
 
 export const metadata = { title: "Market settings" };
 const decimal = (minor?: number | null) => minor == null ? "" : (minor / 100).toFixed(2);
@@ -60,6 +62,16 @@ export default async function MarketSettingsPage({ searchParams }: { searchParam
       <nav className="staff-filters" aria-label="Markets">
         {selectableMarkets().map(({ id, name }) => <Link href={`/staff/settings?market=${id}`} aria-current={market.id === id ? "page" : undefined} key={id}>{name}</Link>)}
       </nav>
+      <section className="commerce-panel" aria-labelledby="business-profile">
+        <h2 id="business-profile">Business profile</h2>
+        <dl className="specifications">
+          <div><dt>Store</dt><dd>{store.name}</dd></div>
+          <div><dt>Customer contact</dt><dd><a href={`mailto:${store.supportEmail}`}>{store.supportEmail}</a></dd></div>
+          <div><dt>Reporting time zone</dt><dd>{market.timeZone}</dd></div>
+          <div><dt>Checkout authority</dt><dd>{market.checkoutAuthority === "native" ? "Native checkout" : "Regional checkout service"}</dd></div>
+          <div><dt>Catalog copy</dt><dd>{catalogCopyFixture() ? "Simulated provider" : "Provider unavailable"}</dd></div>
+        </dl>
+      </section>
       {market.checkoutAuthority === "legacy-handoff" ? <section className="commerce-panel">
         <h2>Legacy checkout provider</h2>
         <p>Delivery charges, payments and fulfillment are managed by the configured checkout authority.</p>

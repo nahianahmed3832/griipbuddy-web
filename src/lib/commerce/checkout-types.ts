@@ -7,6 +7,12 @@ import { addressText as plainText, checkoutAddressInput } from "./address.ts";
 
 export const uuid = z.uuid();
 
+export const checkoutCartContext = z.object({
+  source: z.enum(["cart", "buy-now"]),
+  revision: z.number().int().min(0).max(2_147_483_647).optional(),
+}).refine(cart => cart.source === "cart" ? cart.revision !== undefined : cart.revision === undefined);
+export type CheckoutCartContext = z.output<typeof checkoutCartContext>;
+
 export const checkoutInput = z.object({
   marketId: z.custom<MarketId>(isMarketId),
   items: z.array(z.object({
@@ -25,6 +31,7 @@ export const checkoutInput = z.object({
   customer: checkoutAddressInput,
   deliveryMethod: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/),
   paymentMethod: z.literal("COD"),
+  cart: checkoutCartContext.optional(),
   gift: z.object({ note: plainText(0, 240) }).strict().optional(),
   couponCode: couponCodeInput.optional(),
 });
@@ -46,6 +53,7 @@ export const prepaidSubmissionInput = prepaidCheckoutInput.extend({
 
 export type CheckoutDetails = z.input<typeof checkoutInput>;
 export type NormalizedCheckout = z.output<typeof checkoutInput>;
+export type { CheckoutCartItem } from "../cart/model.ts";
 export type PrepaidCheckoutDetails = z.input<typeof prepaidCheckoutInput>;
 export type NormalizedPrepaidCheckout = z.output<typeof prepaidCheckoutInput>;
 export type CheckoutSubmission = z.input<typeof submissionInput>;
@@ -93,6 +101,7 @@ export type CheckoutQuote = OrderTotals & {
   deliveryLabel: string;
   deliveryGuidance: string | null;
   reviewToken: string;
+  expiresAt?: string;
 };
 
 export type DeliveryChoice = {
@@ -111,9 +120,9 @@ export type CheckoutFailure = {
 };
 export type ReviewResult = { kind: "review"; attemptId: string; quote: CheckoutQuote } | CheckoutFailure;
 export type OrderPlaced = { kind: "placed"; orderId: string; purchased: NormalizedCheckout["items"] };
-export type SubmitResult = OrderPlaced | { kind: "changed"; quote: CheckoutQuote } | CheckoutFailure;
+export type SubmitResult = OrderPlaced | { kind: "changed"; quote: CheckoutQuote; message?: string } | CheckoutFailure;
 export type RecoverResult = OrderPlaced | { kind: "abandoned" } | CheckoutFailure;
 export type PrepaidPaymentResult = (OrderPlaced & { direct: boolean }) | CheckoutFailure |
-  { kind: "changed"; quote: CheckoutQuote } |
+  { kind: "changed"; quote: CheckoutQuote; message?: string } |
   { kind: "continue"; redirectUrl: string } |
   { kind: "pending" | "abandoned"; message: string };

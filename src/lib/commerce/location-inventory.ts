@@ -189,10 +189,18 @@ export async function createOrderParcels(tx: Prisma.TransactionClient, orderId: 
   if ([...remaining.values()].some(quantity => quantity !== 0)) throw new InventoryLocationError("Dispatch quantities do not match the order.");
   for (const [locationId, { locationName, items: lines }] of parcels) {
     await tx.orderParcel.create({ data: {
-      orderId, locationId, locationName, status: "PLANNED", items: { createMany: { data: lines } },
+      orderId, locationId, locationName, status: "PLANNED", preparationState: "PENDING", items: { createMany: { data: lines } },
       events: { create: { status: "PLANNED" } },
     } });
   }
+}
+
+export function parcelQuantitiesByLocation(lines: readonly { quantity: number; parcel: { locationId: string } }[]) {
+  const quantities = new Map<string, number>();
+  for (const { quantity, parcel: { locationId } } of lines) {
+    quantities.set(locationId, (quantities.get(locationId) ?? 0) + quantity);
+  }
+  return quantities;
 }
 
 export async function restoreOrderInventory(tx: Prisma.TransactionClient, items: readonly LocationReceiptLine[]) {
@@ -210,19 +218,15 @@ export async function restoreOrderInventory(tx: Prisma.TransactionClient, items:
   });
   const receipts: StockMovement[] = [];
   for (const { id, variantId, quantity, receivedBefore } of items) {
-    const sources = parcelLines.filter(line => line.orderItemId === id);
-    if (!sources.length) {
+    const sources = parcelQuantitiesByLocation(parcelLines.filter(line => line.orderItemId === id));
+    if (!sources.size) {
       receipts.push({ variantId, locationId: legacyLocationId, quantity });
       continue;
     }
-    const reserved = sources.reduce((sum, source) => sum + source.quantity, 0);
+    const reserved = [...sources.values()].reduce((sum, units) => sum + units, 0);
     if (quantity + (receivedBefore ?? 0) > reserved) throw new InventoryLocationError("The receipt exceeds the original parcel quantities.");
-    if (sources.length === 1) {
-      receipts.push({ variantId, locationId: sources[0].parcel.locationId, quantity });
-      continue;
-    }
-    if (quantity !== reserved) throw new InventoryLocationError("This item shipped from several locations. Hold this partial return to confirm where it should be restocked.");
-    receipts.push(...sources.map(source => ({ variantId, locationId: source.parcel.locationId, quantity: source.quantity })));
+    if (sources.size > 1 && quantity !== reserved) throw new InventoryLocationError("This item shipped from several locations. Hold this partial return to confirm where it should be restocked.");
+    for (const [locationId, allocated] of sources) receipts.push({ variantId, locationId, quantity: sources.size === 1 ? quantity : allocated });
   }
   await changeAllocatedStock(tx, receipts, false);
   return receipts.reduce((sum, receipt) => sum + receipt.quantity, 0);

@@ -37,6 +37,30 @@ test("the established hero comes before body ordering even when a body position 
     ["hero", "featured", "summer"]);
 });
 
+test("tile layouts validate catalog destination kinds, uniqueness and local responsive media", () => {
+  const category = { key: "cases", kind: "CATEGORY", referenceId: "fixture-cases", focalPoint: { x: 0, y: 100 } };
+  const collection = { key: "seasonal", kind: "COLLECTION", referenceId: "fixture-seasonal",
+    image: { src: "/editorial/carry.webp", alt: "Canvas bag" },
+    mobileImage: { src: "/editorial/hero.webp", alt: "Canvas bag detail" }, mobileFocalPoint: { x: 48.5, y: 43 } };
+  const product = { key: "case-product", kind: "PRODUCT", referenceId: "p-case" };
+  const parse = (tileLayout: string, tiles: object[]) =>
+    homepageInput.safeParse({ sections: [{ key: "tile-set", type: "TILES", title: "Shop collections", position: 2, tileLayout, tiles }] });
+
+  assert.equal(parse("SHORTCUTS", [category, collection]).success, true);
+  assert.equal(parse("PORTRAIT", [category, collection]).success, true);
+  assert.equal(parse("SHOWCASE", [collection]).success, true);
+  assert.equal(parse("DISCOVERY", [collection, product]).success, true);
+  assert.equal(parse("SHOWCASE", [category]).success, false);
+  assert.equal(parse("PORTRAIT", [product]).success, false);
+  assert.equal(parse("SHORTCUTS", []).success, false);
+  assert.equal(parse("SHORTCUTS", [category, { ...category, key: "same-destination" }]).success, false);
+  assert.equal(parse("DISCOVERY", [category, { ...product, key: category.key }]).success, false);
+  assert.equal(parse("PORTRAIT", [{ ...category, focalPoint: { x: 101, y: 42 } }]).success, false);
+  assert.equal(parse("PORTRAIT", [{ ...category, mobileImage: { src: "//example.com/img.png", alt: "Unapproved" } }]).success, false);
+  assert.equal(parse("PORTRAIT", [{ ...category, mobileImage: { src: "/editorial/hero.webp", alt: "" } }]).success, false);
+  assert.equal(parse("PORTRAIT", [{ ...category, href: "/shop" }]).success, false);
+});
+
 test("deals render the eligible promoted variant and its own image and price", () => {
   const image = (id: string) => ({ src: `/catalog/${id}.webp`, alt: id });
   const variant = (id: string, amountMinor: number, terms: Partial<MarketOffer> = {}) => ({

@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import { sectionTypes, type HomepageContentData, type HomepageSection } from "@/lib/catalog/homepage-contract";
 import { publishHomepageAction, saveHomepageAction, saveMarketGrantAction } from "@/app/staff/homepage-actions";
 
-const labels: Record<HomepageSection["type"], string> = {
+const labels: Record<Exclude<HomepageSection["type"], "TILES" | "BENEFITS">, string> = {
   BANNER: "Banner", CURATED: "Curated products", COLLECTION: "Collection", BESTSELLERS: "Market bestsellers",
   TRENDING: "Market trending", RECENTLY_VIEWED: "Recently viewed", RELATED: "Similar products",
   DEPARTMENTS: "Department links", COLLECTIONS: "Collection links", NEW: "New arrivals", FEATURED: "Featured products", DEALS: "Active offers",
@@ -23,6 +23,10 @@ export function HomepageEditor({ scope, revision, initial }: { scope: string; re
   })));
   const [hidden, setHidden] = useState(initial.hiddenSections.join(", "));
   const [message, action, waiting] = useActionState(saveHomepageAction.bind(null, scope, revision), null);
+
+  if (initial.sections.some(section => section.type === "TILES" || section.type === "BENEFITS")) {
+    return <p>Manage this draft and its merchandising and service tiles in the main GriipBuddy admin.</p>;
+  }
 
   function edit(editorId: string, fields: Partial<HomepageSection>) {
     setSections(rows => rows.map(row => row.editorId === editorId ? { ...row, section: { ...row.section, ...fields } } : row));
@@ -49,7 +53,8 @@ export function HomepageEditor({ scope, revision, initial }: { scope: string; re
         <label>Section key<input required maxLength={39} value={section.key} onChange={event => edit(editorId, { key: event.target.value })} /></label>
         <label>Component<select value={section.type} onChange={event => edit(editorId, { type: event.target.value as HomepageSection["type"],
           categoryId: undefined, categoryIds: undefined, collectionIds: undefined, budget: undefined })}>
-          {sectionTypes.filter(type => type !== "CATEGORY_SPOTLIGHT" || section.type === type)
+          {sectionTypes.filter(type => type !== "TILES" && type !== "BENEFITS")
+            .filter(type => type !== "CATEGORY_SPOTLIGHT" || section.type === type)
             .map(type => <option key={type} value={type}>{labels[type]}</option>)}
         </select></label>
         <label>Position<input type="number" min="1" max="100" required value={section.position || ""} onChange={event => edit(editorId, { position: Number(event.target.value) })} /></label>

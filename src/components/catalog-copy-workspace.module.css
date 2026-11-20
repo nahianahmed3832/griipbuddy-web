@@ -1,0 +1,6 @@
+.workspace { max-width: 72rem; margin-inline: auto; }
+.workspace h1 { font-size: clamp(1.9rem, 4vw, 2.65rem); font-weight: 750; line-height: 1.15; margin-top: .5rem; }
+.workspace h2 { font-size: 1.2rem; font-weight: 700; margin-bottom: .55rem; }
+.history { display: grid; gap: .75rem; list-style: none; margin: 0; padding: 0; }
+.history li { border-top: 1px solid #dacfd8; padding-block: .65rem; overflow-wrap: anywhere; }
+.history small { color: #5a5060; }

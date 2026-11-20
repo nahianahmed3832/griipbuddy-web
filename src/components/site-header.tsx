@@ -19,7 +19,7 @@ export function SiteHeader({ navigation, market, signedIn, production }: {
       {!production && <div className="preview-strip">{store.previewNotice}</div>}
       <div className="shell site-header__row">
         <Wordmark />
-        <StoreCategoryMenu navigation={navigation} marketId={market.id} />
+        <StoreCategoryMenu key={`${market.id}:${market.locale}`} navigation={navigation} marketId={market.id} />
         <div className="site-header__search"><Suspense fallback={<SearchForm market={market} />}><HeaderSearch market={market} /></Suspense></div>
         {production ? <Link className="account-control__trigger" href="/orders" aria-label="Your orders"><UserRound size={17} aria-hidden="true" /> Orders</Link> : <SignIn signedIn={signedIn} />}
         <CartLink />

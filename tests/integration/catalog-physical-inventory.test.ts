@@ -10,13 +10,15 @@ import { saveConnectedOffer } from "../../src/lib/commerce/market-offers.ts";
 import { getOfferFulfilment } from "../../src/lib/commerce/offer-fulfilment.ts";
 import { reviewCheckout } from "../../src/lib/commerce/orders.ts";
 import {
-  eligibleInventoryPools, initializeInventoryPool, recordStockMovement, saveWarehouseService, transferStock,
+  eligibleInventoryPools, initializeInventoryPool, inventoryPoolScopeKey, marketRoutedInventory, recordStockMovement, saveWarehouseService, transferStock,
 } from "../../src/lib/commerce/physical-inventory.ts";
 import { getDb } from "../../src/lib/db/client.ts";
 import { requireLocalDatabase } from "../../src/lib/db/local.ts";
 import { storeShop } from "../../src/lib/marketplace/constants.ts";
 import { adjustLocationStock } from "../../src/lib/staff/location-inventory.ts";
 import { updatePrice } from "../../src/lib/staff/operations.ts";
+import { saveWorkspaceProduct } from "../../src/lib/staff/product-publication.ts";
+import { readProductWorkspaceCommerce, runWorkspaceStockCommand } from "../../src/lib/staff/product-workspace-commerce.ts";
 
 requireLocalDatabase("griipbuddy_test");
 const db = getDb();
@@ -49,6 +51,8 @@ async function fixture(t: TestContext) {
     else process.env.GRIIP_MARKETPLACE_PREVIEW = beforeMarketplace;
     if (beforeFirstParty === undefined) delete process.env.GRIIP_FIRST_PARTY_STOREFRONT;
     else process.env.GRIIP_FIRST_PARTY_STOREFRONT = beforeFirstParty;
+    await db.inventoryTransfer.deleteMany({ where: { fromPool: { variantId } } });
+    await db.inventoryMovement.deleteMany({ where: { pool: { variantId }, reversesMovementId: { not: null } } });
     await db.inventoryMovement.deleteMany({ where: { pool: { variantId } } });
     await db.inventoryPool.deleteMany({ where: { variantId } });
     await db.marketOffer.deleteMany({ where: { variant: { productId: prefix } } });
@@ -162,6 +166,16 @@ test("market service edges share owned stock and distinguish route coverage from
   assert.deepEqual(us.pools.map(pool => pool.id), [sharedPool.id]);
   assert.equal((await read("bd", { ownerId: sellerId })).available, 5);
   assert.equal((await read("us", { ownerId: sellerId })).kind, "delivery_unavailable");
+  await enable(shared, "bd", ["dhaka", "rajshahi"]);
+  const store = { variantId, ownerId: storeShop.id };
+  const vendor = { variantId, ownerId: sellerId };
+  const [bdMerchandising, usMerchandising] = await Promise.all([
+    marketRoutedInventory(db, "bd", [store, store, vendor]), marketRoutedInventory(db, "us", [store, vendor]),
+  ]);
+  assert.equal(bdMerchandising.get(inventoryPoolScopeKey(store)), 5, "Each physical pool is counted once across delivery routes.");
+  assert.equal(bdMerchandising.get(inventoryPoolScopeKey(vendor)), 5);
+  assert.equal(usMerchandising.get(inventoryPoolScopeKey(store)), 2, "The second market uses the same pool.");
+  assert.equal(usMerchandising.has(inventoryPoolScopeKey(vendor)), false);
   process.env.GRIIP_FIRST_PARTY_STOREFRONT = "1";
   assert.equal((await read("bd", { ownerId: sellerId })).kind, "delivery_unavailable");
   assert.equal(await db.inventory.count({ where: { variantId } }), 0);
@@ -281,4 +295,127 @@ test("connected quotes show local terms and coverage while legacy purchase and p
     if (priorRecovered === undefined) delete process.env.GRIIP_RECOVERED_CHECKOUT;
     else process.env.GRIIP_RECOVERED_CHECKOUT = priorRecovered;
   }
+});
+
+test("the workspace tracks staged transfers, damage, compensation and low stock without leaking or overselling", async t => {
+  const { owner, market, merchant, sellerId, variantId, shared, domestic, other, enable, read } = await fixture(t);
+  const { productId } = await db.variant.findUniqueOrThrow({ where: { id: variantId }, select: { productId: true } });
+  const scope = { productId, marketId: "bd" } as const;
+  await enable(shared, "bd", ["dhaka"]);
+  await enable(shared, "us", ["wa"]);
+  await enable(domestic, "bd", ["dhaka"]);
+  await enable(other, "bd", ["dhaka"]);
+  const from = await initializeInventoryPool(owner, { variantId, locationId: shared }, scope);
+  const to = await initializeInventoryPool(owner, { variantId, locationId: domestic }, scope);
+  await assert.rejects(initializeInventoryPool(owner, { variantId, locationId: other }, scope), /outside the selected product/);
+  await assert.rejects(initializeInventoryPool(merchant, { variantId, locationId: other }, scope), /outside the selected product/);
+
+  const fresh = (id: string) => db.inventoryPool.findUniqueOrThrow({ where: { id } });
+  const expected = async (id: string) => (await fresh(id)).updatedAt.toISOString();
+  const write = (actor: CommercialActor, action: string, data: object) =>
+    runWorkspaceStockCommand(actor, action, { ...scope, ...data });
+  const receipt = { ...move, poolId: from.id, kind: "RECEIPT", quantity: 5, expectedUpdatedAt: await expected(from.id) };
+  await write(owner, "inventory.movement", receipt);
+  await write(owner, "inventory.movement", receipt);
+  assert.equal((await fresh(from.id)).onHand, 5);
+  assert.equal((await read("bd")).available, 5);
+  assert.equal((await read("us")).available, 5);
+
+  const threshold = { poolId: from.id, threshold: 2, expectedUpdatedAt: await expected(from.id) };
+  await assert.rejects(write(market, "inventory.threshold", threshold), /commercial permission/);
+  await write(owner, "inventory.threshold", threshold);
+  const damaged = { ...move, idempotencyKey: "damage-1", reference: "damage-report-1",
+    reason: "Crushed package", poolId: from.id, kind: "DAMAGE", quantity: -3, expectedUpdatedAt: await expected(from.id) };
+  const damage = await recordStockMovement(owner, {
+    poolId: from.id, kind: damaged.kind, quantity: damaged.quantity, idempotencyKey: damaged.idempotencyKey,
+    reason: damaged.reason, reference: damaged.reference,
+  }, { ...scope, expectedUpdatedAt: new Date(damaged.expectedUpdatedAt) });
+  assert.equal(damage.movement.kind, "DAMAGE");
+  await assert.rejects(write(owner, "inventory.movement", { ...damaged, idempotencyKey: "positive-damage", quantity: 3 }), /negative quantity/);
+  let workspace = await readProductWorkspaceCommerce(owner, productId, "bd");
+  const stock = workspace?.data?.pools.find(pool => pool.id === from.id);
+  assert.ok(stock);
+  assert.deepEqual({ available: stock.available, unavailable: stock.unavailable, flag: stock.isLowStock }, { available: 2, unavailable: 0, flag: true });
+  assert.deepEqual(stock.reference, { authority: "native-postgres", kind: "stock_pool", marketId: "bd", sourceId: from.id });
+  const sharedUs = (await readProductWorkspaceCommerce(owner, productId, "us"))?.data?.pools.find(pool => pool.id === from.id);
+  assert.equal(sharedUs?.reference.sourceId, stock.reference.sourceId);
+  assert.equal(sharedUs?.reference.marketId, "us");
+  assert.equal((await readProductWorkspaceCommerce(merchant, productId, "bd"))?.data ?? null, null);
+
+  const correction = { ...move, idempotencyKey: "correct-damage-1", movementId: damage.movement.id, expectedUpdatedAt: await expected(from.id) };
+  await write(owner, "inventory.compensate", correction);
+  await write(owner, "inventory.compensate", correction);
+  await assert.rejects(write(owner, "inventory.compensate", { ...correction, idempotencyKey: "different" }), /already been compensated/);
+  const compensation = await db.inventoryMovement.findUniqueOrThrow({ where: { reversesMovementId: damage.movement.id } });
+  assert.deepEqual({ kind: compensation.kind, quantity: compensation.quantity, actor: compensation.actorKind },
+    { kind: "ADJUSTMENT", quantity: 3, actor: "staff" });
+
+  await db.inventoryPool.update({ where: { id: from.id }, data: { reserved: 4 } });
+  const transfer = { ...move, idempotencyKey: "transfer-m05-1", fromPoolId: from.id, toPoolId: to.id, quantity: 2,
+    expectedUpdatedAt: await expected(from.id), expectedDestinationUpdatedAt: await expected(to.id) };
+  await assert.rejects(write(owner, "inventory.transfer-dispatch", transfer), /exceed available stock/);
+  assert.equal(await db.inventoryTransfer.count({ where: { fromPoolId: from.id } }), 0);
+  await assert.rejects(write(market, "inventory.transfer-dispatch", transfer), /commercial permission/);
+  const dispatch = () => write(owner, "inventory.transfer-dispatch", { ...transfer, quantity: 1 });
+  await Promise.all([dispatch(), dispatch()]);
+  const transit = await db.inventoryTransfer.findUniqueOrThrow({
+    where: { fromPoolId_dispatchKey: { fromPoolId: from.id, dispatchKey: transfer.idempotencyKey } },
+  });
+  assert.equal((await fresh(from.id)).onHand, 4);
+  assert.equal((await fresh(to.id)).onHand, 0);
+  assert.equal((await read("bd")).available, 0);
+  assert.equal((await read("us")).available, 0);
+  await assert.rejects(write(owner, "inventory.transfer-dispatch", { ...transfer, quantity: 2 }), /different transfer/);
+  workspace = await readProductWorkspaceCommerce(owner, productId, "bd");
+  assert.equal(workspace?.data?.pools.find(pool => pool.id === from.id)?.inTransitOut, 1);
+  assert.equal(workspace?.data?.pools.find(pool => pool.id === to.id)?.inTransitIn, 1);
+  assert.equal(workspace?.data?.transfers.find(row => row.id === transit.id)?.state, "IN_TRANSIT");
+  const usWorkspace = await readProductWorkspaceCommerce(owner, productId, "us");
+  assert.equal(usWorkspace?.data?.pools.find(pool => pool.id === from.id)?.inTransitOut, 1);
+  assert.equal(usWorkspace?.data?.transfers.find(row => row.id === transit.id), undefined);
+  const categories = [`${productId}-root`, `${productId}-group`, `${productId}-leaf`];
+  t.after(async () => {
+    for (const id of [...categories].reverse()) await db.department.deleteMany({ where: { id } });
+  });
+  for (const [index, kind] of (["DEPARTMENT", "CATEGORY", "SUBCATEGORY"] as const).entries()) {
+    await db.department.create({ data: {
+      id: categories[index], slug: categories[index], name: kind, shortName: kind, description: "",
+      imageSrc: "/catalog/phone-stand.webp", imageAlt: "Fixture", position: 0, kind, parentId: categories[index - 1] ?? null,
+    } });
+  }
+  const { slug, name, description, revision } = await db.product.findUniqueOrThrow({ where: { id: productId } });
+  const { sku } = await db.variant.findUniqueOrThrow({ where: { id: variantId } });
+  await assert.rejects(saveWorkspaceProduct(owner.id, {
+    id: productId, slug, name, description, expectedRevision: revision, publication: "DRAFT", primaryCategoryId: categories[2],
+    options: [], variants: [{ id: variantId, sku, active: false, selections: {} }],
+  }), /Receive in-transit stock before archiving/);
+  assert.equal((await db.variant.findUniqueOrThrow({ where: { id: variantId } })).active, true);
+  const complete = { transferId: transit.id, idempotencyKey: "receive-m05-1" };
+  await assert.rejects(write(owner, "inventory.transfer-receive", { ...complete, marketId: "us" }), /selected market/);
+  await assert.rejects(write(merchant, "inventory.transfer-receive", complete), /Seller access/);
+  await db.dispatchLocation.update({ where: { id: domestic }, data: { active: false } });
+  await assert.rejects(write(owner, "inventory.transfer-receive", complete), /remains in transit/);
+  assert.equal((await fresh(to.id)).onHand, 0);
+  await db.dispatchLocation.update({ where: { id: domestic }, data: { active: true } });
+  await Promise.all([write(owner, "inventory.transfer-receive", complete), write(owner, "inventory.transfer-receive", complete)]);
+  await assert.rejects(write(owner, "inventory.transfer-receive", { ...complete, idempotencyKey: "different" }), /already been received/);
+  assert.equal((await fresh(from.id)).reserved, 4);
+  assert.equal((await fresh(to.id)).onHand, 1);
+  assert.equal((await read("bd")).available, 1);
+  assert.equal((await read("us")).available, 0);
+  assert.equal((await readProductWorkspaceCommerce(owner, productId, "bd"))?.data?.transfers.find(row => row.id === transit.id)?.state, "RECEIVED");
+  assert.deepEqual((await db.inventoryMovement.findMany({
+    where: { pool: { variantId }, kind: { in: ["TRANSFER_OUT", "TRANSFER_IN"] } }, orderBy: { createdAt: "asc" },
+    select: { kind: true, quantity: true, actorKind: true },
+  })).map(row => [row.kind, row.quantity, row.actorKind]), [["TRANSFER_OUT", -1, "staff"], ["TRANSFER_IN", 1, "staff"]]);
+
+  await saveConnectedOffer(owner, { variantId, marketId: "bd", sellerId, expectedRevision: null,
+    amountMinor: 1_000, publication: "ACTIVE", eligible: true });
+  const legitimate = await initializeInventoryPool(merchant, { variantId, locationId: other }, scope);
+  const misbound = await db.inventoryPool.create({ data: { variantId, locationId: shared, ownerId: sellerId } });
+  const merchantStock = await readProductWorkspaceCommerce(merchant, productId, "bd");
+  assert.deepEqual(merchantStock?.data?.pools.map(row => row.id), [legitimate.id]);
+  await assert.rejects(write(merchant, "inventory.movement", {
+    ...receipt, poolId: misbound.id, expectedUpdatedAt: await expected(misbound.id),
+  }), /Seller access/);
 });

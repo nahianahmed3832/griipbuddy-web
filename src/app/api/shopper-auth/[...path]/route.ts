@@ -13,7 +13,7 @@ const requests = {
   "sign-in/email": credentials.extend({ rememberMe: z.boolean().optional() }).strict(),
   "sign-out": z.object({}).strict(),
   "update-user": z.object({ name: z.string().trim().min(2).max(65) }).strict(),
-  "change-password": z.object({ currentPassword: z.string().min(10).max(128), newPassword: z.string().min(10).max(128),
+  "change-password": z.object({ currentPassword: z.string().min(8).max(128), newPassword: z.string().min(10).max(128),
     revokeOtherSessions: z.literal(true) }).strict(),
   "phone-number/send-otp": z.object({ phoneNumber: phone }).strict(),
   "phone-number/verify": z.object({ phoneNumber: phone, code: z.string().regex(/^\d{6}$/) }).strict(),

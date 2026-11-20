@@ -1,11 +1,13 @@
 import { z } from "zod";
+import { scopedCatalogPilotRequested } from "@/lib/catalog/main-admin-config";
+import { requireLegacyPilotProduct, requireScopedLegacyWriter } from "@/lib/catalog/scoped-pilot";
 import { getDb } from "@/lib/db/client";
 import { sameOrigin, readBody, privateHeaders } from "@/lib/db/http";
 import { consumeQuota, reportFailure } from "@/lib/db/observability";
 import { marketplaceMode } from "@/lib/release-config";
 import { getShopper } from "@/lib/marketplace/auth";
 import { encodeCatalogImage, uploadLimit } from "@/lib/staff/catalog-media";
-import { OperationError } from "@/lib/staff/operations";
+import { lockProductEdits, OperationError } from "@/lib/staff/operations";
 
 export async function POST(request: Request) {
   if (!marketplaceMode()) return new Response(null, { status: 404 });
@@ -27,6 +29,12 @@ export async function POST(request: Request) {
     const image = await encodeCatalogImage(data, request.headers.get("content-type") ?? "");
     const path = `/media/${image.id}`;
     return await db.$transaction(async tx => {
+      if (scopedCatalogPilotRequested()) {
+        await lockProductEdits(tx, product.data);
+        if (!await tx.product.findFirst({ where, select: { id: true } })) return fail("Draft listing unavailable.", 404);
+        await requireScopedLegacyWriter(tx);
+        await requireLegacyPilotProduct(tx, product.data, true);
+      }
       const current = await tx.product.updateMany({ where, data: { revision: { increment: 1 } } });
       if (!current.count) return fail("Draft listing unavailable.", 404);
       const gallery = await tx.productImage.findMany({ where: { productId: product.data }, select: { position: true, src: true },

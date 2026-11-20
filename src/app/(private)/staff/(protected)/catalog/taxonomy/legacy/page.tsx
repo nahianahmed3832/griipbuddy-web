@@ -5,12 +5,15 @@ import { CatalogImageField } from "@/components/catalog-image-field";
 import { StaffActionForm } from "@/components/staff-actions";
 import { departmentFamily } from "@/lib/catalog/departments";
 import { getDb } from "@/lib/db/client";
-import { requireStaff } from "@/lib/staff/access";
+import { requireLegacyCatalogPage } from "@/lib/catalog/main-admin-legacy-page";
+import { legacyCategoryScope } from "@/lib/catalog/scoped-pilot";
 
 export default async function LegacyTaxonomyPage({ searchParams }: { searchParams: Promise<{ category?: string }> }) {
-  const [staff, { category }] = await Promise.all([requireStaff(), searchParams]);
+  const [staff, { category }] = await Promise.all([requireLegacyCatalogPage(), searchParams]);
   if (staff.role !== "OWNER" || typeof category !== "string" || category.length > 80) notFound();
-  const rows = await getDb().department.findMany({ where: { kind: null }, orderBy: [{ position: "asc" }, { id: "asc" }] });
+  const db = getDb();
+  const rows = await db.department.findMany({ where: staff.scopedLegacyPilot ? await legacyCategoryScope(db) : { kind: null },
+    orderBy: [{ position: "asc" }, { id: "asc" }] });
   const item = rows.find(row => row.id === category);
   if (!item) notFound();
   const excluded = departmentFamily(rows, item.id);

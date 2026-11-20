@@ -81,12 +81,15 @@ test("category browsing measures consenting visits, filters and the matched prod
 
   const product = page.getByRole("link", { name: new RegExp(title) });
   await product.scrollIntoViewIfNeeded();
+  await expect(product.getByText("Unavailable in this market", { exact: true })).toBeVisible();
+  await expect(product.locator(".product-card__price")).toHaveCount(0);
   await expect.poll(() => events.find(event => event.action === "PRODUCT_IMPRESSION" && event.categoryId === leaf &&
     event.productId === productId)?.variantId).toBe(variantId);
   await product.click();
   await expect(page).toHaveURL(new RegExp(`/products/${productId}`));
-  await expect.poll(() => events.find(event => event.action === "PRODUCT_CLICK" && event.categoryId === leaf &&
-    event.productId === productId)).toMatchObject({
-    placement: "category-grid", variantId, marketId: "bd", currency: "BDT", displayedPriceMinor: 129900,
-  });
+  const clicks = () => events.filter(event => event.action === "PRODUCT_CLICK" && event.categoryId === leaf &&
+    event.productId === productId);
+  await expect.poll(clicks).toMatchObject([{ placement: "category-grid", variantId, marketId: "bd" }]);
+  expect(clicks()[0].currency).toBeUndefined();
+  expect(clicks()[0].displayedPriceMinor).toBeUndefined();
 });

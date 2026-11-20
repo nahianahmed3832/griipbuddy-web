@@ -4,7 +4,7 @@ import { ConnectedProductAuthoring } from "@/components/connected-product-author
 import { ProductEditor } from "@/components/product-editor";
 import { TaxonomyPendingChanges } from "@/components/taxonomy-controls";
 import { productionMode } from "@/lib/release-config";
-import { requireStaff } from "@/lib/staff/access";
+import { requireLegacyCatalogPage } from "@/lib/catalog/main-admin-legacy-page";
 import { catalogChoices } from "@/lib/staff/catalog";
 import { productCategoryChoices } from "@/lib/staff/product-workspace";
 import "../../taxonomy/taxonomy.css";
@@ -13,14 +13,16 @@ import "../../product-workspace.css";
 export const metadata = { title: "Create product" };
 
 export default async function NewProductPage({ searchParams }: { searchParams: Promise<{ editor?: string }> }) {
-  const [staff, params] = await Promise.all([requireStaff(), searchParams]);
-  if (staff.role !== "OWNER") notFound();
+  const [staff, params] = await Promise.all([requireLegacyCatalogPage(), searchParams]);
+  if (staff.role !== "OWNER" || (staff.scopedLegacyPilot && params.editor !== "legacy")) notFound();
   if (params.editor === "legacy") {
-    const choices = await catalogChoices(staff.id);
+    const choices = await catalogChoices(staff.id, staff.scopedLegacyPilot);
     return <>
-      <div className="commerce-intro"><Link className="text-link" href="/staff/catalog/products/new">Connected editor</Link>
+      <div className="commerce-intro"><Link className="text-link" href={staff.scopedLegacyPilot ? "/staff/catalog" : "/staff/catalog/products/new"}>
+        {staff.scopedLegacyPilot ? "Product management" : "Connected editor"}</Link>
         <h1 className="display-type">Create legacy product</h1></div>
-      <ProductEditor existing={null} departments={choices.departments} collections={choices.collections} production={productionMode()} />
+      <ProductEditor existing={null} departments={choices.departments} collections={choices.collections}
+        fixedCollections={staff.scopedLegacyPilot} production={productionMode()} />
     </>;
   }
   const categories = await productCategoryChoices(staff.id);

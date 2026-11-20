@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { marketIds, type MarketId } from "../../config/markets.ts";
 import { personalizationText } from "../catalog/personalization.ts";
 import { MAX_CART_LINES, MAX_QUANTITY, validCartOfferId, validVariantId, type CartItem } from "./model.ts";
 
@@ -13,6 +14,7 @@ const sourceLine = { ...product, expectedQuantity };
 const lines = z.array(z.strictObject({ ...product, quantity })).max(MAX_CART_LINES);
 const action = z.literal("cart-sync");
 const shopperId = z.string().min(1).max(256);
+const scope = { action, shopperId, marketId: z.enum(marketIds) };
 
 const cartChange = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("add"), ...product, quantity }),
@@ -25,11 +27,14 @@ const cartChange = z.discriminatedUnion("type", [
 ]);
 
 export const cartSyncRequest = z.discriminatedUnion("mode", [
-  z.strictObject({ action, shopperId, mode: z.literal("read") }),
-  z.strictObject({ action, shopperId, mode: z.literal("merge"), operationId: z.uuid(), items: lines, saved: lines }),
-  z.strictObject({ action, shopperId, mode: z.literal("change"), operationId: z.uuid(), command: cartChange }),
+  z.strictObject({ ...scope, mode: z.literal("read") }),
+  z.strictObject({ ...scope, mode: z.literal("merge"), operationId: z.uuid(), items: lines, saved: lines }),
+  z.strictObject({ ...scope, mode: z.literal("change"), operationId: z.uuid(),
+    revision: z.int().min(0).optional(), command: cartChange }),
 ]);
 
 export type CartChange = z.infer<typeof cartChange>;
 export type CartSyncRequest = z.infer<typeof cartSyncRequest>;
-export type CartSyncSnapshot = { shopperId: string; revision: number; items: readonly CartItem[]; saved: readonly CartItem[] };
+export type CartSyncSnapshot = {
+  shopperId: string; marketId: MarketId; revision: number; items: readonly CartItem[]; saved: readonly CartItem[];
+};

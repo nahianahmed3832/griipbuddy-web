@@ -8,6 +8,8 @@ import { readConnectedOffer, saveConnectedOffer } from "../../src/lib/commerce/m
 import { getDb } from "../../src/lib/db/client.ts";
 import { requireLocalDatabase } from "../../src/lib/db/local.ts";
 import { storeShop } from "../../src/lib/marketplace/constants.ts";
+import { setWorkspaceProductPublication } from "../../src/lib/staff/product-publication.ts";
+import { listProductWorkspace } from "../../src/lib/staff/product-workspace.ts";
 
 requireLocalDatabase("griipbuddy_test");
 const db = getDb();
@@ -32,7 +34,7 @@ async function fixture(t: TestContext) {
   Object.assign(process.env, { GRIIP_MARKETPLACE_PREVIEW: "1", GRIIP_FIRST_PARTY_STOREFRONT: "0", GRIIP_HYBRID_STOREFRONT: "0" });
   t.after(async () => {
     try {
-      await db.auditEvent.deleteMany({ where: { target: variantId } });
+      await db.auditEvent.deleteMany({ where: { target: { in: [variantId, prefix] } } });
       await db.marketOffer.deleteMany({ where: { variantId } });
       await db.marketOfferIdentity.deleteMany({ where: { variantId } });
       await db.variant.deleteMany({ where: { id: variantId } });
@@ -82,7 +84,7 @@ async function fixture(t: TestContext) {
   });
   const bd = { variantId, marketId: "bd", sellerId: storeShop.id, amountMinor: 189_900, expectedRevision: null, publication: "ACTIVE", eligible: true } as const;
   const us = { ...bd, marketId: "us", amountMinor: 2499 } as const;
-  return { staff, marketAdmin, ops, seller, stranger, sellerId, variantId, bd, us };
+  return { staff, marketAdmin, ops, seller, stranger, sellerId, productId: prefix, variantId, bd, us };
 }
 
 test("one current offer per market has its exact regional prices, sale window and browse state", async t => {
@@ -118,7 +120,7 @@ test("one current offer per market has its exact regional prices, sale window an
 });
 
 test("only assigned commercial actors can edit offers and seller replacement preserves the retired identity", async t => {
-  const { staff, marketAdmin, ops, seller, stranger, sellerId, variantId, bd, us } = await fixture(t);
+  const { staff, marketAdmin, ops, seller, stranger, sellerId, productId, variantId, bd, us } = await fixture(t);
   await assert.rejects(saveConnectedOffer(marketAdmin, us), /commercial permission/);
   await assert.rejects(saveConnectedOffer(ops, bd), /commercial permission/);
   await assert.rejects(saveConnectedOffer(staff, { ...us, sellerId }), /permission to sell/);
@@ -139,10 +141,29 @@ test("only assigned commercial actors can edit offers and seller replacement pre
   assert.equal(edited.id, assigned.id);
   await db.marketplaceShopMarket.update({ where: { shopId_marketId: { shopId: sellerId, marketId: "bd" } }, data: { status: "DENIED" } });
   assert.equal(await readConnectedOffer(variantId, "bd", db), null);
+  assert.deepEqual((await listProductWorkspace(staff.id, { q: productId, page: 1 }))?.rows[0].markets, []);
   await assert.rejects(saveConnectedOffer(seller, { ...bd, sellerId, expectedRevision: edited.revision }), /permission for this market/);
   await saveConnectedOffer(staff, { ...bd, sellerId, expectedRevision: edited.revision, publication: "ARCHIVED", eligible: false });
   assert.ok((await db.marketOfferIdentity.findUniqueOrThrow({ where: { id: edited.id } })).retiredAt);
   assert.equal(await db.marketOffer.count({ where: { variantId } }), 1);
+});
+
+test("draft and archived products have no published markets and archived offers reject new terms", async t => {
+  const { staff, productId, variantId, bd, us } = await fixture(t);
+  const current = await saveConnectedOffer(staff, bd);
+  const listing = () => listProductWorkspace(staff.id, { q: productId, page: 1 });
+  assert.deepEqual((await listing())?.rows[0].markets, ["bd"]);
+  const draft = await setWorkspaceProductPublication(staff.id, { productId, revision: 0, publication: "DRAFT" });
+  assert.deepEqual((await listing())?.rows[0].markets, []);
+  await setWorkspaceProductPublication(staff.id, { productId, revision: draft.revision, publication: "ARCHIVED" });
+  assert.deepEqual((await listing())?.rows[0].markets, []);
+  await assert.rejects(saveConnectedOffer(staff, { ...bd, expectedRevision: current.revision, amountMinor: 1 }),
+    { code: "conflict", message: /archived product/ });
+  await assert.rejects(saveConnectedOffer(staff, us), { code: "conflict", message: /archived product/ });
+  const offers = await db.marketOffer.findMany({ where: { variantId } });
+  assert.deepEqual(offers.map(offer => [offer.offerId, offer.revision, offer.amountMinor]),
+    [[current.id, current.revision, current.amountMinor]]);
+  assert.equal(await readConnectedOffer(variantId, "bd", db), null);
 });
 
 test("existing offer rows retain their legacy authority until migration", async t => {

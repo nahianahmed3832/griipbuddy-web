@@ -1,0 +1,53 @@
+name: griipbuddy-hybrid-demo
+services:
+  db:
+    image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: griipbuddy_hybrid_demo
+      POSTGRES_PASSWORD: ${HYBRID_DB_ADMIN_PASSWORD:?}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -q -U postgres -d griipbuddy_hybrid_demo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    mem_limit: 384m
+    logging: &bounded
+      driver: json-file
+      options: {max-size: 10m, max-file: "2"}
+  app:
+    image: griipbuddy-hybrid-demo:${APP_REVISION:?}
+    restart: unless-stopped
+    env_file: /opt/griipbuddy-hybrid-demo/app.env
+    environment:
+      APP_REVISION: ${APP_REVISION}
+    ports:
+      - "127.0.0.1:4402:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [database, gateway]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, node, "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    mem_limit: 700m
+    logging: *bounded
+volumes:
+  postgres:
+networks:
+  database:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${HYBRID_DATABASE_SUBNET:-10.236.50.0/28}
+  gateway:
+    ipam:
+      config:
+        - subnet: ${HYBRID_GATEWAY_SUBNET:-10.236.51.0/28}

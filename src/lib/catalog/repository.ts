@@ -54,7 +54,7 @@ export async function listCategoryProductIds(categoryId: string, marketId: Marke
     if (!departmentAncestorPath(new Map(nodes.map(node => [node.id, node])), categoryId)) return [];
     const descendants = [...departmentFamily(nodes, categoryId)];
     const rows = await tx.product.findMany({
-      where: { AND: [publicProductScope(marketId), { OR: [
+      where: { AND: [{ OR: [publicProductScope(marketId), { variants: { some: { offers: { some: connectedOfferScope(marketId) } } } }] }, { OR: [
         { departmentId: { in: descendants } },
         { secondaryCategories: { some: { departmentId: { in: descendants } } } },
       ] }] },
@@ -123,15 +123,18 @@ export function marketEditorialImage(image: CatalogImage, available: ReadonlySet
   return available.has(image.src) ? { ...image, src: marketImage(image.src, marketId) } : undefined;
 }
 
-function variantRelations(marketId: MarketId) {
-  return { ...dispatchStockRelations, offers: { where: eligibleOffer(marketId) } } as const;
+function variantRelations(marketId: MarketId, publishedOffersOnly = false) {
+  return { ...dispatchStockRelations, offers: { where: {
+    ...eligibleOffer(marketId), ...(publishedOffersOnly && { publication: "ACTIVE" as const }),
+  } } } as const;
 }
 
-function productRelations(marketId: MarketId) {
+function productRelations(marketId: MarketId, publishedOffersOnly = false) {
   return {
     images: { orderBy: { position: "asc" } },
-    variants: { where: { active: true, managedInventory: false, offers: { some: eligibleOffer(marketId) } },
-      orderBy: { position: "asc" }, include: variantRelations(marketId) },
+    variants: { where: { active: true, managedInventory: false, ...(publishedOffersOnly && { archivedAt: null }),
+      offers: { some: variantRelations(marketId, publishedOffersOnly).offers.where } },
+      orderBy: { position: "asc" }, include: variantRelations(marketId, publishedOffersOnly) },
     marketplaceShop: { select: { id: true, slug: true, name: true } },
   } as const;
 }
@@ -191,7 +194,7 @@ export const catalog: CatalogRepository = {
       db.department.findMany({ orderBy: [{ position: "asc" }, { name: "asc" }] }),
       marketId ? db.product.groupBy({
         by: ["departmentId"],
-        where: publicProductScope(marketId),
+        where: { OR: [publicProductScope(marketId), { variants: { some: { offers: { some: connectedOfferScope(marketId) } } } }] },
       }) : null,
     ]);
     const departments = rows.map(departmentView);
@@ -217,7 +220,7 @@ export const catalog: CatalogRepository = {
     const row = await getDb().collection.findFirst({ where: { slug, ...publicCollectionScope(marketId) } });
     return row ? collectionView(row) : null;
   },
-  async listProducts({ marketId, at = new Date(), departmentId, departmentIds, collectionId, search, productIds, shopId }) {
+  async listProducts({ marketId, at = new Date(), departmentId, departmentIds, collectionId, search, productIds, shopId, publishedOffersOnly }) {
     if (!isMarketSelectable(marketId)) return [];
     const db = getDb();
     const where: Prisma.ProductWhereInput = {
@@ -237,8 +240,10 @@ export const catalog: CatalogRepository = {
         collectionOrder = new Map(members.map(({ productId }, position) => [productId, position]));
       }
     }
+    const relations = productRelations(marketId, publishedOffersOnly);
+    if (publishedOffersOnly) where.variants = { some: relations.variants.where };
     const rows = await db.product.findMany({
-      where, orderBy: { position: "asc" }, include: { ...productRelations(marketId), department: true },
+      where, orderBy: [{ position: "asc" }, { id: "asc" }], include: { ...relations, department: true },
     });
     if (collectionOrder) rows.sort((a, b) => (collectionOrder.get(a.id) ?? Infinity) - (collectionOrder.get(b.id) ?? Infinity));
     const listed = await Promise.all(rows.map((row) => resolvedStock(productView(row, marketId, at), marketId)));

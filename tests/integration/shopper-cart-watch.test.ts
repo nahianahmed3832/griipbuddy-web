@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { after, test, type TestContext } from "node:test";
 import "../../scripts/load-env.ts";
-import { syncShopperCart } from "../../src/lib/cart/shared-cart.ts";
+import { checkoutCartMatches, syncShopperCart } from "../../src/lib/cart/shared-cart.ts";
 import { cartSyncRequest, type CartChange } from "../../src/lib/cart/sync-contract.ts";
 import type { CheckoutDetails } from "../../src/lib/commerce/checkout-types.ts";
 import { reviewCheckout, submitCheckout } from "../../src/lib/commerce/orders.ts";
@@ -66,10 +66,12 @@ test("shopper cart merges a guest cart once, serializes devices, and applies onl
   const { shopper, otherShopper, variantId, otherVariant, attemptIds } = await shopperFixture(t);
   const item = { variantId, quantity: 1, personalization: "Alpha" };
   const separateLine = { ...item, personalization: "Beta" };
+  const newLine = { ...item, personalization: "Gamma" };
   const savedLine = { variantId: otherVariant, quantity: 1 };
   await db.marketOffer.update({ where: { variantId_marketId: { variantId: otherVariant, marketId: "bd" } }, data: { eligible: false } });
-  const base = { action: "cart-sync", shopperId: shopper } as const;
+  const base = { action: "cart-sync", shopperId: shopper, marketId: "bd" } as const;
   const merge = cartSyncRequest.parse({ ...base, mode: "merge", operationId: randomUUID(), items: [item, separateLine], saved: [savedLine] });
+  assert.equal(merge.mode, "merge");
   const merges = await Promise.all([syncShopperCart(shopper, merge), syncShopperCart(shopper, merge)]);
   assert.deepEqual(merges[0], merges[1]);
   assert.equal(merges[0].status, 200);
@@ -77,17 +79,18 @@ test("shopper cart merges a guest cart once, serializes devices, and applies onl
   assert.equal(merges[0].body.revision, 1);
   assert.deepEqual(merges[0].body.saved, [savedLine]);
   assert.equal((await syncShopperCart(otherShopper, merge)).status, 403);
+  assert.equal((await syncShopperCart(shopper, { ...merge, items: [newLine] })).status, 409);
   const unrelated = await syncShopperCart(otherShopper, { ...base, mode: "read", shopperId: otherShopper });
   assert.equal(unrelated.status, 200);
   assert.deepEqual(unrelated.body.items, []);
 
-  const change = (command: CartChange, actor = shopper) => syncShopperCart(actor, { ...base, mode: "change", shopperId: actor, operationId: randomUUID(), command });
+  const change = (command: CartChange, actor = shopper, marketId: "bd" | "us" = "bd", revision?: number) =>
+    syncShopperCart(actor, { ...base, mode: "change", marketId, shopperId: actor, operationId: randomUUID(), command, revision });
   const read = async () => {
     const result = await syncShopperCart(shopper, { ...base, mode: "read" });
     assert.equal(result.status, 200);
     return result.body;
   };
-  const newLine = { ...item, personalization: "Gamma" };
   const added = await Promise.all([change({ type: "add", ...item }), change({ type: "add", ...newLine })]);
   assert.ok(added.every(result => result.status === 200));
   const combined = await read();
@@ -96,27 +99,55 @@ test("shopper cart merges a guest cart once, serializes devices, and applies onl
   const stale = await change({ type: "set", ...item, expectedQuantity: 1, quantity: 4 });
   assert.equal(stale.status, 409);
   assert.deepEqual(stale.body.items, combined.items);
+  assert.equal((await change({ type: "set", ...item, expectedQuantity: 2, quantity: 4 }, shopper, "bd", combined.revision - 1)).status, 409);
+  const us = await change({ type: "add", ...item, quantity: 5 }, shopper, "us");
+  assert.equal(us.status, 200);
+  assert.deepEqual(us.body.items, [{ ...item, quantity: 5 }]);
+  assert.deepEqual((await read()).items, combined.items);
   const saved = await change({ type: "move-to-saved", variantId, personalization: "Beta", expectedQuantity: 1 });
   assert.equal(saved.status, 200);
   assert.deepEqual(saved.body.saved, [savedLine, separateLine]);
 
   const guest = randomBytes(32).toString("hex");
-  const checkout: CheckoutDetails = { marketId: "bd", deliveryMethod: "standard", paymentMethod: "COD", items: [item], customer: {
+  const cart = { source: "cart" as const, revision: saved.body.revision };
+  const checkout: CheckoutDetails = { marketId: "bd", deliveryMethod: "standard", paymentMethod: "COD",
+    cart, items: [...saved.body.items], customer: {
     name: "Synthetic cart shopper", phone: "01700000000", district: "dhaka", locality: "Test locality", address: "Synthetic test address",
   } };
-  const quote = await reviewCheckout(checkout, "bd", guest);
+  assert.ok(await checkoutCartMatches(shopper, "bd", cart, checkout.items));
+  assert.equal(await checkoutCartMatches(shopper, "us", cart, checkout.items), false);
+  assert.equal(await checkoutCartMatches(shopper, "bd", cart, [item]), false);
+  const quote = await reviewCheckout(checkout, "bd", guest, shopper);
   assert.equal(quote.kind, "review");
   attemptIds.push(quote.attemptId);
+  assert.equal((await change({ type: "complete-purchase", orderId: quote.attemptId })).status, 404);
+  assert.deepEqual(await read(), saved.body);
   const placed = await submitCheckout({ ...checkout, attemptId: quote.attemptId, reviewToken: quote.quote.reviewToken }, "bd", guest, shopper);
   assert.equal(placed.kind, "placed");
   assert.deepEqual((await read()).items, [{ ...item, quantity: 2 }, newLine]);
   assert.equal((await change({ type: "complete-purchase", orderId: placed.orderId }, otherShopper)).status, 404);
+  assert.equal((await change({ type: "complete-purchase", orderId: placed.orderId }, shopper, "us")).status, 404);
+  assert.equal((await change({ type: "add", ...item })).status, 200);
+  assert.equal((await change({ type: "remove", variantId, personalization: newLine.personalization, expectedQuantity: 1 })).status, 200);
+  assert.equal((await change({ type: "add", ...newLine })).status, 200);
   const completed = await Promise.all([change({ type: "complete-purchase", orderId: placed.orderId }), change({ type: "complete-purchase", orderId: placed.orderId })]);
   assert.deepEqual(completed[0], completed[1]);
   const final = await read();
   assert.deepEqual(final.items, [item, newLine]);
   assert.deepEqual(final.saved, [savedLine, separateLine]);
+  const usAfter = await syncShopperCart(shopper, { ...base, marketId: "us", mode: "read" });
+  assert.deepEqual(usAfter, us);
   assert.deepEqual(await syncShopperCart(shopper, merge), { status: 200, body: final });
+
+  const direct: CheckoutDetails = { ...checkout, items: [item], cart: { source: "buy-now" } };
+  const directQuote = await reviewCheckout(direct, "bd", guest, shopper);
+  assert.equal(directQuote.kind, "review");
+  attemptIds.push(directQuote.attemptId);
+  const directPlaced = await submitCheckout({ ...direct, attemptId: directQuote.attemptId,
+    reviewToken: directQuote.quote.reviewToken }, "bd", guest, shopper);
+  assert.equal(directPlaced.kind, "placed");
+  assert.equal((await change({ type: "complete-purchase", orderId: directPlaced.orderId })).status, 200);
+  assert.deepEqual(await read(), final);
 });
 
 test("variant alerts detect each exact market independently, rearm, and avoid duplicates", async t => {

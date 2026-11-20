@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { after, test } from "node:test";
 import "../../scripts/load-env.ts";
 import { collectMerchantFeed, merchantFeedXml } from "../../src/lib/catalog/merchant-feed.ts";
+import { loadFixtureFeedSelection, parseFeedExport, serializeFixtureFeed } from "../../src/lib/catalog/merchant-feed-export.ts";
 import { productMetadata } from "../../src/lib/catalog/product-metadata.ts";
 import { catalog } from "../../src/lib/catalog/repository.ts";
 import { getDb } from "../../src/lib/db/client.ts";
@@ -118,4 +119,26 @@ test("Google Shopping feeds match the exact landing variant and its market catal
     assert.ok(xml.includes("<g:identifier_exists>no</g:identifier_exists>"));
     assert.doesNotMatch(xml, /Device OEM|Sample garment|012345678906/);
   }
+
+  const bdSelect = parseFeedExport(new URLSearchParams({ market: "bd", currency: "BDT", variant: medium,
+    channel: "meta", condition: "new" }));
+  const usSelect = parseFeedExport(new URLSearchParams({ market: "us", currency: "USD", variant: medium, channel: "google" }));
+  assert.ok(bdSelect && usSelect);
+  const before = await loadFixtureFeedSelection("bd", new Date(now - 60_001));
+  const start = await loadFixtureFeedSelection("bd", new Date(now - 60_000));
+  const end = await loadFixtureFeedSelection("bd", new Date(now + 600_000));
+  const bdQuote = (feed: typeof start) => feed.items.find(item => item.variantId === medium)?.amountMinor;
+  assert.deepEqual([bdQuote(before), bdQuote(start), bdQuote(end)], [159900, 145000, 159900]);
+  const selectedMeta = serializeFixtureFeed(bdSelect, start);
+  assert.ok(selectedMeta);
+  assert.ok(selectedMeta.includes("<g:condition>new</g:condition>") && selectedMeta.includes("1450.00 BDT"));
+  assert.ok(!selectedMeta.includes(small));
+  assert.equal(serializeFixtureFeed(usSelect, await loadFixtureFeedSelection("us")), null);
+  assert.equal(serializeFixtureFeed(usSelect, start), null);
+
+  await db.marketOffer.update({ where: { variantId_marketId: { variantId: medium, marketId: "bd" } }, data: { publication: "DRAFT" } });
+  assert.equal(serializeFixtureFeed(bdSelect, await loadFixtureFeedSelection("bd")), null);
+  await db.variant.update({ where: { id: small }, data: { archivedAt: new Date(), active: false, optionSignature: "test-archive", sku: small.toUpperCase() } });
+  assert.ok(!(await loadFixtureFeedSelection("bd")).items.some(item => item.variantId === small));
+
 });

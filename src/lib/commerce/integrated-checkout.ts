@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Prisma } from "../../generated/prisma/client.ts";
 import { getDb } from "../db/client.ts";
 import { localDatabase, stagingDatabase } from "../db/local.ts";
 import { markets, type MarketId } from "../../config/markets.ts";
@@ -10,6 +11,9 @@ import {
 import { requestDigest, quoteDigest, equalDigest } from "./guest.ts";
 import { configuredPayment } from "./market-commerce.ts";
 import { configuredBridge } from "../measurement/bridge-contract.ts";
+import { CommerceError } from "./errors.ts";
+import { checkoutReviewActor, validateCheckoutCart, validateReviewActor } from "./checkout-provenance.ts";
+import { pilotCheckoutScope } from "./scoped-pilot-checkout.ts";
 
 type Line = { productId: string; variantId: string; quantity: number; unit: number; regular: number; discountMinor: number;
   sku: string; title: string; attributes?: Record<string, string> };
@@ -83,10 +87,11 @@ function publicQuote(data: Quote, token: string, attempt: string, input: Normali
     subtotalMinor: data.lines.reduce((sum, line) => sum + line.regular * line.quantity, 0),
     discountMinor: coupon + data.lines.reduce((sum, line) => sum + (line.regular - line.unit) * line.quantity, 0),
     deliveryMinor: shipping, taxMinor: tax, taxLabel: "Tax (trial)", totalMinor: total,
-    reviewToken: quoteDigest(JSON.stringify([token, attempt, data.cartRevision, data.quoteRevision])) };
+    reviewToken: quoteDigest(JSON.stringify([token, attempt, data.cartRevision, data.quoteRevision, ...(input.cart ? [input.cart] : [])])) };
 }
 
 function errorResult(error: unknown) {
+  if (error instanceof CommerceError) return error.detail;
   if (!(error instanceof RecoveredCheckoutError) || error.status >= 500 && error.status !== 503) throw error;
   return { kind: "unavailable" as const, message: error.message };
 }
@@ -100,18 +105,26 @@ function placed(order: ReceiptOrder): OrderPlaced {
     purchased: order.original.lines.map(line => ({ variantId: "v-" + line.variantId, quantity: line.quantity })) };
 }
 
+function scopedReceipt(order: ReceiptOrder, attempt: string) {
+  if (!order || order.currency !== markets.bd.currency || order.attempt !== attempt) {
+    throw new RecoveredCheckoutError(503, "The checkout service returned an inconsistent receipt.");
+  }
+  return order;
+}
+
 async function attemptOrder(attempt: string, token: string) {
-  try { return await recoveredRequest<ReceiptOrder>("/checkout/cod-orders/attempts/" + attempt, token); }
+  try { return scopedReceipt(await recoveredRequest<ReceiptOrder>("/checkout/cod-orders/attempts/" + attempt, token), attempt); }
   catch (error) { if (!(error instanceof RecoveredCheckoutError) || error.status !== 404) throw error; return null; }
 }
 
 const isMongoVariant = (value: string) => validVariantId(value) && /^v-[a-f0-9]{24}$/.test(value);
 function canonical(input: NormalizedCheckout) {
-  const { marketId, items, customer, deliveryMethod, paymentMethod } = input;
-  return { marketId, items: [...items].sort((a, b) => a.variantId.localeCompare(b.variantId)), customer, deliveryMethod, paymentMethod };
+  const { marketId, items, customer, deliveryMethod, paymentMethod, cart } = input;
+  return { marketId, items: [...items].sort((a, b) => a.variantId.localeCompare(b.variantId)), customer, deliveryMethod, paymentMethod,
+    ...(cart && { cart }) };
 }
 
-export async function reviewRecovered(raw: unknown, market: MarketId, guestKey: string): Promise<ReviewResult> {
+export async function reviewRecovered(raw: unknown, market: MarketId, guestKey: string, shopperId?: string | null): Promise<ReviewResult> {
   const parsed = checkoutInput.strict().safeParse(raw);
   if (!parsed.success || market !== "bd" || parsed.data.marketId !== market || parsed.data.deliveryMethod !== "standard" ||
       !parsed.data.items.every(row => isMongoVariant(row.variantId) && !row.personalization && !row.offerId && !row.cartOfferId && !row.cartVariantId)) {
@@ -120,6 +133,8 @@ export async function reviewRecovered(raw: unknown, market: MarketId, guestKey: 
   const input = canonical(parsed.data);
   try {
     const db = getDb();
+    await validateCheckoutCart(db, input, shopperId);
+    await pilotCheckoutScope(db, { marketId: market, paymentMethod: "recovered", items: input.items });
     const variants = await db.variant.findMany({ where: { id: { in: input.items.map(row => row.variantId) } }, select: { id: true, productId: true } });
     const products = new Map(variants.map(row => [row.id, row.productId.slice(2)]));
     const lines = input.items.map(row => ({ variant: row.variantId.slice(2), product: products.get(row.variantId), quantity: row.quantity }));
@@ -131,7 +146,7 @@ export async function reviewRecovered(raw: unknown, market: MarketId, guestKey: 
     const quote = await recoveredRequest<Quote>("/checkout/quote", token, "POST",
       { cartId: cart.id, revision: updated.cart.revision, delivery: address });
     const attempt = await db.checkoutAttempt.create({ data: { id: randomUUID(), guestKey, marketId: market, paymentMethod: "COD",
-      commerceEvidence: "fixture",
+      commerceEvidence: "fixture", reviewActor: checkoutReviewActor(shopperId), cartSource: input.cart?.source, cartRevision: input.cart?.revision,
       requestHash: requestDigest(JSON.stringify(input)), recoveredCart: { id: cart.id, revision: updated.cart.revision, token } } });
     return { kind: "review", attemptId: attempt.id, quote: publicQuote(quote, token, attempt.id, input) };
   } catch (error) { return errorResult(error); }
@@ -144,7 +159,7 @@ function recoveredCart(value: unknown) {
 }
 
 export async function submitRecovered(raw: unknown, market: MarketId, guestKey: string,
-  issueHandoff?: (lines: NormalizedCheckout["items"]) => Promise<string | null>): Promise<SubmitResult> {
+  issueHandoff?: (lines: NormalizedCheckout["items"]) => Promise<string | null>, shopperId?: string | null): Promise<SubmitResult> {
   const parsed = submissionInput.strict().safeParse(raw);
   if (!parsed.success || market !== "bd" || parsed.data.marketId !== market ||
     parsed.data.items.some(row => row.personalization || row.offerId || row.cartOfferId || row.cartVariantId)) {
@@ -154,10 +169,12 @@ export async function submitRecovered(raw: unknown, market: MarketId, guestKey: 
   const input = canonical(parsed.data);
   const attempt = await getDb().checkoutAttempt.findFirst({ where: { id: attemptId, guestKey, marketId: market, abandonedAt: null } });
   const cart = recoveredCart(attempt?.recoveredCart);
-  if (!attempt || !cart || attempt.requestHash !== requestDigest(JSON.stringify(input))) return conflict();
+  if (!attempt || !cart || !validateReviewActor(attempt, shopperId) || attempt.requestHash !== requestDigest(JSON.stringify(input))) return conflict();
   const previous = await attemptOrder(attemptId, cart.token);
   if (previous) return placed(previous);
   try {
+    await validateCheckoutCart(getDb(), input, shopperId);
+    await pilotCheckoutScope(getDb(), { marketId: market, paymentMethod: "recovered", items: input.items });
     const { token, ...ref } = cart;
     const details = { ...ref, delivery: delivery(input) };
     const latest = await recoveredRequest<Quote>("/checkout/quote", token, "POST", details);
@@ -167,7 +184,7 @@ export async function submitRecovered(raw: unknown, market: MarketId, guestKey: 
     const handoff = await issueHandoff?.(input.items);
     const result = await recoveredRequest<ReceiptOrder>("/checkout/cod-orders", token, "POST",
       { ...details, key: attemptId, quoteRevision: latest.quoteRevision }, handoff);
-    return placed(result);
+    return placed(scopedReceipt(result, attemptId));
   } catch (error) {
     if (error instanceof RecoveredCheckoutError && error.status === 409) {
       const accepted = await attemptOrder(attemptId, cart.token);
@@ -177,38 +194,53 @@ export async function submitRecovered(raw: unknown, market: MarketId, guestKey: 
   }
 }
 
-export async function recoverRecovered(value: unknown, guestKey: string): Promise<RecoverResult> {
+export async function recoverRecovered(value: unknown, guestKey: string, marketId: MarketId, shopperId?: string | null): Promise<RecoverResult> {
   const parsed = uuid.safeParse(value);
-  if (!parsed.success) return conflict();
-  const attempt = await getDb().checkoutAttempt.findFirst({ where: { id: parsed.data, guestKey } });
+  if (!parsed.success || marketId !== markets.bd.id) return conflict();
+  const attempt = await getDb().checkoutAttempt.findFirst({ where: { id: parsed.data, guestKey, marketId } });
   const cart = recoveredCart(attempt?.recoveredCart);
-  if (!cart) return conflict();
+  if (!attempt || !cart || !validateReviewActor(attempt, shopperId)) return conflict();
   try {
     const { token, ...ref } = cart;
     const order = await recoveredRequest<ReceiptOrder | null>("/checkout/cod-orders/attempts/" + parsed.data + "/abandon", token, "POST", ref);
-    if (order) return placed(order);
-    await getDb().checkoutAttempt.updateMany({ where: { id: parsed.data, guestKey, abandonedAt: null }, data: { abandonedAt: new Date() } });
+    if (order) return placed(scopedReceipt(order, parsed.data));
+    await getDb().checkoutAttempt.updateMany({ where: { id: parsed.data, guestKey, marketId, abandonedAt: null },
+      data: { abandonedAt: new Date() },
+    });
     return { kind: "abandoned" };
   } catch (error) { return errorResult(error); }
 }
 
-export async function readRecoveredOrder(id: string, guestKey: string) {
-  if (!uuid.safeParse(id).success) return null;
-  const attempt = await getDb().checkoutAttempt.findFirst({ where: { id, guestKey }, select: { recoveredCart: true } });
-  const cart = recoveredCart(attempt?.recoveredCart);
-  return cart ? attemptOrder(id, cart.token) : null;
+function recoveredReceiptScope(guestKey: string | null, shopperId?: string | null): Prisma.CheckoutAttemptWhereInput {
+  return { marketId: markets.bd.id, recoveredCart: { not: Prisma.DbNull }, OR: [
+    ...(shopperId ? [{ reviewActor: checkoutReviewActor(shopperId) }] : []),
+    ...(guestKey ? [{ guestKey, OR: [{ reviewActor: null }, { reviewActor: "guest" }] }] : []),
+  ] };
 }
 
-export async function listRecoveredOrders(guestKey: string) {
-  const attempts = await getDb().checkoutAttempt.findMany({ where: { guestKey, abandonedAt: null }, orderBy: { createdAt: "desc" }, take: 30,
-    select: { id: true, recoveredCart: true } });
-  const orders = await Promise.all(attempts.map(attempt => {
+export async function readRecoveredOrder(id: string, guestKey: string | null, shopperId?: string | null) {
+  if (!(guestKey || shopperId) || !uuid.safeParse(id).success) return null;
+  const attempt = await getDb().checkoutAttempt.findFirst({
+    where: { id, ...recoveredReceiptScope(guestKey, shopperId) }, select: { recoveredCart: true, reviewActor: true },
+  });
+  const cart = recoveredCart(attempt?.recoveredCart);
+  const order = cart ? await attemptOrder(id, cart.token) : null;
+  return order && { ...order, shopperId: shopperId && attempt?.reviewActor === checkoutReviewActor(shopperId) ? shopperId : null };
+}
+
+export async function listRecoveredOrders(guestKey: string | null, shopperId?: string | null) {
+  if (!guestKey && !shopperId) return [];
+  const attempts = await getDb().checkoutAttempt.findMany({ where: { ...recoveredReceiptScope(guestKey, shopperId), abandonedAt: null },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 30,
+    select: { id: true, recoveredCart: true, reviewActor: true } });
+  const orders = await Promise.all(attempts.map(async attempt => {
     const cart = recoveredCart(attempt.recoveredCart);
-    return cart ? attemptOrder(attempt.id, cart.token) : null;
+    const order = cart ? await attemptOrder(attempt.id, cart.token) : null;
+    return order && { ...order, shopperId: shopperId && attempt.reviewActor === checkoutReviewActor(shopperId) ? shopperId : null };
   }));
   return orders.filter(order => order !== null).map(order => ({ id: order.attempt, reference: order.number,
     status: order.status === "cancelled" ? "CANCELLED" as const : "PLACED" as const,
-    fulfillmentStatus: order.fulfillment, createdAt: new Date(order.createdAt) }));
+    fulfillmentStatus: order.fulfillment, createdAt: new Date(order.createdAt), shopperId: order.shopperId }));
 }
 
 export async function recoveredStock<T extends { offer: { stock: number } | null }>(row: T, productId: string, variantId: string, marketId: MarketId): Promise<T> {

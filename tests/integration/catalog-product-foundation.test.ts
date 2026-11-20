@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, test, type TestContext } from "node:test";
 import "../../scripts/load-env.ts";
+import { connectedCollectionProductFilter } from "../../src/lib/catalog/collection-selection.ts";
 import { getMarketProductFoundation, resolveProductVariant } from "../../src/lib/catalog/product-foundation.ts";
 import { catalog, listCategoryProductIds } from "../../src/lib/catalog/repository.ts";
 import { getDb } from "../../src/lib/db/client.ts";
@@ -96,6 +97,24 @@ async function fixture(t: TestContext) {
   }
   return { owner, prefix, root, cases, accessories, protective, travel, row, simple, protectiveCase, offer, purchased };
 }
+
+test("connected product rules persist across omitted flags and invalidate stale edits", async t => {
+  const { owner, simple } = await fixture(t);
+  const input = simple("collection-rules");
+  const created = await saveProductFoundation(owner, { ...input, featured: true, newArrival: true });
+  const where = (selection: "FEATURED" | "NEW") => ({
+    id: input.id, ...connectedCollectionProductFilter({ id: "fixture-collection", selection }),
+  });
+  for (const selection of ["FEATURED", "NEW"] as const) assert.equal(await db.product.count({ where: where(selection) }), 1);
+  const edited = await saveProductFoundation(owner, { ...input, name: "Updated without merchandising flags", expectedRevision: created.revision });
+  const retained = await ownerProductFoundation(owner, input.id);
+  assert.equal(retained?.featured, true);
+  assert.equal(retained?.newArrival, true);
+  await assert.rejects(saveProductFoundation(owner, { ...input, featured: false, expectedRevision: created.revision }), /Reload before saving/);
+  await saveProductFoundation(owner, { ...input, featured: false, expectedRevision: edited.revision });
+  assert.equal(await db.product.count({ where: where("FEATURED") }), 0);
+  assert.equal(await db.product.count({ where: where("NEW") }), 1);
+});
 
 test("only explicit case tuples qualify, and both category branches reach the same product", async t => {
   const { owner, protectiveCase: input, simple, row, root, cases, accessories, offer } = await fixture(t);

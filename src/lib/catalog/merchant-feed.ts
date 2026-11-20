@@ -149,7 +149,11 @@ function escapeXml(value: string) {
   return cleanText(value).replace(/[&<>"']/g, character => entities[character]);
 }
 
-export function merchantFeedXml(items: readonly MerchantFeedItem[], { marketId, origin, regional, channelUrl }: MerchantFeedSettings) {
+export const metaFeedConditions = ["new", "refurbished", "used"] as const;
+export type MetaFeedCondition = (typeof metaFeedConditions)[number];
+
+export function merchantFeedXml(items: readonly MerchantFeedItem[], { marketId, origin, regional, channelUrl }: MerchantFeedSettings,
+  provider?: { metaCondition: MetaFeedCondition }) {
   const market = markets[marketId];
   const title = `GriipBuddy – ${market.name}`;
   const marketUrl = channelUrl ?? new URL(storefrontPath(regional ? localizedStorePath("/", marketId) : "/"), origin).href;
@@ -157,16 +161,17 @@ export function merchantFeedXml(items: readonly MerchantFeedItem[], { marketId, 
     const price = (item.amountMinor / 10 ** market.minorDigits).toFixed(market.minorDigits);
     const fields = {
       id: item.id, title: item.title, description: item.description, link: item.link, image_link: item.imageLink,
-      availability: item.availability, price: `${price} ${item.currency}`, brand: item.brand, gtin: item.gtin, mpn: item.mpn,
-      identifier_exists: item.identifierExists,
+      availability: provider ? item.availability.replaceAll("_", " ") : item.availability,
+      ...(provider && { condition: provider.metaCondition }), price: `${price} ${item.currency}`, brand: item.brand, gtin: item.gtin, mpn: item.mpn,
+      identifier_exists: provider ? undefined : item.identifierExists,
       size: item.size, color: item.color, material: item.material, pattern: item.pattern,
-      item_group_id: item.itemGroupId, item_group_title: item.itemGroupTitle,
+      item_group_id: item.itemGroupId, item_group_title: provider ? undefined : item.itemGroupTitle,
     };
     return [
       "    <item>",
       ...Object.entries(fields).filter(([, value]) => value).map(([key, value]) =>
         `      <g:${key}>${escapeXml(value!)}</g:${key}>`),
-      ...(item.variantOptions ?? []).map(([name, value]) =>
+      ...(provider ? [] : item.variantOptions ?? []).map(([name, value]) =>
         `      <g:variant_option><g:name>${escapeXml(name)}</g:name><g:value>${escapeXml(value)}</g:value></g:variant_option>`),
       "    </item>",
     ].join("\n");

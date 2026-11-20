@@ -7,6 +7,7 @@ import { getDb } from "../db/client.ts";
 import { secureCookies } from "../db/http.ts";
 import { hybridDemoMode, marketplaceMode } from "../release-config.ts";
 import { shopperPhonePlugin } from "./phone.ts";
+import type { ShopperActor } from "../access/actors.ts";
 
 function createAuth() {
   const baseURL = process.env.BETTER_AUTH_URL;
@@ -41,8 +42,15 @@ export function shopperAuth() {
   return auth ??= createAuth();
 }
 
-export const getShopper = cache(async () => {
+export async function getShopperFromHeaders(incoming: Headers) {
   if (!marketplaceMode()) return null;
-  const session = await shopperAuth().api.getSession({ headers: await headers() });
+  const session = await shopperAuth().api.getSession({ headers: incoming });
   return session?.user ?? null;
-});
+}
+
+export async function shopperActor(incoming: Headers): Promise<ShopperActor | null> {
+  const shopper = await getShopperFromHeaders(incoming);
+  return shopper ? { kind: "customer", id: shopper.id } : null;
+}
+
+export const getShopper = cache(async () => marketplaceMode() ? getShopperFromHeaders(await headers()) : null);

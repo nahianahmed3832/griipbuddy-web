@@ -4,7 +4,7 @@ import { marketIds, markets, type MarketId } from "../../config/markets.ts";
 import { getDb, type DbReader } from "../db/client.ts";
 import { marketConfiguration } from "../market-config.ts";
 import { localMarketTime } from "../market-calendar.ts";
-import { defaultHomepage, homepageInput, scopeKey, type HomepageContentData, type HomepageScope } from "../catalog/homepage-contract.ts";
+import { defaultHomepage, homepageInput, homepageTileImages, scopeKey, type HomepageContentData, type HomepageScope } from "../catalog/homepage-contract.ts";
 import { resolveCategorySlug } from "../catalog/category-presentation.ts";
 import { publicCollectionScope } from "../catalog/collection-selection.ts";
 import { recommendationPolicyInput, type RecommendationPolicyOverride } from "../catalog/recommendation-policy.ts";
@@ -66,6 +66,14 @@ async function validateHomepageReferences(db: DbReader, scope: HomepageScope, co
       if (!section.bannerImage.alt) throw new OperationError("Describe the section image for shoppers who use assistive technology.");
       if (section.bannerImage.src !== prior?.bannerImage?.src) media.add(section.bannerImage.src);
     }
+    const priorTiles = new Map(prior?.tiles?.map(tile => [tile.key, tile]));
+    for (const tile of section.tiles ?? []) {
+      const earlier = priorTiles.get(tile.key);
+      const targets = tile.kind === "CATEGORY" ? categories : tile.kind === "COLLECTION" ? collections : products;
+      if (tile.kind !== earlier?.kind || tile.referenceId !== earlier.referenceId) targets.add(tile.referenceId);
+    }
+    const priorMedia = new Set(prior && homepageTileImages(prior).map(image => image.src));
+    for (const image of homepageTileImages(section)) if (!priorMedia.has(image.src)) media.add(image.src);
     if (section.link && section.link.href !== prior?.link?.href) {
       const [, group, slug] = section.link.href.split("/");
       if (group === "products") productSlugs.add(slug);
@@ -164,15 +172,27 @@ async function auditRecommendationPolicy(db: DbReader, actorId: string, key: str
   });
 }
 
-export async function saveHomepageDraft(actorId: string, scope: HomepageScope, expectedRevision: number, raw: unknown, tx?: Prisma.TransactionClient) {
+type HomepageEditorOptions = { editor?: "main-admin" };
+
+function assertMainAdminSections(previous: HomepageContentData | null, next: HomepageContentData, options?: HomepageEditorOptions) {
+  const sections = (content: HomepageContentData | null) =>
+    content?.sections.filter(section => section.type === "TILES" || section.type === "BENEFITS") ?? [];
+  if (options?.editor !== "main-admin" && !isDeepStrictEqual(sections(previous), sections(next))) {
+    throw new OperationError("Manage merchandising and service tiles from the main GriipBuddy admin.");
+  }
+}
+
+export async function saveHomepageDraft(actorId: string, scope: HomepageScope, expectedRevision: number, raw: unknown,
+  tx?: Prisma.TransactionClient, options?: HomepageEditorOptions) {
   const parsed = homepageInput.safeParse(raw);
   if (!parsed.success) {
     const problem = parsed.error.issues[0];
     throw new OperationError(`${problem.path.join(".")} · ${problem.message}`);
   }
-  return updateHomepageDraft(actorId, scope, expectedRevision, current => ({
-    ...parsed.data, recommendations: parsed.data.recommendations ?? current?.recommendations,
-  }), tx);
+  return updateHomepageDraft(actorId, scope, expectedRevision, current => {
+    assertMainAdminSections(current, parsed.data, options);
+    return { ...parsed.data, recommendations: parsed.data.recommendations ?? current?.recommendations };
+  }, tx);
 }
 
 export async function saveHomepageRecommendations(actorId: string, scope: HomepageScope, expectedRevision: number, raw: unknown) {
@@ -190,7 +210,7 @@ export async function saveHomepageRecommendations(actorId: string, scope: Homepa
 }
 
 export async function publishHomepage(actorId: string, scope: HomepageScope, expectedRevision: number, restoreRelease?: string,
-  tx?: Prisma.TransactionClient, options?: { recommendationsOnly: true }) {
+  tx?: Prisma.TransactionClient, options?: HomepageEditorOptions & { recommendationsOnly?: true }) {
   const key = scopeKey(scope);
   return withHomepageTransaction(tx, async tx => {
     await requireHomepageScope(actorId, scope, tx);
@@ -209,6 +229,7 @@ export async function publishHomepage(actorId: string, scope: HomepageScope, exp
     const content = options?.recommendationsOnly ? {
       ...(baseline ?? { sections: [], hiddenSections: [] }), recommendations: parsed.data.recommendations,
     } : parsed.data;
+    assertMainAdminSections(baseline, content, options);
     validateSchedule(scope, content);
     await validateHomepageReferences(tx, scope, content, baseline, true);
     const release = await tx.homepageRelease.create({

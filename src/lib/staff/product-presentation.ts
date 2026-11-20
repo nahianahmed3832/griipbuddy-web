@@ -45,9 +45,10 @@ async function editPresentation<T>(
     await authorize(tx, actorId, true);
     await lockProductEdits(tx, productId);
     const product = await tx.product.findUnique({
-      where: { id: productId }, select: { foundation: true, publication: true, revision: true },
+      where: { id: productId }, select: { foundation: true, publication: true, revision: true, sellerListingReviews: { take: 1, select: { marketId: true } } },
     });
     if (!product?.foundation) throw new CatalogWriteError("not_found", "Choose a product managed by the catalog foundation.");
+    if (product.sellerListingReviews.length) throw new CatalogWriteError("conflict", "Change this presentation through the seller listing review.");
     if (product.publication === "ARCHIVED") throw new CatalogWriteError("conflict", "This product is archived.");
     if (product.revision !== revision) throw new CatalogWriteError("conflict", "This product changed. Reload before editing it.");
     const { changes, result } = await write(tx, product.publication === "ACTIVE");

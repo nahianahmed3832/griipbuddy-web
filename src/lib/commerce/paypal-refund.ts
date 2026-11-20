@@ -23,7 +23,7 @@ async function settleRefund(orderId: string, allowProviderRequest: boolean): Pro
     if (order.payment.status === "REFUNDED") return "refunded";
     if (order.payment.status !== "REFUND_PENDING") throw new OperationError("This order has no pending refund.");
     const session = await tx.payPalCheckout.findUnique({ where: { attemptId: order.attemptId } });
-    if (!session?.captureId || !session.refundStartedAt || !session.refundActorId) throw new OperationError("The PayPal refund record is unavailable.");
+    if (!session?.captureId || session.providerAccountKey !== paypalSandboxConfig(order.marketId)?.accountKey || !session.refundStartedAt || !session.refundActorId) throw new OperationError("The PayPal refund record is unavailable.");
     if (!session.refundId && (!allowProviderRequest || Date.now() - session.refundStartedAt.getTime() >= 5 * 60 * 60 * 1000)) {
       return "pending";
     }
@@ -42,6 +42,8 @@ async function settleRefund(orderId: string, allowProviderRequest: boolean): Pro
     await tx.payment.update({ where: { orderId }, data: { status: "REFUNDED" } });
     await tx.order.update({ where: { id: orderId }, data: { status: "CANCELLED", cancelledAt: new Date() } });
     await releaseUnshippedOrderStock(tx, session.refundActorId, connectedAttempt, order.items, observed.id);
+    await tx.orderParcel.updateMany({ where: { orderId, status: "PLANNED", cancelledAt: null },
+      data: { cancelledAt: new Date(), trackingRevision: { increment: 1 } } });
     // Staff audit and the order event are committed atomically with the restored stock.
     const actor = await tx.user.findUnique({ where: { id: session.refundActorId }, select: { id: true } });
     await tx.fulfillmentEvent.create({
@@ -58,13 +60,18 @@ async function settleRefund(orderId: string, allowProviderRequest: boolean): Pro
 export async function refundPayPalOrder(actorId: string, orderId: string): Promise<PayPalRefundResult> {
   if (!uuid.safeParse(orderId).success) throw new OperationError("PayPal sandbox order unavailable.");
   const config = paypalSandboxConfig();
-  if (!config?.clientId || !config.clientSecret) throw new OperationError("PayPal sandbox is unavailable.");
+  if (!config?.clientId || !config.clientSecret || !config.accountKey) throw new OperationError("PayPal sandbox is unavailable.");
   const state = await getDb().$transaction(async tx => {
     await authorize(tx, actorId, true);
     await lockConnectedOrderAttempt(tx, orderId);
     const order = await lockOrder(tx, orderId);
     if (order?.payment?.method !== "PAYPAL") throw new OperationError("PayPal sandbox order unavailable.");
     if (order.payment.status === "REFUNDED") return "refunded";
+    if (await tx.orderCase.findFirst({ where: { orderId, OR: [
+      { refundAmountMinor: { not: null } }, { kind: "CANCEL", status: { in: ["OPEN", "IN_REVIEW", "CANCELLATION_APPROVED"] } },
+    ] }, select: { id: true } })) throw new OperationError("Open the existing cancellation or refund case to reconcile this payment.");
+    const session = await tx.payPalCheckout.findUnique({ where: { attemptId: order.attemptId }, select: { providerAccountKey: true } });
+    if (order.marketId !== config.marketId || session?.providerAccountKey !== config.accountKey) throw new OperationError("The payment account requires reconciliation.");
     if (order.payment.status === "REFUND_PENDING") return "pending";
     if (order.status !== "PLACED" || order.payment.status !== "PAID" || !canCancelFrom.includes(order.fulfillmentStatus)) {
       throw new OperationError("Only unshipped paid PayPal sandbox orders can be cancelled and refunded here.");
@@ -82,8 +89,10 @@ export async function refundPayPalOrder(actorId: string, orderId: string): Promi
 }
 
 export async function reconcilePayPalRefund(refundId: string) {
+  const config = paypalSandboxConfig();
+  if (!config?.accountKey) return;
   const session = await getDb().payPalCheckout.findUnique({
-    where: { refundId }, select: { attempt: { select: { order: { select: { id: true } } } } },
+    where: { refundId, providerAccountKey: config.accountKey, attempt: { marketId: config.marketId } }, select: { attempt: { select: { order: { select: { id: true } } } } },
   });
   if (session?.attempt.order) await settleRefund(session.attempt.order.id, false);
 }

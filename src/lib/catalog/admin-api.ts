@@ -66,6 +66,7 @@ export function catalogCommandPermission(action: string) {
 export async function handleCatalogMutation(request: Request, access: {
   actor: () => Promise<CatalogMutationActor | null>;
   market: () => Promise<MarketId>;
+  nativePilotMerchandising?: boolean;
 }) {
   if (!sameOrigin(request)) return fail(403, "forbidden", "Open this action from the catalog workspace.");
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
@@ -82,13 +83,13 @@ export async function handleCatalogMutation(request: Request, access: {
     let raw: unknown;
     try { raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)); }
     catch { return fail(400, "invalid_input", "The catalog command is not valid JSON."); }
-    return send({ data: await runCatalogCommand(raw, actor, access.market) }, 200);
+    return send({ data: await runCatalogCommand(raw, actor, access.market, access.nativePilotMerchandising) }, 200);
   } catch (error) {
     return catalogErrorResponse(error, "catalog.write");
   }
 }
 
-export async function runCatalogCommand(raw: unknown, actor: CatalogMutationActor, market: () => Promise<MarketId>) {
+export async function runCatalogCommand(raw: unknown, actor: CatalogMutationActor, market: () => Promise<MarketId>, nativePilotMerchandising = false) {
   const { action, input } = catalogWriteInput(commandInput, raw);
   const permission = catalogCommandPermission(action);
   if (permission !== "commercial" && (actor.kind !== "staff" || (permission === "owner" && actor.role !== "OWNER"))) {
@@ -99,6 +100,14 @@ export async function runCatalogCommand(raw: unknown, actor: CatalogMutationActo
     if (marketId !== await market()) {
       throw new CatalogWriteError("market_mismatch", "Switch to the selected market and retry.");
     }
+  }
+  if (nativePilotMerchandising) {
+    if (actor.kind !== "staff" || actor.role === "OWNER" || !marketTaxonomyCommands.has(action)) {
+      throw new CatalogWriteError("forbidden", "Use the main GriipBuddy admin for this catalog command.");
+    }
+    if (action === "category.presentation") return saveCategoryMarketPresentation(actor.id, input, true);
+    if (action === "menu.save") return saveMarketMenu(actor.id, input, true);
+    return saveCollectionMarketPublication(actor.id, input, true);
   }
   const commercialActor = { kind: actor.kind, id: actor.id };
   if (offerCommands.has(action)) return saveWorkspaceOffer(commercialActor, input);

@@ -58,6 +58,39 @@ test("a model change clears incompatible dimensions without silently selecting r
   assert.equal(impossible.selected, undefined);
 });
 
+test("choosing another option preserves the shopper’s model when a compatible tuple remains", () => {
+  const size = axis("size", "Size", [["small", "Small"], ["large", "Large"]]);
+  const [model, design, colour] = axes;
+  const withSize = [design, colour, size, model];
+  const rows = [
+    ["v-a-small", ["plain", "blue", "small", "phone-a"]],
+    ["v-b-large", ["plain", "black", "large", "phone-b"]],
+    ["v-a-large", ["floral", "black", "large", "phone-a"]],
+    ["v-b-small", ["floral", "blue", "small", "phone-b"]],
+  ].map(([id, values]) => ({ id: id as string,
+    options: (values as string[]).map((valueId, index) => ({ optionId: withSize[index].id, valueId })) }));
+  const previous = readProductChoice(withSize, rows, new URLSearchParams("variant=v-a-small"));
+  assert.deepEqual(chooseProductOption(withSize, rows, previous.picks, "size", "large"), {
+    picks: { size: "large", model: "phone-a" }, selected: undefined, cleared: ["Design", "Colour"],
+  });
+  assert.deepEqual(chooseProductOption(withSize, rows, previous.picks, "model", "phone-b"), {
+    picks: { model: "phone-b", colour: "blue", size: "small" }, selected: undefined, cleared: ["Design"],
+  });
+});
+
+test("partial links prefer stable option and value IDs when old catalog names collide", () => {
+  const choiceAxes = [
+    { ...axis("colour", "Colour", [["legacy-blue", "blue"], ["blue", "Azure"]]), key: "finish" },
+    { ...axis("finish", "Finish", [["matte", "Matte"]]), key: "surface" },
+  ];
+  const rows = [{ id: "v-matte-azure", options: [{ optionId: "colour", valueId: "blue" }, { optionId: "finish", valueId: "matte" }] }];
+  const input = new URLSearchParams("market=us&lang=en-US&category=cases&browse=1&option=colour:blue&option=finish:matte");
+  const result = readProductChoice(choiceAxes, rows, input);
+  assert.equal(result.selected?.id, "v-matte-azure");
+  assert.equal(writeProductChoice(input, choiceAxes, result.picks, result.selected?.id).toString(),
+    "market=us&lang=en-US&category=cases&browse=1&variant=v-matte-azure");
+});
+
 test("an optionless product resolves its sole physical SKU while a variable product waits for choices", () => {
   const blank = new URLSearchParams();
   assert.equal(readProductChoice(axes, variants, blank).selected, undefined);

@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useSyncExternalStore } from "react";
 import type { Market, MarketId } from "@/config/markets";
+import { catalogBrowseHref } from "@/lib/catalog/catalog-browse-href";
 import type { ProductCardData } from "@/lib/catalog/listing";
 import { recentHistoryChanged as changed, recentHistoryKey as key } from "@/lib/catalog/recent-history";
 import { chooseRecommendations, useRecommendationStatus } from "@/lib/catalog/recommendation-preference-client";
@@ -38,15 +40,24 @@ export function RecentlyViewedProduct({ id, marketId, personalizationEnabled }: 
   return null;
 }
 
+export function useRecentlyViewedIds(marketId: MarketId) {
+  const { choice, scope } = useRecommendationStatus(marketId);
+  const raw = useSyncExternalStore(subscribe, () => scope ? read(marketId, scope) : "[]", () => "[]");
+  return { choice, ids: choice === "on" && scope ? decode(raw) : [] };
+}
+
+export function RecentlyViewedLink({ market }: { market: Parameters<typeof catalogBrowseHref>[1] }) {
+  const { ids } = useRecentlyViewedIds(market.id);
+  return ids.length ? <Link className="text-link" href={catalogBrowseHref("/recent", market)} prefetch={false}>Recently viewed</Link> : null;
+}
+
 type Candidate = { card: ProductCardData; departmentId: string; similarEligible?: boolean };
 
 export function RecentlyViewed({ items, market, placement, similar, title, heading, limit }: {
   items: readonly Candidate[]; market: Market; placement: Placement; similar: boolean; title: string; heading: string; limit: number;
 }) {
-  const { choice, scope } = useRecommendationStatus(market.id);
-  const raw = useSyncExternalStore(subscribe, () => scope ? read(market.id, scope) : "[]", () => "[]");
-  if (choice !== "on" || !scope) return null;
-  const ids = decode(raw);
+  const { ids } = useRecentlyViewedIds(market.id);
+  if (!ids.length) return null;
   const byId = new Map(items.map(row => [row.card.id, row]));
   const viewed = ids.flatMap(id => byId.get(id) ?? []);
   const departments = new Set(viewed.map(row => row.departmentId));

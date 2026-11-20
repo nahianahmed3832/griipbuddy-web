@@ -1,0 +1,27 @@
+.grid { display: grid; gap: 1rem; }
+.subtitle { font-size: clamp(1.25rem, 3vw, 1.55rem); font-weight: 750; margin: 0 0 .6rem; }
+.list { display: grid; gap: .5rem; list-style: none; padding: 0; }
+.list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .75rem;
+  align-items: center;
+  border: 1px solid #e4dbe1;
+  border-radius: .7rem;
+  padding: .85rem;
+}
+.list h3 { font-size: 1rem; margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.meta { display: flex; flex-wrap: wrap; gap: .4rem .7rem; color: #594551; font-size: .875rem; margin: .35rem 0; }
+.actions { display: flex; flex-wrap: wrap; gap: .45rem; }
+.form { display: grid; gap: .7rem; max-width: 36rem; }
+.form label { display: grid; gap: .3rem; }
+.form label:has(input[type=checkbox]) { display: flex; align-items: center; gap: .65rem; }
+.form input:not([type=checkbox]), .form textarea {
+  padding: .55rem;
+  background: #fff;
+  color: #251620;
+  border: 1px solid #b5a6af;
+  border-radius: .45rem;
+}
+.form button { justify-self: start; }
+@media (max-width: 700px) { .list li { grid-template-columns: 1fr; } }

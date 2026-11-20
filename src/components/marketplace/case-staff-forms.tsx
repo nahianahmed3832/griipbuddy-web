@@ -1,6 +1,6 @@
 "use client";
 
-import type { OrderCaseKind, OrderCaseStatus } from "@/generated/prisma/enums";
+import type { OrderCaseKind, OrderCaseRefundState, OrderCaseStatus } from "@/generated/prisma/enums";
 import { formatMoney, type Market } from "@/config/markets";
 import { caseStatusLabels, ownerCaseTransitions } from "@/lib/marketplace/case-policy";
 import { MarketplaceForm } from "./action-form";
@@ -16,10 +16,12 @@ type StaffCase = {
   refundLimitMinor: number | null;
   requiresCancellationRefund: boolean;
   canApproveCancellation: boolean;
+  canProcessRefund: boolean;
+  refund?: { state: OrderCaseRefundState } | null;
 };
 
-function ShopperMessage() {
-  return <label>Message to shopper<textarea name="note" rows={3} minLength={3} maxLength={1500} required /></label>;
+function StaffNote() {
+  return <label>Internal case note<textarea name="note" rows={3} minLength={3} maxLength={1500} required /></label>;
 }
 
 function RecordPickup({ orderCase, timeZone }: { orderCase: StaffCase; timeZone: string }) {
@@ -32,7 +34,7 @@ function RecordPickup({ orderCase, timeZone }: { orderCase: StaffCase; timeZone:
         fields={<>
           <label>Pickup date and time ({timeZone})<input name="pickupAt" type="datetime-local" required /></label>
           <label>Courier pickup reference<input name="pickupReference" minLength={3} maxLength={80} required /></label>
-          <ShopperMessage />
+          <StaffNote />
         </>}
         command={form => ({
           action: "schedule-pickup", caseId: orderCase.id, revision: orderCase.revision,
@@ -78,17 +80,17 @@ function ApproveRefund({ orderCase, limitMinor, cancellation, market }: {
   const step = (1 / scale).toFixed(market.minorDigits);
   const formatted = formatMoney(limitMinor, market);
   const exchange = orderCase.kind === "EXCHANGE";
-  const label = cancellation ? "Approve refund and cancel order" : exchange ? "Approve refund instead" : "Approve refund";
+  const label = cancellation ? "Approve legacy cancellation and refund" : exchange ? "Approve refund instead" : "Approve refund";
   return (
     <section className="commerce-panel">
       <h2>{label}</h2>
-      <p>{cancellation ? `Cancel the order and approve the full refund of ${formatted}.` : `The selected items are eligible for up to ${formatted}.`}</p>
+      <p>{cancellation ? `Cancel the order and authorize the original payment refund of ${formatted}.` : `The selected items are eligible for up to ${formatted}.`}</p>
       {exchange && <p>Confirm the refund choice with the shopper before changing the exchange.</p>}
-      <p className="commerce-muted">Handle the approved payment separately before you close the case.</p>
+      <p className="commerce-muted">Confirm the original payment refund separately before closing this case.</p>
       <MarketplaceForm endpoint={endpoint} label={label} success="Refund approval recorded."
         fields={<>
           {!cancellation && <label>Refund amount ({market.currency})<input name="amount" type="number" min={step} max={amount} step={step} defaultValue={amount} required /></label>}
-          <ShopperMessage />
+          <StaffNote />
         </>}
         command={form => ({
           action: "approve-refund", caseId: orderCase.id, revision: orderCase.revision,
@@ -107,7 +109,7 @@ function ShipExchange({ orderCase }: { orderCase: StaffCase }) {
       <MarketplaceForm endpoint={endpoint} label="Record replacement shipment" success="Replacement shipment recorded."
         fields={<>
           <label>Replacement tracking reference<input name="trackingReference" minLength={3} maxLength={80} required /></label>
-          <ShopperMessage />
+          <StaffNote />
         </>}
         command={form => ({
           action: "ship-exchange", caseId: orderCase.id, revision: orderCase.revision,
@@ -122,15 +124,28 @@ function ApproveCancellation({ orderCase }: { orderCase: StaffCase }) {
   return (
     <section className="commerce-panel">
       <h2>Approve cancellation</h2>
-      <p>Cancel this unshipped order, restore its items to stock, and void the amount due on delivery.</p>
-      <MarketplaceForm endpoint={endpoint} label="Approve cancellation" success="Order cancelled."
-        fields={<ShopperMessage />}
+      <p>{orderCase.returnLines.length > 0
+        ? "Cancel the eligible quantities in this request and release their allocation. Any refund is reviewed separately."
+        : "Cancel this unshipped order, restore its items to stock, and void the amount due on delivery."}</p>
+      <MarketplaceForm endpoint={endpoint} label="Approve cancellation" success="Cancellation recorded."
+        fields={<StaffNote />}
         command={form => ({
           action: "approve-cancellation", caseId: orderCase.id, revision: orderCase.revision, note: form.get("note"),
         })}
       />
     </section>
   );
+}
+
+function ProcessRefund({ orderCase }: { orderCase: StaffCase }) {
+  const processing = orderCase.refund?.state === "PROCESSING";
+  return <section className="commerce-panel">
+    <h2>Original payment refund</h2>
+    <p>{processing ? "Check the existing test refund for confirmation." : "Send the approved refund to the configured test payment provider."}</p>
+    <MarketplaceForm endpoint={endpoint} label={processing ? "Check refund status" : "Process approved refund"}
+      success="Refund status checked."
+      command={() => ({ action: "process-refund", caseId: orderCase.id, revision: orderCase.revision })}/>
+  </section>;
 }
 
 function ReviewStatus({ orderCase, options }: { orderCase: StaffCase; options: readonly OrderCaseStatus[] }) {
@@ -148,12 +163,13 @@ function ReviewStatus({ orderCase, options }: { orderCase: StaffCase; options: r
               {options.map(status => <option key={status} value={status}>{statusLabel(status)}</option>)}
             </select>
           </label>
-          <ShopperMessage />
-          {options.includes("RETURN_APPROVED") && <p>Include the return instructions with the approval.</p>}
-          {orderCase.status === "REFUND_APPROVED" && <p>Confirm the approved refund was handled before resolving this case.</p>}
+          <StaffNote />
+          <label>Message to shopper (optional)<textarea name="publicNote" rows={3} minLength={3} maxLength={1500} /></label>
+          {options.includes("RETURN_APPROVED") && <p>Add any return instructions to the shopper message.</p>}
           {orderCase.status === "RETURN_RECEIVED" && <p>Use Resolved when the case can close without a new refund approval.</p>}
         </>}
-        command={form => ({ action: "review", caseId: orderCase.id, revision: orderCase.revision, status: form.get("status"), note: form.get("note") })}
+        command={form => ({ action: "review", caseId: orderCase.id, revision: orderCase.revision, status: form.get("status"),
+          note: form.get("note"), publicNote: String(form.get("publicNote") ?? "").trim() || undefined })}
       />
     </section>
   );
@@ -165,8 +181,10 @@ export function ReviewOrderCase({ orderCase, market }: { orderCase: StaffCase; m
   const parcel = hasReturnLines && (kind === "RETURN" || kind === "EXCHANGE");
   const cancellationReview = kind === "CANCEL" && status === "IN_REVIEW";
   const refundLimit = refundLimitMinor ?? 0;
-  const approveRefund = refundLimit > 0 && ((parcel && status === "RETURN_RECEIVED") || (cancellationReview && requiresCancellationRefund));
-  const options = ownerCaseTransitions(kind, status, hasReturnLines);
+  const approveRefund = refundLimit > 0 && ((parcel && status === "RETURN_RECEIVED") ||
+    (cancellationReview && requiresCancellationRefund) || (kind === "CANCEL" && status === "CANCELLATION_APPROVED"));
+  const options = ownerCaseTransitions(kind, status, hasReturnLines)
+    .filter(option => !(option === "RESOLVED" && status === "REFUND_APPROVED" && orderCase.refund?.state !== "CONFIRMED"));
 
   return <>
     {parcel && (status === "RETURN_APPROVED" || status === "PICKUP_SCHEDULED") && <RecordPickup key={orderCase.revision} orderCase={orderCase} timeZone={market.timeZone} />}
@@ -178,6 +196,7 @@ export function ReviewOrderCase({ orderCase, market }: { orderCase: StaffCase; m
       <p>Check the order’s current fulfillment and payment before responding to the shopper.</p>
     </section>}
     {approveRefund && <ApproveRefund orderCase={orderCase} limitMinor={refundLimit} cancellation={cancellationReview} market={market} />}
+    {orderCase.canProcessRefund && <ProcessRefund orderCase={orderCase}/>}
     {options.length > 0 && <ReviewStatus key={orderCase.revision} orderCase={orderCase} options={options} />}
   </>;
 }

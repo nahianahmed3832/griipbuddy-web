@@ -1,21 +1,24 @@
 import { z } from "zod";
 import type { MarketId } from "../../config/markets.ts";
-import { fulfillmentLabels } from "../commerce/labels.ts";
-import { nextBangladeshTrackingStatuses } from "../commerce/bangladesh-shipment-status.ts";
+import { bangladeshTrackingLabels, nextBangladeshTrackingStatuses } from "../commerce/bangladesh-shipment-status.ts";
 import { orderHasAdapter } from "../commerce/market-commerce.ts";
-import { dispatchOrderParcel, receiveRefusedOrderParcel, recordOrderParcelTracking } from "../commerce/order-parcels.ts";
-import { nextOrderParcelStatuses, orderParcelStatusLabels, parcelOrderLabel, parcelWasRefused } from "../commerce/parcel-tracking.ts";
+import { canEditParcelReference, canRecordParcelException, dispatchOrderParcel, orderParcelSplitsPaused, receiveRefusedOrderParcel, recordOrderParcelException,
+  recordOrderParcelPreparation, recordOrderParcelTracking, splitOrderParcel, updateOrderParcelReference } from "../commerce/order-parcels.ts";
+import { parcelTrackingRelayReadiness, refreshOrderParcelTracking } from "../commerce/order-parcel-tracking.ts";
+import { canAdvanceParcelTracking, currentParcelTrackingStatus, nextOrderParcelStatuses, normalizedParcelEventStatus,
+  orderParcelStatusLabels, parcelItemsToShip, parcelPreparationLabels, parcelTrackingStatusLabels, type OrderParcelStaffTracking } from "../commerce/parcel-tracking.ts";
 import { purchasedOptions } from "../commerce/purchased-options.ts";
 import { getDb } from "../db/client.ts";
 import { marketConfiguration } from "../market-config.ts";
 import { caseActorRole, caseCommand, ownerCaseTransitions } from "../marketplace/case-policy.ts";
 import { casesForStaffOrder, executeOrderCase, listOrderCases, OrderCaseError, staffOrderCase } from "../marketplace/cases.ts";
 import { storeShop } from "../marketplace/constants.ts";
+import { staffSellerPreparation } from "../marketplace/seller-orders.ts";
 import { sellerPreparationLabels } from "../marketplace/seller-preparation.ts";
 import { marketplaceMode } from "../release-config.ts";
 import { CatalogWriteError, catalogWriteInput, OperationError } from "./operation-error.ts";
 import { advanceFulfillment, cancelOrder, collectCash, listStaffOrders, queueFilter, queueFilters, recordBangladeshTracking, staffOrder } from "./operations.ts";
-import { staffOrderWorkspaceState } from "./order-workspace-state.ts";
+import { staffOrderWorkspaceState, staffQueueStatus } from "./order-workspace-state.ts";
 
 const page = z.int().min(1).max(10_000).optional();
 const queues = queueFilters.map(([key]) => key);
@@ -29,13 +32,14 @@ type OrderRead = z.infer<(typeof mainAdminOrderReads)[number]>;
 
 const orderPermissions = {
   "order.advance": "operations", "order.tracking": "operations", "order.parcel.dispatch": "operations",
-  "order.parcel.tracking": "operations", "order.parcel.receive": "operations",
+  "order.parcel.tracking": "operations", "order.parcel.receive": "operations", "order.parcel.prepare": "operations",
+  "order.parcel.split": "operations", "order.parcel.reference": "operations", "order.parcel.exception": "operations", "order.parcel.refresh": "operations",
   "order.case": "owner", "order.cancel": "owner", "order.collect": "owner",
 } as const;
 type OrderAction = keyof typeof orderPermissions;
 
 export function mainAdminOrderPermission(action: string) {
-  return Object.hasOwn(orderPermissions, action) ? orderPermissions[action as OrderAction] : undefined;
+  if (Object.hasOwn(orderPermissions, action)) return orderPermissions[action as OrderAction];
 }
 
 export const mainAdminOrderCommandInput = z.strictObject({
@@ -56,6 +60,21 @@ function packingLine(line: { id: string; variantId: string; sku: string; product
     options: purchasedOptions(line), quantity: line.quantity, unitPriceMinor: line.unitPriceMinor, personalization: line.personalization };
 }
 
+function parcelTimeline(parcel: OrderParcelStaffTracking, actors: ReadonlyMap<string, string>, owner: boolean) {
+  return [
+    ...parcel.events.map(event => ({ id: `operational:${event.status}`, status: parcelTrackingStatusLabels[normalizedParcelEventStatus(event.status)],
+      source: event.actorId ? parcel.source ?? "MANUAL" : "SYSTEM", actor: event.actorId ? actors.get(event.actorId) ?? event.actorId : null,
+      reason: event.reason, occurredAt: event.recordedAt, recordedAt: event.recordedAt, evidence: owner ? event.evidence : null })),
+    ...parcel.trackingObservations.map(event => ({ id: event.id,
+      status: event.status ? parcelTrackingStatusLabels[event.status] : event.error ? "Carrier synchronization issue" : "Tracking reference updated",
+      source: event.source, actor: event.actorId ? actors.get(event.actorId) ?? event.actorId : null,
+      reason: event.reason, occurredAt: event.occurredAt, recordedAt: event.recordedAt, evidence: null, applied: event.applied })),
+    ...parcel.preparationEvents.map(event => ({ id: `preparation:${event.operationId}`, status: parcelPreparationLabels[event.state],
+      source: "MANUAL", actor: actors.get(event.actorId) ?? event.actorId, reason: null, evidence: null,
+      occurredAt: event.recordedAt, recordedAt: event.recordedAt })),
+  ].sort((a, b) => +a.occurredAt - +b.occurredAt || +a.recordedAt - +b.recordedAt || a.id.localeCompare(b.id));
+}
+
 async function readOrder(actorId: string, owner: boolean, marketId: MarketId, id: string) {
   const order = await staffOrder(actorId, id, marketId);
   if (!order?.payment) missingOrder();
@@ -64,14 +83,20 @@ async function readOrder(actorId: string, owner: boolean, marketId: MarketId, id
   const linesById = new Map(material.map(line => [line.id, line]));
   const canHandOff = orderHasAdapter(order, "fulfillment", "manual");
   const canReceive = orderHasAdapter(order, "returns", "manual");
-  const shopIds = [...new Set(order.items.flatMap(item => item.marketplaceShopId && item.marketplaceShopId !== storeShop.id
-    ? [item.marketplaceShopId] : []))];
-  const shops = shopIds.length ? await getDb().marketplaceShop.findMany({
-    where: { id: { in: shopIds } }, orderBy: [{ name: "asc" }, { id: "asc" }],
-    select: { id: true, name: true, fulfillments: { where: { orderId: order.id }, select: { status: true, updatedAt: true } } },
-  }) : [];
   const market = marketConfiguration(marketId);
   const { name: marketName, locale, timeZone } = market;
+  const shopIds = [...new Set(order.items.flatMap(item => item.marketplaceShopId && item.marketplaceShopId !== storeShop.id ? [item.marketplaceShopId] : []))];
+  const actorIds = [...new Set([
+    ...order.parcels.flatMap(parcel => [...parcel.events, ...parcel.trackingObservations, ...parcel.preparationEvents].flatMap(event => event.actorId ?? [])),
+    ...(state.shipment?.events.map(event => event.actorId) ?? []),
+  ])];
+  const [shops, cases, parcelActors] = await Promise.all([
+    marketplaceMode() && shopIds.length ? staffSellerPreparation(id, shopIds) : [],
+    owner && marketplaceMode() ? casesForStaffOrder(actorId, order.id) : [],
+    actorIds.length ? getDb().user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } }) : [],
+  ]);
+  const actors = new Map(parcelActors.map(actor => [actor.id, actor.name]));
+  const canSplitParcels = !orderParcelSplitsPaused() && state.active;
   return {
     id: order.id, reference: order.reference, status: order.status, createdAt: order.createdAt, currency: order.currency, marketName, locale, timeZone,
     fulfillment: state.fulfillment, totalMinor: order.totalMinor, subtotalMinor: order.subtotalMinor, discountMinor: order.discountMinor,
@@ -82,28 +107,39 @@ async function readOrder(actorId: string, owner: boolean, marketId: MarketId, id
     next: !state.pendingCancellation || state.next !== "SHIPPED" ? state.next : undefined,
     canCancel: owner && state.active && state.awaiting && !state.pendingCancellation && state.canCancel,
     canCollect: owner && state.active && state.cod && state.awaiting && order.fulfillmentStatus === "DELIVERED"
-      && order.parcels.every(parcel => parcel.status === "DELIVERED"),
+      && state.parcels.every(parcel => parcel.status === "DELIVERED"),
     shipment: state.shipment && { status: state.shipment.status, carrier: state.shipment.carrier, reference: state.shipment.trackingReference,
       next: state.active ? nextBangladeshTrackingStatuses(state.shipment.status).filter(status => owner || status !== "REFUSED") : [],
-      evidenceRequired: state.shipment.source !== "DEV_SIMULATOR" },
-    parcels: order.parcels.map(parcel => ({ id: parcel.id, warehouse: parcel.locationName, status: orderParcelStatusLabels[parcel.status],
+      evidenceRequired: state.shipment.source !== "DEV_SIMULATOR", statusUpdatedAt: state.shipment.statusUpdatedAt,
+      events: state.shipment.events.map(event => ({ id: event.status, status: bangladeshTrackingLabels[event.status], source: state.shipment?.source,
+        actor: actors.get(event.actorId) ?? event.actorId, occurredAt: event.recordedAt, recordedAt: event.recordedAt,
+        evidence: owner ? event.evidence : null, reason: null })) },
+    parcels: state.parcels.map(parcel => ({ id: parcel.id, warehouse: parcel.locationName, status: orderParcelStatusLabels[parcel.status],
       carrier: parcel.carrier, reference: parcel.trackingReference, disposition: parcel.returnDisposition,
-      dispatchable: state.canDispatch && canHandOff && parcel.status === "PLANNED",
+      preparationState: parcel.preparationState,
+      preparable: state.canPack && !state.pendingCancellation && (!state.cod || state.awaiting) && parcel.status === "PLANNED"
+        && (parcel.preparationState === "PENDING" || parcel.preparationState === "PICKED"),
+      trackingStatus: currentParcelTrackingStatus(parcel), statusUpdatedAt: parcel.trackingOccurredAt ?? parcel.statusUpdatedAt,
+      estimatedDeliveryAt: parcel.estimatedDeliveryAt, lastSyncedAt: parcel.trackingSyncedAt, lastSyncAttemptAt: parcel.trackingAttemptAt,
+      syncError: parcel.trackingSyncError, trackingRevision: parcel.trackingRevision,
+      ...parcelTrackingRelayReadiness(parcel, order.measurementTest === true && orderHasAdapter(order, "fulfillment", "steadfast"), marketId),
+      splittable: canSplitParcels && parcel.status === "PLANNED" && (parcel.preparationState === null || parcel.preparationState === "PENDING")
+        && parcelItemsToShip(parcel.items).reduce((total, line) => total + line.quantity, 0) > 1,
+      editableReference: state.active && canEditParcelReference(parcel), canRecordException: state.active && canRecordParcelException(parcel),
+      dispatchable: state.canDispatch && canHandOff && parcel.status === "PLANNED" && (parcel.preparationState === null || parcel.preparationState === "PACKED"),
       receivable: state.active && canReceive && parcel.status === "REFUSED",
-      next: state.active ? nextOrderParcelStatuses(parcel.status).filter(status => owner || status !== "REFUSED") : [],
-      evidenceRequired: parcel.source !== "DEV_SIMULATOR", events: parcel.events.map(event => ({ status: orderParcelStatusLabels[event.status],
-        recordedAt: event.recordedAt, evidence: owner ? event.evidence : null })),
-      lines: parcel.items.flatMap(line => {
+      next: state.active ? nextOrderParcelStatuses(parcel.status).filter(status => status === "REFUSED" ? owner
+        : canAdvanceParcelTracking(currentParcelTrackingStatus(parcel), normalizedParcelEventStatus(status))) : [],
+      evidenceRequired: parcel.source !== "DEV_SIMULATOR", events: parcelTimeline(parcel, actors, owner),
+      lines: parcelItemsToShip(parcel.items).flatMap(line => {
         const item = linesById.get(line.orderItem.id);
         return item ? [{ ...item, quantity: line.quantity }] : [];
       }),
     })),
     events: order.events.map(event => ({ id: event.id, status: event.status, kind: event.type, date: event.createdAt, actor: event.actor?.name ?? null })),
-    cases: owner && marketplaceMode() ? await casesForStaffOrder(actorId, order.id) : [],
-    sellers: shops.map(({ id, name, fulfillments: [handoff] }) => ({
-      id, name, preparation: handoff ? sellerPreparationLabels[handoff.status] : "Awaiting preparation",
-      updatedAt: handoff?.updatedAt ?? null,
-    })),
+    cases, sellers: shops.map(shop => ({ id: shop.id, name: shop.name,
+      preparation: shop.fulfillments[0] ? sellerPreparationLabels[shop.fulfillments[0].status] : "Awaiting preparation",
+      updatedAt: shop.fulfillments[0]?.updatedAt ?? null })),
   };
 }
 
@@ -112,32 +148,31 @@ async function readCase(actorId: string, marketId: MarketId, id: string) {
   const row = await staffOrderCase(actorId, id, marketId);
   if (!row) throw new CatalogWriteError("not_found", "This order case is unavailable in the selected market.");
   const { kind, status, revision, order, returnLines, events, returnDisposition, pickupAt, pickupReference,
-    replacementTrackingReference, refundAmountMinor, refundLimitMinor, requiresCancellationRefund, canApproveCancellation } = row;
+    replacementTrackingReference, refundAmountMinor, refundLimitMinor, requiresCancellationRefund, canApproveCancellation,
+    canProcessRefund, cancellationAppliedAt, refund } = row;
   const { locale, timeZone } = marketConfiguration(marketId);
   const inspectable = returnLines.length > 0 && (kind === "RETURN" || kind === "EXCHANGE");
-  const refundable = refundLimitMinor > 0 && (inspectable && status === "RETURN_RECEIVED" || requiresCancellationRefund);
-  return { id: row.id, kind, status, revision, order: { id: order.id, reference: order.reference, currency: order.currency }, locale, timeZone,
-    events, returnDisposition, pickupAt, pickupReference, replacementTrackingReference, refundAmountMinor, refundLimitMinor,
+  const refundable = refundLimitMinor > 0 && (inspectable && status === "RETURN_RECEIVED" ||
+    kind === "CANCEL" && status === "CANCELLATION_APPROVED" || requiresCancellationRefund);
+  const review = ownerCaseTransitions(kind, status, returnLines.length > 0)
+    .filter(next => status !== "REFUND_APPROVED" || next !== "RESOLVED" || refund?.state === "CONFIRMED");
+  return { id: row.id, kind, status, revision, order: { id: order.id, reference: order.reference, currency: order.currency, paymentMethod: order.payment?.method ?? null }, locale, timeZone,
+    events, refund, cancellationAppliedAt, returnDisposition, pickupAt, pickupReference, replacementTrackingReference, refundAmountMinor, refundLimitMinor,
     returnLines: returnLines.map(({ quantity, orderItem, replacementVariantName }) => ({ ...packingLine(orderItem), quantity, replacementVariantName })),
-    allowed: { review: ownerCaseTransitions(kind, status, returnLines.length > 0), cancel: canApproveCancellation, refund: refundable,
+    allowed: { review, cancel: canApproveCancellation, refund: refundable, processRefund: canProcessRefund,
       inspection: inspectable && (status === "RETURN_APPROVED" || status === "PICKUP_SCHEDULED"),
       replacement: kind === "EXCHANGE" && status === "RETURN_RECEIVED", requiresCancellationRefund },
   };
 }
 
-export function readMainAdminOrders(actorId: string, owner: boolean, marketId: MarketId, request: OrderRead) {
+export function readMainAdminOrders(actorId: string, owner: boolean, marketId: MarketId, request: OrderRead, marketplaceChannel = false) {
   switch (request.read) {
     case "orders": return listStaffOrders(actorId, queueFilter(request.queue), request.page ?? 1, marketId).then(({ rows, hasNext }) => ({
-      hasNext, rows: rows.map(order => {
-        const fulfillment = order.status === "CANCELLED" ? "Cancelled"
-          : order.parcels.some(parcel => parcel.status !== "PLANNED") ? parcelOrderLabel(order.parcels)
-          : order.bangladeshRefusedParcelReceipt ? "Refused · received at warehouse"
-          : order.bangladeshShipment?.status === "REFUSED" ? "Refused · awaiting warehouse return"
-          : order.bangladeshShipment?.status === "OUT_FOR_DELIVERY" ? "Out for delivery"
-          : fulfillmentLabels[order.fulfillmentStatus];
-        return { ...order, fulfillment, pendingCancellation: order.cases.length > 0,
-          requiresCodReview: order.payment?.status === "AWAITING_COLLECTION" && order.parcels.some(parcelWasRefused) };
-      }),
+      rows: rows.map(row => ({
+        ...(marketplaceChannel ? row : { id: row.id, reference: row.reference, createdAt: row.createdAt,
+          districtLabel: row.districtLabel, currency: row.currency, totalMinor: row.totalMinor, payment: row.payment, _count: row._count }),
+        ...staffQueueStatus(row),
+      })), hasNext,
     }));
     case "order": return readOrder(actorId, owner, marketId, request.id);
     case "order-cases":
@@ -182,6 +217,12 @@ export async function runMainAdminOrderCommand(actorId: string, marketId: Market
     case "order.tracking": await recordBangladeshTracking(actorId, id, input); break;
     case "order.parcel.dispatch": await dispatchOrderParcel(actorId, id, catalogWriteInput(parcelId, input).parcelId, { ...input, simulate: false }); break;
     case "order.parcel.tracking": await recordOrderParcelTracking(actorId, id, catalogWriteInput(parcelId, input).parcelId, input); break;
+    case "order.parcel.prepare": return { orderId: id, saved: true,
+      ...await recordOrderParcelPreparation(actorId, id, catalogWriteInput(parcelId, input).parcelId, input) };
+    case "order.parcel.split": return { orderId: id, saved: true, ...await splitOrderParcel(actorId, id, catalogWriteInput(parcelId, input).parcelId, input) };
+    case "order.parcel.reference": await updateOrderParcelReference(actorId, id, catalogWriteInput(parcelId, input).parcelId, input); break;
+    case "order.parcel.exception": await recordOrderParcelException(actorId, id, catalogWriteInput(parcelId, input).parcelId, input); break;
+    case "order.parcel.refresh": return { orderId: id, ...await refreshOrderParcelTracking(actorId, id, catalogWriteInput(parcelId, input).parcelId) };
     case "order.parcel.receive": {
       catalogWriteInput(review, input);
       await receiveRefusedOrderParcel(actorId, id, catalogWriteInput(parcelId, input).parcelId, input);

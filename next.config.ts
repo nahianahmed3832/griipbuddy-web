@@ -21,10 +21,19 @@ const nextConfig: NextConfig = {
   async headers() {
     const privateRoutes = ["/checkout", "/orders/:path*", "/staff/:path*", "/api/checkout", "/api/staff/:path*", "/api/measurement"];
     const referrerPolicy = process.env.HYBRID_STOREFRONT_BUILD === "1" ? "strict-origin" : "no-referrer";
+    const sameOriginFormRoutes = ["/seller/finance", "/staff/seller-finance", "/staff/catalog/feeds"];
     return [{ source: "/:path*", headers: [{ key: "Referrer-Policy", value: referrerPolicy }] }, ...privateRoutes.map((source) => ({
       source,
       headers: [
         { key: "Cache-Control", value: "private, no-store, max-age=0" },
+      ],
+    })), ...sameOriginFormRoutes.map(source => ({
+      source,
+      headers: [
+        { key: "Cache-Control", value: "private, no-store, max-age=0" },
+        { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        // Preserve the browser's Origin on same-origin form posts.
+        { key: "Referrer-Policy", value: "same-origin" },
       ],
     }))];
   },

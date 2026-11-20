@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { createCoupon, setCouponEnabled } from "@/app/staff/coupon-actions";
+import { createCoupon, setCouponDirectoryPublication, setCouponEnabled } from "@/app/staff/coupon-actions";
 import { StaffActionForm } from "@/components/staff-actions";
 import { formatMoney, marketIds } from "@/config/markets";
 import { getDb } from "@/lib/db/client";
@@ -46,9 +46,15 @@ export default async function StaffCoupons({ searchParams }: { searchParams: Pro
                   !coupon.enabled ? "Disabled" : coupon.endsAt && coupon.endsAt <= now ? "Expired" : "Enabled"
                 }</p>
                 {coupon.minimumMinor > 0 && <p>Minimum {formatMoney(coupon.minimumMinor, market)}</p>}
+                <p>{coupon.publishedInDirectory ? "Listed while eligible" : "Unlisted code"}</p>
                 {coupon.endsAt && <p>Last day {expiry.format(new Date(coupon.endsAt.getTime() - 1))}</p>}
               </div>
-              <StaffActionForm action={setCouponEnabled.bind(null, market.id, coupon.code, !coupon.enabled)} submitLabel={coupon.enabled ? "Disable" : "Enable"} secondary />
+              <div>
+                {(coupon.publishedInDirectory || coupon.enabled && (!coupon.endsAt || coupon.endsAt > now)) &&
+                  <StaffActionForm action={setCouponDirectoryPublication.bind(null, market.id, coupon.code, !coupon.publishedInDirectory)}
+                    submitLabel={coupon.publishedInDirectory ? "Remove directory listing" : "Publish to directory"} secondary />}
+                <StaffActionForm action={setCouponEnabled.bind(null, market.id, coupon.code, !coupon.enabled)} submitLabel={coupon.enabled ? "Disable" : "Enable"} secondary />
+              </div>
             </li>
           ))}
         </ul>}

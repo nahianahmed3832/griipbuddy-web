@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { AxeBuilder } from "@axe-core/playwright";
-import { CART_STORAGE_KEY } from "../src/lib/cart/model";
+import { decodeCart, marketCartStorageKey } from "../src/lib/cart/model";
 
 const tote = "/products/canvas-carryall-tote";
 const saveScreenshots = process.env.CAPTURE_STOREFRONT_SCREENSHOTS === "1";
@@ -53,10 +53,10 @@ test("home, departments, collections, sorting, filters and search", async ({ pag
 
   if (info.project.name === "desktop") {
     const discoveryLinks = await page.locator('main a[href^="/departments/"], main a[href^="/collections/"]').evaluateAll(
-      (links) => [...new Set(links.map((link) => link.getAttribute("href")))],
+      (links) => [...new Set(links.map((link) => (link as HTMLAnchorElement).href))],
     );
-    expect(discoveryLinks).toHaveLength(11);
-    for (const href of discoveryLinks) expect((await page.request.get(href!)).status(), href!).toBe(200);
+    expect(new Set(discoveryLinks.map((href) => new URL(href).pathname)).size).toBe(11);
+    for (const href of discoveryLinks) expect((await page.request.get(href)).status(), href).toBe(200);
   }
   await page.getByRole("link", { name: "Shop Everyday Carry" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Everyday Carry" })).toBeVisible();
@@ -82,7 +82,7 @@ test("home, departments, collections, sorting, filters and search", async ({ pag
   await expect(page.locator(".listing-results:visible")).toContainText("4 products");
   await noOverflow(page);
 
-  const search = page.getByRole("searchbox", { name: "Search products" });
+  const search = page.getByRole("combobox", { name: "Search products" });
   await search.fill("wireless");
   await search.press("Enter");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Results for “wireless”");
@@ -125,7 +125,8 @@ test("variant selection, gallery, cart persistence and market switch", async ({ 
   await page.getByRole("button", { name: "Increase quantity" }).click();
   await page.getByRole("button", { name: "Add to cart" }).click();
   await expect(page.getByRole("link", { name: "Cart, 2 items" })).toBeVisible();
-  await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), CART_STORAGE_KEY)).toBe('[{"variantId":"v-tote-oat","quantity":2}]');
+  await expect.poll(async () => decodeCart(await page.evaluate(key => localStorage.getItem(key), marketCartStorageKey("bd"))))
+    .toEqual([{ variantId: "v-tote-oat", quantity: 2 }]);
   await page.getByRole("link", { name: "View cart", exact: true }).click();
   const summary = page.getByRole("complementary", { name: "Cart summary" });
   await expect(summary.getByText("৳2,300", { exact: true })).toBeVisible();
@@ -141,16 +142,23 @@ test("variant selection, gallery, cart persistence and market switch", async ({ 
 
   await page.getByRole("link", { name: "Canvas Carryall Tote", exact: true }).click();
   await selectMarket(page, "us");
-  await expect(page).toHaveURL(/variant=v-tote-oat/);
-  await expect(page.getByText("These options are unavailable in United States.")).toBeVisible();
+  await expect(page).toHaveURL(url => url.searchParams.get("variant") === "v-tote-oat" && url.searchParams.get("market") === "us");
+  await expect(page.getByRole("status").filter({ hasText: "This variant is unavailable in United States." })).toBeVisible();
   await expect(page.getByRole("radio", { name: "Oat", exact: true })).toHaveCount(0);
   await expect(page.getByRole("main").locator(".product-detail__price:visible")).toHaveCount(0);
-  await page.getByRole("link", { name: /Cart, 3 items.*need attention/ }).click();
+  const cartLink = page.getByRole("link", { name: "Cart, 0 items" });
+  await cartLink.click();
+  const drawer = page.getByRole("dialog", { name: "Your cart" });
+  await expect(drawer.getByText("Your cart is empty.", { exact: true })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "Close cart" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
+  await expect(cartLink).toBeFocused();
+  await cartLink.click();
+  await drawer.getByRole("link", { name: "View full cart" }).click();
   await expect(page.getByText("Shopping in United States · USD")).toBeVisible();
-  await expect(page.getByText("Unavailable in United States", { exact: true })).toBeVisible();
-  await expect(page.getByText("Saved quantity: 3")).toBeVisible();
-  await expect(summary.getByText("$0.00", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Cart, 3 items.*need attention/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your cart is empty" })).toBeVisible();
+  await expect(cartLink).toBeVisible();
   await page.goto(tote);
   await expect(page.getByRole("main").locator(".product-detail__price:visible")).toHaveText("$18.00 USD");
   await page.getByRole("button", { name: "Add to cart" }).click();
@@ -161,12 +169,12 @@ test("variant selection, gallery, cart persistence and market switch", async ({ 
   if (info.project.name === "desktop") await screenshot(page, "cart-market-desktop");
 
   await selectMarket(page, "bd");
-  await expect(summary.getByText("৳4,700", { exact: true })).toBeVisible();
+  await expect(summary.getByText("৳3,450", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Remove Canvas Carryall Tote — Oat" }).click();
-  await expect(summary.getByText("৳1,250", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Remove Canvas Carryall Tote — Plum" }).click();
   await expect(page.getByRole("heading", { name: "Your cart is empty" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Cart, 0 items" })).toBeVisible();
+  await selectMarket(page, "us");
+  await expect(summary.getByText("$18.00", { exact: true })).toBeVisible();
 });
 
 test("stock states, market-specific products and missing routes", async ({ page }) => {
@@ -176,16 +184,17 @@ test("stock states, market-specific products and missing routes", async ({ page 
   await expect(page.getByRole("img", { name: "Speckled lilac ceramic mug with a rounded handle" })).toBeVisible();
   await selectMarket(page, "us");
   await expect(page.getByRole("radio", { name: /^Lilac.*out of stock/ })).toBeChecked();
-  await expect(page.getByText("$15.50", { exact: false })).toBeVisible();
+  await expect(page.getByRole("main").locator(".product-detail__price:visible")).toHaveText("$15.50 USD");
   await expect(page.getByRole("button", { name: "Out of stock", exact: true })).toBeDisabled();
   await page.reload();
   await expect(shoppingPreferences(page)).toHaveAccessibleName("Shopping preferences, United States, USD");
   await page.goto("/departments/home-living");
   await expect(page.getByRole("heading", { name: "Dome Table Lamp" })).toHaveCount(0);
   await page.goto("/products/dome-table-lamp");
-  await expect(page.getByRole("heading", { level: 1, name: "Page not found" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Product unavailable" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Browse products", exact: true })).toHaveAttribute("href", /market=us/);
   await page.goto("/products/does-not-exist");
-  await expect(page.getByRole("heading", { level: 1, name: "Page not found" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Product unavailable" })).toBeVisible();
 });
 
 test("footer preferences save explicitly and header offers demo sign-in", async ({ page }, info) => {
@@ -276,7 +285,13 @@ test("keyboard landmarks, image alternatives and accessibility", async ({ page }
   await page.keyboard.press("Escape");
   await expect(page.getByRole("navigation", { name: "Browse categories" })).toBeHidden();
   await expect(categoryMenu).toBeFocused();
-  expect(await page.locator("main img").evaluateAll((images) => images.every((image) => Boolean(image.getAttribute("alt")?.trim())))).toBe(true);
+  expect(await page.locator("main img").evaluateAll(images => images.every(image => {
+    const alt = image.getAttribute("alt");
+    if (image.closest('nav[aria-label="Category shortcuts"], nav[data-home-tile-layout="shortcuts"]')) {
+      return alt === "" && Boolean(image.closest("a")?.textContent?.trim());
+    }
+    return Boolean(alt?.trim());
+  }))).toBe(true);
   if (info.project.name === "desktop") {
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
     expect(results.violations.map(({ id, nodes }) => ({ id, nodes: nodes.map(({ target }) => target) }))).toEqual([]);

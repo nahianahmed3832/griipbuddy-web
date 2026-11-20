@@ -4,9 +4,9 @@ import { Breadcrumbs } from "@/components/store-ui";
 import type { CheckoutAddress } from "@/components/checkout-view";
 import { RetailCheckout } from "@/components/retail-checkout";
 import { BangladeshCheckout } from "@/components/bangladesh-checkout";
-import { defaultMarketId, isMarketId, marketIds } from "@/config/markets";
+import { isMarketId, marketIds } from "@/config/markets";
 import { bangladeshCheckoutEnabled } from "@/lib/commerce/bangladesh-handoff";
-import { checkoutInput, uuid } from "@/lib/commerce/checkout-types";
+import { uuid } from "@/lib/commerce/checkout-types";
 import { deliveryChoices } from "@/lib/commerce/orders";
 import { paypalCheckoutAvailability, paypalSandboxConfig } from "@/lib/commerce/paypal-config";
 import { prepaidAvailable, prepaidConfig } from "@/lib/commerce/prepaid-config";
@@ -14,7 +14,7 @@ import { currentMarket } from "@/lib/market-server";
 import { isMarketSelectable, marketConfiguration } from "@/lib/market-config";
 import { hybridDemoMode, marketplaceMode, orderIntakeOpen, productionMode } from "@/lib/release-config";
 import { getShopper } from "@/lib/marketplace/auth";
-import { getDb } from "@/lib/db/client";
+import { addressBook } from "@/lib/marketplace/address-book";
 import { resolveCartCatalog } from "@/lib/cart/resolve";
 import { MAX_QUANTITY, validCartOfferId, validVariantId } from "@/lib/cart/model";
 
@@ -52,14 +52,11 @@ export default async function CheckoutPage({ searchParams }: { searchParams: Pro
     directPersonalization: directItem && item?.personalization, personalizationIntent };
   const callback = attempt && uuid.safeParse(attempt).success && (paypalReturn === "return" || paypalReturn === "cancel")
     ? { action: paypalReturn === "return" ? "capture" as const : "cancel" as const, attemptId: attempt } : undefined;
-  const rows = shopper ? await getDb().shopperAddress.findMany({ where: { shopperId: shopper.id }, orderBy: { createdAt: "desc" }, take: 30 }) : [];
-  const addresses: CheckoutAddress[] = rows.flatMap(row => {
-    const details = row.details;
-    if (!details || typeof details !== "object" || Array.isArray(details)) return [];
-    if (details.country ? details.country !== market.countryCode : market.id !== defaultMarketId) return [];
-    const value = checkoutInput.shape.customer.safeParse({ ...details, postalCode: details.postalCode ?? "", email: details.email ?? "" });
-    return value.success ? [{ id: row.id, label: row.label, value: { ...value.data, postalCode: value.data.postalCode ?? "", email: value.data.email ?? "" } }] : [];
-  });
+  const rows = shopper && !handoff ? await addressBook(shopper.id, market.id, "SHIPPING") : [];
+  const addresses: CheckoutAddress[] = rows.flatMap(row => row.details ? [{
+    id: row.id, label: row.label, isDefault: row.isDefault,
+    value: { ...row.details, postalCode: row.details.postalCode ?? "", email: row.details.email ?? "" },
+  }] : []);
   const shopperAddress = shopper ? { name: shopper.name, email: shopper.email } : undefined;
   const demo = hybridDemoMode();
   const native = { ...direct, market, addressAdapter: market.address.adapter, choices,
@@ -78,7 +75,7 @@ export default async function CheckoutPage({ searchParams }: { searchParams: Pro
       {handoff ? <BangladeshCheckout market={market} /> : <RetailCheckout
         key={`${market.id}:${personalizationIntent ?? buy ?? attempt ?? "cart"}`} market={market} destinations={destinations}
         directRequested={buy !== undefined} native={native}
-        paypal={paypalSandboxConfig(market.id) ? { ...direct, ...paypal, market, callback, shopperAddress, demo, intakeOpen: orderIntakeOpen() } : undefined} />}
+        paypal={paypalSandboxConfig(market.id) ? { ...direct, ...paypal, market, callback, shopperAddress, addresses, demo, intakeOpen: orderIntakeOpen() } : undefined} />}
     </div>
   );
 }

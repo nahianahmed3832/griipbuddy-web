@@ -180,9 +180,17 @@
 .case-request-items > legend, .case-item-fields > legend { font-weight: 750; overflow-wrap: anywhere; }
 .case-item-fields { border: 1px solid var(--color-line); border-radius: 8px; padding: 8px 12px 12px; }
 .case-item-fields > legend { padding: 0 4px; }
+.case-order-panel { display: grid; gap: 9px; min-width: 0; overflow-wrap: anywhere; }
+.case-customer-links { display: grid; gap: 6px; }
+.mp-editor-list.case-customer-links a { display: block; min-height: 44px; padding: 11px 10px; border: 1px solid var(--color-line); border-radius: 8px; }
+.case-submit { min-width: 0; padding: clamp(10px, 2vw, 18px); }
+.case-submit-fields { display: grid; gap: 12px; min-width: 0; }
+.case-submit :is(select, textarea, input) { min-width: 0; max-width: 100%; }
+.case-status-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .mp-panel-links { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
 .mp-panel-links a { font-weight: 720; text-decoration: underline; }
 .mp-shop-hero { background: #f7e4d2; border-radius: 14px; padding: clamp(18px, 3.5vw, 45px); margin-bottom: 22px; }
+.mp-shop-hero[data-presentation="compact"] { padding: clamp(14px, 2vw, 24px); }
 .mp-shop-hero .mp-panel-links { margin-top: 14px; }
 .mp-shop-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .mp-shop-grid a, .mp-list-card { border: 1px solid #ddd; border-radius: 11px; padding: 15px; display: block; }

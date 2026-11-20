@@ -1,11 +1,14 @@
 import { z } from "zod";
 import type { FulfillmentStatus, OrderStatus, PaymentMethod, PaymentStatus, SellerPreparationStatus } from "../../generated/prisma/enums.ts";
 import { uuid } from "../commerce/checkout-types.ts";
+import { marketIdInput } from "../market-config.ts";
 
 const preparationStatuses = ["PREPARING", "READY", "HANDED_OFF"] as const;
 
 export const sellerPreparationInput = z.object({
   orderId: uuid,
+  marketId: marketIdInput.optional(),
+  shopId: uuid.optional(),
   next: z.enum(preparationStatuses),
 }).strict();
 

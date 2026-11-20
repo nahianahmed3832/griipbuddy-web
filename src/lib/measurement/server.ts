@@ -99,7 +99,7 @@ export type MeasurementInput = z.infer<typeof measurementInput>;
 type Observation = Exclude<MeasurementInput, { action: "allow" | "withdraw" }>;
 
 const homePlacements = new Set([
-  "home-hero", "home-departments", "home-collections", "home-new-arrivals", "home-featured", "home-sale-banner",
+  "home-hero", "home-departments", "home-collections", "home-merchandising-tiles", "home-new-arrivals", "home-featured", "home-sale-banner",
   "home-deals", "home-category-spotlight", "home-recently-viewed", "home-models", "home-gifts", "home-bestsellers", "home-trending", "home-similar",
   "recommended", "continue", "buy-again", ...featuredCampaigns,
 ]);

@@ -16,6 +16,7 @@ import { lockAttempt, lockVariantQuoteRows } from "./orders.ts";
 import {
   applyInventoryMovement, eligibleInventoryPools, inventoryDestinationInput, lockInventoryMarketPolicy, lockInventoryRoutes,
 } from "./physical-inventory.ts";
+import { pilotCheckoutScope } from "./scoped-pilot-checkout.ts";
 
 type Tx = Prisma.TransactionClient;
 const sqlIntMax = 2_147_483_647;
@@ -100,7 +101,10 @@ async function adjustReserved(tx: Tx, poolId: string, delta: number) {
 
 async function releaseAllocations(tx: Tx, reservation: Reservation) {
   await lockVariantInventory(tx, reservation.allocations.map(item => item.pool.variantId));
-  for (const allocation of reservation.allocations) await adjustReserved(tx, allocation.poolId, -allocation.quantity);
+  for (const allocation of reservation.allocations) {
+    const reserved = allocation.quantity - allocation.cancelledQuantity - allocation.dispatched;
+    if (reserved) await adjustReserved(tx, allocation.poolId, -reserved);
+  }
 }
 
 async function releaseHold(tx: Tx, reservation: Reservation, state: "RELEASED" | "EXPIRED", now: Date) {
@@ -143,9 +147,13 @@ export async function reserveInventory(tx: Tx, raw: unknown, now = new Date()) {
   if (attempt.marketId !== input.marketId || attempt.paymentMethod !== input.paymentMethod) {
     fail("conflict", "The reservation market or payment method changed.");
   }
+  const pilot = await pilotCheckoutScope(tx, { marketId: input.marketId, paymentMethod: input.paymentMethod, items: input.lines });
   const { destination, lines, requestHash } = reservationTerms(input);
   if (reservation) {
     if (!equalDigest(reservation.requestHash, requestHash)) fail("conflict", "This reservation key already recorded different checkout terms.");
+    if (pilot && reservation.allocations.some(row => !pilot.poolIds.includes(row.poolId))) {
+      fail("conflict", "The recorded reservation is outside the reviewed checkout scope.");
+    }
     if (reservation.state === "HELD" && attempt.order) fail("conflict", "Reconcile the existing order before changing this hold.");
     if (reservation.state === "HELD" && (reservation.expiresAt <= now || attempt.abandonedAt)) {
       return releaseHold(tx, reservation, attempt.abandonedAt ? "RELEASED" : "EXPIRED", now);
@@ -162,7 +170,7 @@ export async function reserveInventory(tx: Tx, raw: unknown, now = new Date()) {
     if (!offer) fail("conflict", "An accepted offer changed. Review the current purchase terms.");
     const fulfillment = await eligibleInventoryPools(tx, {
       variantId: line.variantId, ownerId: offer.sellerId, marketId: input.marketId, paymentMethod: input.paymentMethod, destination,
-    });
+    }, pilot?.poolIds);
     if (fulfillment.kind === "delivery_unavailable") fail("delivery_unavailable", "Delivery is unavailable for this destination.");
     let remaining = line.quantity;
     for (const pool of fulfillment.pools) {
@@ -405,11 +413,21 @@ async function recordedMovement(tx: Tx, allocation: Allocation, idempotencyKey: 
   return tx.inventoryMovement.findUnique({ where: { poolId_idempotencyKey: { poolId: allocation.poolId, idempotencyKey } }, select: { id: true } });
 }
 
+// The caller has locked the order and matched these quantities to its original planned parcel lines.
+export async function releaseOrderAllocationUnits(tx: Tx, actorId: string, attemptId: string, allocationId: string, quantity: number) {
+  const { allocation } = await committedAllocation(tx, actorId, attemptId, allocationId);
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > allocation.quantity - allocation.cancelledQuantity - allocation.dispatched) {
+    fail("conflict", "Cancellation exceeds the committed undispatched allocation.");
+  }
+  await adjustReserved(tx, allocation.poolId, -quantity);
+  await tx.inventoryAllocation.update({ where: { id: allocationId }, data: { cancelledQuantity: { increment: quantity } } });
+}
+
 export async function dispatchInventoryAllocation(tx: Tx, actorId: string, attemptId: string, raw: unknown) {
   const input = read(dispatchInput, raw);
   const { allocation } = await committedAllocation(tx, actorId, attemptId, input.allocationId);
   const idempotencyKey = requestDigest(JSON.stringify(["dispatch", allocation.id, input.eventId]));
-  if (input.quantity > allocation.quantity - allocation.dispatched && !await recordedMovement(tx, allocation, idempotencyKey)) {
+  if (input.quantity > allocation.quantity - allocation.cancelledQuantity - allocation.dispatched && !await recordedMovement(tx, allocation, idempotencyKey)) {
     fail("conflict", "The dispatch exceeds the committed undispatched quantity.");
   }
   const result = await applyInventoryMovement(tx, {

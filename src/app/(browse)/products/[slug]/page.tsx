@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { ProductDetail } from "@/components/product-detail";
 import { ConnectedProductDetail } from "@/components/connected-product-detail";
+import { ConnectedProductGallery } from "@/components/connected-product-gallery";
 import { CatalogJsonLd } from "@/components/catalog-json-ld";
 import type { ProductDeliveryChoice } from "@/components/connected-product-delivery";
 import { ProductGrid } from "@/components/product-grid";
@@ -13,16 +13,19 @@ import { productCards, type SearchParams } from "@/lib/catalog/listing";
 import { catalogDevices } from "@/lib/catalog/devices";
 import { catalog } from "@/lib/catalog/repository";
 import { currentMarket } from "@/lib/market-server";
-import { firstPartyStoreMode, hybridDemoMode } from "@/lib/release-config";
+import { firstPartyStoreMode, hybridDemoMode, marketplaceMode } from "@/lib/release-config";
 import { formatMoney, type Market, type MarketId } from "@/config/markets";
-import { storefrontPath } from "@/config/storefront-path";
 import { merchantProductUrl } from "@/lib/catalog/merchant-fields";
 import { isMerchantBdPreviewProduct, merchantBdPreviewPageProduct } from "@/lib/catalog/merchant-bd-preview";
 import { devLiveBangladeshFeed, merchantFeedSettings } from "@/lib/catalog/merchant-feed-config";
 import { breadcrumbMetadata, connectedProductMetadata, productMetadata } from "@/lib/catalog/product-metadata";
 import { catalogAbsoluteUrl, catalogRobots, productSeoAlternates } from "@/lib/catalog/catalog-seo";
-import { productReviews } from "@/lib/marketplace/data";
-import { RecentlyViewedProduct } from "@/components/marketplace/recent";
+import { ProductQuestion, ProductReviews } from "@/components/product-engagement";
+import { WhatsAppHandoff } from "@/components/whatsapp-handoff";
+import { whatsAppProductInquiry } from "@/lib/notifications/whatsapp";
+import { ConnectedCatalogCards } from "@/components/connected-catalog-browse";
+import { CompareProduct } from "@/components/product-comparison";
+import { RecentlyViewedLink, RecentlyViewedProduct } from "@/components/marketplace/recent";
 import type { ProductAddOn } from "@/components/retail-product";
 import { getDb } from "@/lib/db/client";
 import { getShopper } from "@/lib/marketplace/auth";
@@ -39,7 +42,8 @@ import { reportFailure } from "@/lib/db/observability";
 import { browseProductSelection, catalogBrowseHref, catalogProductHref, matchesBrowseProductSelection } from "@/lib/catalog/category-browse-links";
 import { connectedCategoryDetail } from "@/lib/catalog/connected-navigation";
 import { getConnectedProduct } from "@/lib/catalog/connected-product";
-import { CatalogApiError } from "@/lib/catalog/connected-public";
+import { CatalogApiError, catalogVariantWhere } from "@/lib/catalog/connected-public";
+import { listConnectedCatalog } from "@/lib/catalog/connected-listing";
 
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<SearchParams> };
 type ConnectedProduct = NonNullable<Awaited<ReturnType<typeof getConnectedProduct>>>;
@@ -115,9 +119,9 @@ async function productCategoryTrail(productId: string, requested: SearchParams["
   })) };
 }
 
-function ConnectedProductView({ data, market, variantId, requested, trail, invalidVariant = false, invalidOptions = false }: {
+function ConnectedProductView({ data, market, variantId, requested, trail, query, invalidVariant = false, invalidOptions = false }: {
   data: ConnectedProduct; market: Market; variantId?: string; requested: Map<string, string>;
-  trail: Awaited<ReturnType<typeof productCategoryTrail>>; invalidVariant?: boolean; invalidOptions?: boolean;
+  trail: Awaited<ReturnType<typeof productCategoryTrail>>; query: SearchParams; invalidVariant?: boolean; invalidOptions?: boolean;
 }) {
   const { product, variants, defaultVariantId, primaryBreadcrumb } = data;
   const contextual = !invalidOptions && !variantId && requested.size > 0;
@@ -125,7 +129,6 @@ function ConnectedProductView({ data, market, variantId, requested, trail, inval
   const initialId = variantId ?? (contextual ? choices.length === 1 ? choices[0].id : undefined : defaultVariantId);
   const selected = invalidVariant || invalidOptions ? undefined : choices.find(variant => variant.id === initialId);
   const unavailable = invalidVariant || Boolean(variantId && !selected || contextual && !choices.length);
-  const image = selected?.image ?? product.images[0];
   const context = { id: market.id, locale: market.locale, regional: hybridDemoMode() };
   const crumbs = trail?.crumbs ?? primaryCrumbs(primaryBreadcrumb, market);
   const href = catalogAbsoluteUrl(`/products/${encodeURIComponent(product.slug)}`, market);
@@ -134,17 +137,16 @@ function ConnectedProductView({ data, market, variantId, requested, trail, inval
   return <div className="shell inner-page">
     <CatalogJsonLd data={breadcrumbMetadata(crumbs, { label: product.name, href })} />
     <Breadcrumbs items={[...crumbs, { label: product.name }]} />
-    <div className="product-detail">
-      {image && <section className="product-gallery" aria-label="Product images"><div className="product-gallery__main">
-        <Image src={storefrontPath(image.src)} alt={image.alt} fill unoptimized sizes="(max-width: 759px) 100vw, 580px" />
-      </div></section>}
+    <div className="product-detail connected-product-detail">
+      <ConnectedProductGallery key={selected?.id ?? "parent"} sharedImages={product.images} variant={selected} />
       <div className="product-detail__info">
         <h1 className="display-type">{product.name}</h1>
-        {selected && <p className="product-detail__price">{formatMoney(selected.offer.amountMinor, market)}</p>}
+        {selected?.offer.eligible && <p className="product-detail__price">{formatMoney(selected.offer.amountMinor, market)}</p>}
         <p className="product-detail__description">{product.description}</p>
         {!!known?.length && <p className="product-detail__note">Matching options {known.map(option => option.valueLabel).join(" · ")}</p>}
         {invalidOptions ? <p role="status">The options in this link don’t match a variant here. Choose from the available options.</p>
-          : unavailable && <p role="status">{invalidVariant ? "This link contains an invalid variant." : `These options are unavailable in ${market.name}.`}</p>}
+          : unavailable && <p role="status">{invalidVariant ? "This link contains an invalid variant." :
+            variantId ? `This variant is unavailable in ${market.name}.` : `These options are unavailable in ${market.name}.`}</p>}
         <ul className="mp-subcategory-links" aria-label="Product options">
           {(choices.length ? choices : variants).map((variant, index) => <li key={variant.id}>
             <Link href={catalogProductHref({ slug: product.slug, matchedVariantId: variant.id, knownOptions: [] }, context, trail?.id)}
@@ -154,8 +156,10 @@ function ConnectedProductView({ data, market, variantId, requested, trail, inval
           </li>)}
         </ul>
         <p className="product-detail__note">Choose an exact variant to continue.</p>
+        {variants.some(variant => variant.offer.eligible) && <CompareProduct slug={product.slug} name={product.name} market={context} />}
       </div>
     </div>
+    <ConnectedDiscovery data={data} market={market} query={query} />
   </div>;
 }
 
@@ -171,9 +175,9 @@ async function connectedDeliveryChoices(market: Awaited<ReturnType<typeof curren
   ];
 }
 
-async function ConnectedPurchaseView({ data, variantId, market, trail, hasLegacyOffers }: {
+async function ConnectedPurchaseView({ data, variantId, market, trail, query, hasLegacyOffers }: {
   data: ConnectedProduct; variantId?: string; market: Awaited<ReturnType<typeof currentMarket>>;
-  trail: Awaited<ReturnType<typeof productCategoryTrail>>; hasLegacyOffers?: boolean;
+  trail: Awaited<ReturnType<typeof productCategoryTrail>>; query: SearchParams; hasLegacyOffers?: boolean;
 }) {
   const [choices, archived] = await Promise.all([
     connectedDeliveryChoices(market, data),
@@ -189,7 +193,10 @@ async function ConnectedPurchaseView({ data, variantId, market, trail, hasLegacy
     <Breadcrumbs items={[...crumbs, { label: data.product.name }]} />
     <ConnectedProductDetail key={`${market.id}:${market.locale}:${data.product.id}`} data={data} market={market} deliveryChoices={choices}
       postalRequired={market.address.adapter === "us-postal"} timeZone={market.timeZone} archivedVariantId={archived?.id}
-      hasLegacyOffers={hasLegacyOffers} />
+      hasLegacyOffers={hasLegacyOffers} regional={hybridDemoMode()} />
+    {data.variants.some(row => row.offer.id && row.offer.eligible) &&
+      <WhatsAppHandoff subject="product" href={whatsAppProductInquiry(market.id, data.product.name, href)}/>}
+    <ConnectedDiscovery data={data} market={market} query={query} />
   </div>;
 }
 
@@ -201,15 +208,15 @@ export default async function ProductPage({ params, searchParams }: Props) {
   const requested = browseProductSelection(query.option);
   const trail = await productCategoryTrail(page.kind === "connected" ? page.data.product.id : page.product.id, query.category, market);
   if (page.kind === "connected") {
-    return <ConnectedPurchaseView data={page.data} {...{ market, variantId, trail }} />;
+    return <ConnectedPurchaseView data={page.data} {...{ market, variantId, trail, query }} />;
   }
   const { product } = page;
   let requestedLegacyVariant = variantId;
   if (query.variant !== undefined && !product.variants.some(variant => variant.id === variantId)) {
     const data = await connectedForPage(slug, market.id, market.locale);
     if (!data) notFound();
-    if (data.variants.some(variant => variant.offer.id)) return <ConnectedPurchaseView data={data} {...{ market, variantId, trail }} hasLegacyOffers />;
-    return <ConnectedProductView data={data} {...{ market, variantId, requested, trail }} invalidVariant={!validVariantId(variantId)} />;
+    if (data.variants.some(variant => variant.offer.id)) return <ConnectedPurchaseView data={data} {...{ market, variantId, trail, query }} hasLegacyOffers />;
+    return <ConnectedProductView data={data} {...{ market, variantId, requested, trail, query }} invalidVariant={!validVariantId(variantId)} />;
   }
   if (query.variant === undefined && query.option !== undefined) {
     const data = await connectedForPage(slug, market.id, market.locale);
@@ -217,25 +224,23 @@ export default async function ProductPage({ params, searchParams }: Props) {
     const submitted = new Set(Array.isArray(query.option) ? query.option : [query.option]);
     const invalidOptions = submitted.size !== requested.size;
     const matching = invalidOptions ? [] : data.variants.filter(variant => matchesBrowseProductSelection(variant.options, requested));
-    if (matching.some(variant => variant.offer.id)) return <ConnectedPurchaseView data={data} {...{ market, trail }} hasLegacyOffers />;
-    if (matching.length !== 1) return <ConnectedProductView data={data} {...{ market, requested, trail, invalidOptions }} />;
+    if (matching.some(variant => variant.offer.id)) return <ConnectedPurchaseView data={data} {...{ market, trail, query }} hasLegacyOffers />;
+    if (matching.length !== 1) return <ConnectedProductView data={data} {...{ market, requested, trail, invalidOptions, query }} />;
     requestedLegacyVariant = matching[0].id;
   }
   const departments = await catalog.listDepartments(market.id);
   const department = departments.find((item) => item.id === product.departmentId);
   const hybrid = hybridDemoMode();
   const db = getDb();
-  const [related, reviews, sold, ratings, complementary, watches, marketDelivery, ranking] = await Promise.all([
+  const [related, sold, complementary, watches, marketDelivery, ranking] = await Promise.all([
     loadRecommendations({ marketId: market.id, locale: market.locale, placement: "similar", anchorProductId: product.id, limit: 4 })
       .catch(error => { reportFailure("recommendations.product-similar", undefined, error); return null; }),
-    product.shop ? productReviews(product.id, market.id) : [],
     hybrid ? db.orderItem.aggregate({ where: { variant: { productId: product.id }, order: {
-      marketId: market.id, status: "PLACED", payment: { status: { in: ["PAID", "COLLECTED"] } },
+      marketId: market.id, status: "PLACED", measurementTest: false, payment: { status: { in: ["PAID", "COLLECTED"] } },
     } }, _sum: { quantity: true } }) : null,
-    hybrid ? db.shopperReview.groupBy({ by: ["stars"], where: { productId: product.id, visible: true, order: { marketId: market.id } }, _count: true }) : [],
     loadRecommendations({ marketId: market.id, locale: market.locale, placement: "complementary", anchorProductId: product.id, limit: 3 })
       .catch(error => { reportFailure("recommendations.product-complementary", undefined, error); return null; }),
-    product.shop ? getShopper().then(async shopper => ({ shopperId: shopper?.id,
+    marketplaceMode() && product.shop ? getShopper().then(async shopper => ({ shopperId: shopper?.id,
       options: shopper ? await variantWatchSettings(shopper.id, market.id, product.variants.map(variant => variant.id)) : [],
     })) : undefined,
     marketHasDelivery(market.id),
@@ -255,8 +260,7 @@ export default async function ProductPage({ params, searchParams }: Props) {
   const addOns: ProductAddOn[] = complementaryCards.filter(card => !complementary?.items
     .find(item => item.productId === card.id)?.product.personalization?.required)
     .map(card => ({ ...card, recommendationVersion: complementary?.version }));
-  const ratingCount = ratings.reduce((sum, row) => sum + row._count, 0);
-  const ratingAverage = ratingCount ? ratings.reduce((sum, row) => sum + row.stars * row._count, 0) / ratingCount : 0;
+  const context = { id: market.id, locale: market.locale, regional: hybrid };
   return (
     <div className="shell inner-page">
       <CatalogJsonLd data={markup} />
@@ -265,28 +269,19 @@ export default async function ProductPage({ params, searchParams }: Props) {
       <ProductDetail key={`${market.id}:${product.id}:${initialVariantId ?? ""}`} product={product} market={market} initialVariantId={initialVariantId}
         departmentName={department?.shortName ?? "Catalog"} firstParty={firstParty} hybrid={hybrid}
         sales={sold?._sum.quantity ?? 0} addOns={addOns} models={models.map(({ id, name }) => ({ id, name }))} watches={watches} checkoutEnabled={Boolean(product.shop && marketDelivery)} />
+      {product.variants.some(row => row.offer?.marketId === market.id) &&
+        <WhatsAppHandoff subject="product" href={whatsAppProductInquiry(market.id, product.name, href)}/>}
       <RecentlyViewedProduct id={product.id} marketId={market.id} personalizationEnabled={ranking?.behavioralEnabled ?? false} />
-      {product.shop && <>
-        <section className="mp-reviews" aria-labelledby="listing-reviews"><h2 id="listing-reviews">Reviews for this item</h2>
-          {ratingCount > 0 && <div className="retail-rating">
-            <div><strong>{ratingAverage.toFixed(1)} out of 5</strong><span>{ratingCount} {ratingCount === 1 ? "review" : "reviews"}</span></div>
-            <ul>{[5, 4, 3, 2, 1].map(stars => {
-              const count = ratings.find(row => row.stars === stars)?._count ?? 0;
-              return <li key={stars}><span aria-hidden="true">{stars} ★</span>
-                <meter value={count} max={ratingCount} aria-label={`${count} ${stars}-star reviews`}/><span aria-hidden="true">{count}</span></li>;
-            })}</ul>
-          </div>}
-          {!reviews.length && <p>No reviews yet.</p>}
-          {reviews.map(review => <article className="mp-review" key={review.id}>
-            <p aria-label={`${review.stars} out of 5 stars`}>{"★".repeat(review.stars)}{"☆".repeat(5 - review.stars)}</p>
-            <strong>{review.shopper.name}</strong><p>{review.text}</p>
-          </article>)}
-        </section>
+      <CompareProduct slug={product.slug} name={product.name} market={context} />
+      {ranking?.behavioralEnabled && ranking.placements.continue.enabled && <RecentlyViewedLink market={context} />}
+      {marketplaceMode() && <>
+        <ProductReviews product={product} market={market} query={query} />
+        <ProductQuestion product={product} market={market} />
       </>}
       {cards.length > 0 && (
         <section className="home-section" aria-labelledby="related-heading">
           <SectionHeading id="related-heading" title={related?.items.some(item => item.reason === "similar-attributes") ? "Similar products" : "More to explore"}
-            action={department && { href: `/departments/${department.slug}`, label: `Shop ${department.shortName}` }} />
+            action={department && { href: catalogBrowseHref(`/departments/${department.slug}`, context), label: `Shop ${department.shortName}` }} />
           <ProductGrid cards={cards} market={market} placement={{ placement: "similar", recommendationVersion: related?.version }} />
         </section>
       )}
@@ -296,4 +291,71 @@ export default async function ProductPage({ params, searchParams }: Props) {
       </section>}
     </div>
   );
+}
+
+async function ConnectedDiscovery({ data, market, query }: { data: ConnectedProduct; market: Market; query: SearchParams }) {
+  const { product } = data;
+  const ranking = await recommendationConfig(market.id, market.locale).catch(error => {
+    reportFailure("recommendations.product-config", undefined, error);
+    return null;
+  });
+  return <>
+    <RecentlyViewedProduct id={product.id} marketId={market.id} personalizationEnabled={ranking?.behavioralEnabled ?? false} />
+    {ranking?.behavioralEnabled && ranking.placements.continue.enabled &&
+      <RecentlyViewedLink market={{ id: market.id, locale: market.locale, regional: hybridDemoMode() }} />}
+    {marketplaceMode() && <>
+      <ProductReviews product={product} market={market} query={query} />
+      <ProductQuestion product={product} market={market} />
+    </>}
+    {ranking && <ConnectedRelatedProducts product={product} market={market} ranking={ranking} />}
+  </>;
+}
+
+async function connectedRecommendationCards(product: ConnectedProduct["product"], market: Market,
+  ranking: Awaited<ReturnType<typeof recommendationConfig>>) {
+  const { similar, complementary } = ranking.placements;
+  if (!similar.enabled && !complementary.enabled) return null;
+  const local = { marketId: market.id, locale: market.locale };
+  const companion = complementary.enabled && complementary.strategy === "curated"
+    ? [...new Set([...complementary.boosts, ...complementary.fallback])]
+      .filter(id => id !== product.id && !complementary.excludes.includes(id)) : [];
+  const configured = similar.enabled
+    ? [...new Set([...similar.boosts, ...similar.fallback])].filter(id => id !== product.id && !similar.excludes.includes(id) && !companion.includes(id))
+    : [];
+  try {
+    const category = similar.enabled && similar.strategy === "attributes"
+      ? await getDb().product.findMany({ where: {
+        id: { notIn: [product.id, ...configured, ...companion, ...similar.excludes] },
+        OR: [{ departmentId: product.primaryCategoryId }, { secondaryCategories: { some: { departmentId: product.primaryCategoryId } } }],
+        variants: { some: catalogVariantWhere(market.id, true) },
+      }, orderBy: [{ position: "asc" }, { id: "asc" }], take: 5, select: { id: true } }) : [];
+    const order = [...configured, ...category.map(row => row.id)];
+    const ids = [...new Set([...order, ...companion])];
+    if (!ids.length) return null;
+    const catalog = await listConnectedCatalog(new URLSearchParams({ limit: String(Math.min(100, ids.length)) }), local, undefined, undefined, { productIds: ids });
+    const eligible = new Map(catalog.items.filter(item => item.representative.offer.eligible).map(item => [item.id, item]));
+    const from = (ids: string[], limit: number) => ids.flatMap(id => eligible.get(id) ?? []).slice(0, limit);
+    return { related: from(order, 4), companions: from(companion, 3) };
+  } catch (error) {
+    reportFailure("recommendations.connected-related", undefined, error);
+    return null;
+  }
+}
+
+async function ConnectedRelatedProducts({ product, market, ranking }: {
+  product: ConnectedProduct["product"]; market: Market; ranking: Awaited<ReturnType<typeof recommendationConfig>>;
+}) {
+  const matching = await connectedRecommendationCards(product, market, ranking);
+  if (!matching) return null;
+  const { related, companions } = matching;
+  return <>
+      {!!related.length && <section className="home-section" aria-labelledby="connected-related-heading">
+        <SectionHeading id="connected-related-heading" title="Related products" />
+        <ConnectedCatalogCards products={related} market={market} offset={0} placement="similar" />
+      </section>}
+      {!!companions.length && <section className="home-section" aria-labelledby="connected-companions-heading">
+        <SectionHeading id="connected-companions-heading" title="Complete your setup" />
+        <ConnectedCatalogCards products={companions} market={market} offset={0} placement="complementary" />
+      </section>}
+    </>;
 }

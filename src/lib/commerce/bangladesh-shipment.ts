@@ -17,7 +17,7 @@ export type BangladeshTracking = Prisma.BangladeshShipmentGetPayload<typeof bang
 export const bangladeshStaffTrackingHistory = {
   select: {
     ...bangladeshTrackingHistory.select,
-    events: { ...bangladeshTrackingHistory.select.events, select: { ...bangladeshTrackingHistory.select.events.select, evidence: true } },
+    events: { ...bangladeshTrackingHistory.select.events, select: { ...bangladeshTrackingHistory.select.events.select, evidence: true, actorId: true } },
   },
 } satisfies Prisma.BangladeshShipmentDefaultArgs;
 

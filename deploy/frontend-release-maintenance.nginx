@@ -1,0 +1,8 @@
+# Replace the storefront include inside the frontend.griipbuddy.com TLS server during an outage.
+location / {
+    default_type text/plain;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header Cache-Control "private, no-store" always;
+    add_header Retry-After "600" always;
+    return 503 "GriipBuddy is temporarily unavailable. Please try again shortly.";
+}

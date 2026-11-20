@@ -28,13 +28,14 @@ export async function encodeCatalogImage(data: Buffer, contentType: string) {
   return { id, data: new Uint8Array(encoded) };
 }
 
-export async function storeCatalogImage(actorId: string, data: Buffer, contentType: string) {
+export async function storeCatalogImage(actorId: string, data: Buffer, contentType: string, purpose: "product" | "editorial" = "product") {
   const db = getDb();
   await authorize(db, actorId, true);
   const image = await encodeCatalogImage(data, contentType);
+  const editorial = purpose === "editorial";
   await db.$transaction(async (tx) => {
     await authorize(tx, actorId, true);
-    await tx.catalogMedia.upsert({ where: { id: image.id }, update: {}, create: image });
+    await tx.catalogMedia.upsert({ where: { id: image.id }, update: editorial ? { editorial } : {}, create: { ...image, editorial } });
   });
   return `/media/${image.id}`;
 }

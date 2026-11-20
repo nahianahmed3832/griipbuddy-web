@@ -1,0 +1,6 @@
+.section h2 { font-size: .88rem; margin: 0 0 .65rem; }
+.form { display: grid; gap: .45rem; max-width: 22rem; }
+.form [type="email"] { min-width: 0; padding: .6rem; border: 1px solid #aaa0a9; border-radius: .4rem; width: 100%; color: #241c24; background: #fff; }
+.checkbox { display: flex; gap: .45rem; align-items: flex-start; }
+.checkbox input { flex: none; }
+.form button { justify-self: start; margin-top: .2rem; }

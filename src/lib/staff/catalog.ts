@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { Prisma } from "../../generated/prisma/client.ts";
 import { getDb, type DbReader } from "../db/client.ts";
 import type { Specification } from "../catalog/types.ts";
+import { legacyCategoryScope, requireLegacyPilotCategories, requireLegacyPilotProduct, requireScopedLegacyWriter } from "../catalog/scoped-pilot.ts";
 import { mergeCatalogIdentifiers, productIdField, productInput, validationMessage, type ProductInput, type VariantInput } from "./catalog-input.ts";
 import { missingImage } from "./catalog-media.ts";
 import { productionMode } from "../release-config.ts";
@@ -18,12 +19,15 @@ const relations = {
 } as const satisfies Prisma.ProductInclude;
 type ProductRow = Prisma.ProductGetPayload<{ include: typeof relations }>;
 
-export async function catalogChoices(actorId: string) {
+export async function catalogChoices(actorId: string, legacyPilot = false, currentDepartmentId?: string) {
   const db = getDb();
   await authorize(db, actorId, true);
+  const categoryScope = legacyPilot ? await legacyCategoryScope(db) : {};
   const [departments, collections] = await Promise.all([
-    db.department.findMany({ orderBy: [{ position: "asc" }, { name: "asc" }] }),
-    db.collection.findMany({ orderBy: [{ position: "asc" }, { name: "asc" }] }),
+    db.department.findMany({ where: legacyPilot && currentDepartmentId ?
+      { OR: [categoryScope, { id: currentDepartmentId }] } : categoryScope,
+      orderBy: [{ position: "asc" }, { name: "asc" }] }),
+    legacyPilot ? [] : db.collection.findMany({ orderBy: [{ position: "asc" }, { name: "asc" }] }),
   ]);
   return { departments, collections };
 }
@@ -156,6 +160,7 @@ export async function previewProduct(actorId: string, input: ProductInput) {
   const db = getDb();
   await authorize(db, actorId, true);
   const row = await db.product.findUnique({ where: { id: input.id }, include: relations });
+  if (await requireScopedLegacyWriter(db)) await requireLegacyPilotProduct(db, input.id, row !== null);
   return prepareProduct(db, input, "csv", row);
 }
 
@@ -173,6 +178,8 @@ export async function saveProduct(
       await lockTaxonomy(tx);
       await lockProductEdits(tx, id);
       const row = await tx.product.findUnique({ where: { id }, include: relations });
+      const legacyPilot = await requireScopedLegacyWriter(tx);
+      if (legacyPilot) await requireLegacyPilotProduct(tx, id, row !== null);
       if (source !== "merchandising" && row?.publication === "DRAFT" && merchandisingEnabled() && await tx.merchandisingCandidate.findFirst({
         where: { productId: id, ownsDraft: true, catalogRevision: { not: null }, publishedAt: null }, select: { id: true },
       })) {
@@ -181,6 +188,15 @@ export async function saveProduct(
       if ((row?.revision ?? null) !== expectedRevision) throw new OperationError("This product changed. Reload the editor or preview the import again.");
       const withSummary = source === "csv" && row?.shortDescription ? { ...(raw as ProductInput), shortDescription: row.shortDescription } : raw;
       const { product, status } = await prepareProduct(tx, withSummary, source === "csv" ? "csv" : "editor", row);
+      if (legacyPilot) {
+        if (product.departmentId !== row?.departmentId) {
+          await requireLegacyPilotCategories(tx, [row?.departmentId, product.departmentId]);
+        }
+        const existingCollections = row?.collections.map(({ collectionId }) => collectionId) ?? [];
+        if (!isDeepStrictEqual(product.collectionIds, existingCollections)) {
+          throw new OperationError("Use the main GriipBuddy admin to change collection membership.");
+        }
+      }
       if (status === "Unchanged") return status;
 
       // Checkout locks offers before variants and products. Catalog updates follow that order.
@@ -214,9 +230,18 @@ export async function saveProduct(
       const addedCollections = collectionIds.filter(collectionId => !previousCollections.has(collectionId));
       if (removedCollections.length) await tx.collectionProduct.deleteMany({ where: { productId: id, collectionId: { in: removedCollections } } });
       if (addedCollections.length) await tx.collectionProduct.createMany({ data: addedCollections.map(collectionId => ({ collectionId, productId: id })) });
-      if (removedCollections.length || addedCollections.length) await tx.collection.updateMany({
-        where: { id: { in: [...removedCollections, ...addedCollections] } }, data: { revision: { increment: 1 } },
-      });
+      if (removedCollections.length || addedCollections.length) {
+        const collections = await tx.collection.updateManyAndReturn({
+          where: { id: { in: [...removedCollections, ...addedCollections] } },
+          data: { revision: { increment: 1 } }, select: { id: true, revision: true },
+        });
+        await tx.auditEvent.createMany({ data: collections.map(collection => ({
+          actorId, action: "TAXONOMY_SAVED", target: collection.id,
+          changes: { kind: "collection-membership", revision: collection.revision,
+            added: addedCollections.includes(collection.id) ? [id] : [],
+            removed: removedCollections.includes(collection.id) ? [id] : [] },
+        })) });
+      }
 
       for (const [position, variant] of variants.entries()) {
         const current = row?.variants.find(({ sku }) => sku === variant.sku);

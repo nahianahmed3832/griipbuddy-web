@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { SignInGate } from "@/components/marketplace/session";
-import { formatMoney, marketIds, type Market } from "@/config/markets";
+import { SellerPageHeader } from "@/components/marketplace/seller-ui";
+import { formatMoney, type Market } from "@/config/markets";
 import { currentMarket } from "@/lib/market-server";
-import { isMarketSelectable, marketConfiguration } from "@/lib/market-config";
 import { storefrontPath } from "@/config/storefront-path";
 import { orderDate } from "@/lib/commerce/labels";
 import { getShopper } from "@/lib/marketplace/auth";
+import { sellerFinanceTestEnabled } from "@/lib/marketplace/seller-finance";
 import { sellerOrderRange } from "@/lib/marketplace/seller-order-range";
 import { sellerShop } from "@/lib/marketplace/seller-orders";
 import { sellerStatement, SellerStatementRangeError } from "@/lib/marketplace/seller-statements";
@@ -50,7 +51,7 @@ function StatementOrder({ order, market }: { order: StatementRow; market: Market
   return <li className={`mp-list-card ${styles.order}`}>
     <header className={styles.orderHeading}>
       <div><h3>{order.reference}</h3><p className="commerce-muted">Placed {orderDate(order.createdAt, market.id)}</p></div>
-      <div className={styles.orderBalance}><span>Balance owed</span><strong>{money(order.balanceOwedMinor)}</strong></div>
+      <div className={styles.orderBalance}><span>Sample balance</span><strong>{money(order.balanceOwedMinor)}</strong></div>
     </header>
     <dl className={styles.progress} aria-label="COD progress">
       <div><dt>Delivery</dt><dd>{deliveryLabels[order.delivery]}</dd></div>
@@ -74,8 +75,7 @@ export default async function SellerStatementPage({ searchParams }: {
     return <div className="shell mp-page">{heading}<SignInGate>Sign in to view your seller statement.</SignInGate></div>;
   }
 
-  const [query, selected] = await Promise.all([searchParams, currentMarket()]);
-  const market = marketConfiguration(isMarketSelectable(query.market) ? query.market : selected.id);
+  const [query, market] = await Promise.all([searchParams, currentMarket()]);
   const money = (amountMinor: number) => formatMoney(amountMinor, market);
   const rate = new Intl.NumberFormat(market.defaultLocale, { style: "percent", maximumFractionDigits: 2 });
   const range = sellerOrderRange(query.from, query.to, new Date(), market.id);
@@ -96,32 +96,27 @@ export default async function SellerStatementPage({ searchParams }: {
     market: market.id, from: range?.from ?? "", to: range?.to ?? "", page: String(target),
   })}`;
 
-  return <div className="shell mp-page">
-    <nav className="mp-panel-links" aria-label="Shop navigation">
-      <Link href="/seller" prefetch={false}>Shop Manager</Link>
-      <Link href="/seller/orders" prefetch={false}>Shop orders</Link>
-    </nav>
-    <header className="mp-shop-hero">
-      <div className={styles.heading}>{heading}<p className={styles.hold}>Payouts on hold</p></div>
-      <p>{shop.name} · {market.name} COD · Sample statement</p>
-    </header>
-    <form action={storefrontPath("/seller/statements")} method="get" className="mp-inline" aria-label="Filter statement by order date">
-      <label>Market <select name="market" defaultValue={market.id}>
-        {marketIds.filter(isMarketSelectable).map(id => <option key={id} value={id}>{marketConfiguration(id).name}</option>)}
-      </select></label>
+  return <>
+    <SellerPageHeader title="Seller statement" description={`${shop.name} · ${market.name} COD · Sample statement`}
+      actions={<>{sellerFinanceTestEnabled() && <Link className="seller-button" href={`/seller/finance?market=${market.id}`}>Open test finance</Link>}
+        <span className={styles.hold}>Payouts on hold</span></>} />
+    <section className="seller-panel" aria-label="Statement filters">
+    <form action={storefrontPath("/seller/statements")} method="get" className="seller-filters" aria-label="Filter statement by order date">
+      <input name="market" type="hidden" value={market.id}/>
       <label>From <input name="from" type="date" min="1970-01-01" defaultValue={range?.from ?? (typeof query.from === "string" ? query.from : "")} /></label>
       <label>To <input name="to" type="date" min="1970-01-01" defaultValue={range?.to ?? (typeof query.to === "string" ? query.to : "")} /></label>
-      <button type="submit" className="button button--outline">Apply filters</button>
-      {!range && <p role="alert">Choose a valid date range. The From date must be on or before the To date.</p>}
-      {rangeError && <p role="alert">{rangeError}</p>}
+      <button type="submit" className="seller-button seller-button-primary">Apply filters</button>
     </form>
+    {!range && <p className="seller-field-error" role="alert">Choose a valid date range. The From date must be on or before the To date.</p>}
+    {rangeError && <p className="seller-field-error" role="alert">{rangeError}</p>}
+    </section>
     {statement && <>
-      <section className="mp-section" aria-labelledby="statement-summary">
+      <section className="seller-panel" aria-labelledby="statement-summary">
         <h2 id="statement-summary">Statement summary</h2>
         <p className="commerce-muted">Order dates use {market.timeZone}. Status reflects records through {orderDate(statement.asOf, market.id)}.</p>
         <div className={styles.summary}>
           <div className={styles.balance}>
-            <h3>Balance owed</h3>
+            <h3>Sample balance</h3>
             <strong>{money(statement.totals.balanceOwedMinor)} <span>{statement.currency}</span></strong>
             <p>Balance includes merchandise from matched COD orders, less discounts, approved return adjustments, commission, and allocated courier fees.</p>
             <dl className={styles.breakdown}>
@@ -137,7 +132,7 @@ export default async function SellerStatementPage({ searchParams }: {
           </div>
         </div>
       </section>
-      <section className="mp-section" aria-labelledby="statement-orders">
+      <section className="seller-panel" aria-labelledby="statement-orders">
         <h2 id="statement-orders">Orders in this statement</h2>
         {statement.rows.length === 0 ? <p>No sample COD orders match these dates.</p> : <ul className={styles.orders}>
           {statement.rows.slice((page - 1) * pageSize, page * pageSize).map(order => <StatementOrder order={order} market={market} key={order.orderId} />)}
@@ -149,5 +144,5 @@ export default async function SellerStatementPage({ searchParams }: {
         </nav>}
       </section>
     </>}
-  </div>;
+  </>;
 }

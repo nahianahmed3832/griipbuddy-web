@@ -1,7 +1,9 @@
 import type { MarketId } from "../../config/markets.ts";
 import { getDb } from "../db/client.ts";
+import { developmentAcceptanceDatabase, localDatabase } from "../db/local.ts";
 import { marketConfiguration } from "../market-config.ts";
 import { acquisitionCampaign } from "./campaign.ts";
+import { fixtureConversionPreview } from "./conversion-preview.ts";
 import {
   cohort, cohortWindow, eligiblePath, ga4BookedOrder, journeyDays, measurementRetentionDays, type CommerceMeasurementRow,
 } from "./domain.ts";
@@ -129,6 +131,8 @@ export async function acquisitionReport(input: {
   let orderPeriodTotal = 0, unmatched = 0, matchedOutsideCohort = 0;
   let matched = 0, cancelled = 0, delivered = 0, shipped = 0, awaitingCod = 0;
   let sampleOrder: ReturnType<typeof ga4BookedOrder> = null;
+  let sampleConfirmation: ReturnType<typeof fixtureConversionPreview> = null;
+  const fixturePreview = input.test && (localDatabase() === "griipbuddy_test" || developmentAcceptanceDatabase());
   for (const order of orders) {
     const journeyId = order.measurement?.journeyId;
     const path = journeyId ? eligiblePath(journeys.get(journeyId) ?? [], order) : null;
@@ -162,7 +166,10 @@ export async function acquisitionReport(input: {
         financial.collectionOrders++;
         financial.collected += BigInt(event.amountMinor ?? 0);
       }
-      if (order.native) debug.push(debugRecord(event, included.product.campaign));
+      if (order.native) {
+        debug.push(debugRecord(event, included.product.campaign));
+        if (fixturePreview) sampleConfirmation ??= fixtureConversionPreview(event, input.marketId);
+      }
     }
     if (order.fulfillmentStatus === "DELIVERED") delivered++;
     if (order.fulfillmentStatus === "SHIPPED") shipped++;
@@ -177,7 +184,7 @@ export async function acquisitionReport(input: {
   return {
     kind: "report" as const, window, now, cutoff, funnel, sources, matched, cancelled, delivered, shipped, awaitingCod,
     behavior, commerce, bridgeCommerce, forecast: result.forecast,
-    currencies, unmatched, orderPeriodTotal, unclassified, matchedOutsideCohort, sampleOrder,
+    currencies, unmatched, orderPeriodTotal, unclassified, matchedOutsideCohort, sampleOrder, sampleConfirmation,
     latestObservation: recent[0]?.at,
     debug: debug.sort((a, b) => +b.at - +a.at || a.id.localeCompare(b.id)).slice(0, 60),
   };

@@ -2,107 +2,80 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
-import { formatMoney, type Market, type MarketId } from "@/config/markets";
-import { storefrontBasePath, storefrontPath } from "@/config/storefront-path";
+import { formatMoney, type Market } from "@/config/markets";
+import { localizedStorePath } from "@/config/regional-path";
 import { clearBuyPersonalization, rememberBuyPersonalization, useBuyPersonalization } from "@/lib/cart/buy-personalization";
 import { useCart, useCartActions } from "@/lib/cart/browser";
 import { compareCartItems, type CartItem, type CheckoutCartItem } from "@/lib/cart/model";
+import { rememberPaypal, usePendingPaypal, type PendingPayPal } from "@/lib/cart/paypal-attempt";
 import { personalizationAvailable, personalizationText, type Personalization } from "@/lib/catalog/personalization";
-import type { paypalQuote } from "@/lib/commerce/paypal-checkout";
-import { checkoutFailureCode, checkoutStep, measurementCheckoutHeaders, useCheckoutMeasurement, useCheckoutValidation,
+import type { CheckoutCartContext, OrderPlaced } from "@/lib/commerce/checkout-types";
+import type { PayPalPaymentResult, paypalQuote } from "@/lib/commerce/paypal-checkout";
+import { checkoutFailureCode, checkoutStep, useCheckoutMeasurement, useCheckoutValidation,
   useForegroundObservation } from "@/lib/measurement/browser";
 import type { CheckoutStep } from "@/lib/measurement/schema";
+import type { CheckoutAddress } from "./checkout-view";
 import { OrderBreakdown } from "./order-summary";
 import { PersonalizationField } from "./personalization-field";
 import { useCartPricing } from "./cart-pricing";
+import { checkoutFailures, postCheckout, sandboxApprovalUrl } from "./checkout-request";
 
 type Customer = {
   country: "US"; name: string; email: string; phone: string; addressLine1: string;
   addressLine2: string; city: string; state: string; postalCode: string;
 };
-type Checkout = { customer: Customer; items: CheckoutCartItem[] };
+type Checkout = { customer: Customer; items: CheckoutCartItem[]; cart: CheckoutCartContext };
 type Quoted = Extract<Awaited<ReturnType<typeof paypalQuote>>, { kind: "quoted" }>;
-type Result =
-  | Quoted
-  | { kind: "approval_required"; approvalUrl: string; attemptId: string }
-  | { kind: "placed"; orderId: string; purchased: CheckoutCartItem[] }
-  | { kind: "pending" | "abandoned" | "invalid" | "unavailable" | "conflict" | "error"; message: string; issues?: string[] };
+type Result = Quoted | PayPalPaymentResult;
 type Review = { checkout: Checkout; quote: Quoted["quote"] };
-type Attempt = { id: string; direct?: CartItem & { personalizationIntent?: string } };
 export type PaypalCallback = { action: "capture" | "cancel"; attemptId: string };
 
-const pendingKey = `griipbuddy:paypal-checkout${storefrontBasePath}`;
-const pendingListeners = new Set<() => void>();
-const localPending = new Map<MarketId, string>();
-const keyFor = (marketId: MarketId) => `${pendingKey}:${marketId}`;
-
-function subscribePending(listener: () => void) {
-  pendingListeners.add(listener);
-  return () => { pendingListeners.delete(listener); };
-}
-
-function readPending(marketId: MarketId) {
-  try {
-    return window.sessionStorage.getItem(keyFor(marketId)) ?? localPending.get(marketId) ??
-      (marketId === "us" ? window.sessionStorage.getItem(pendingKey) : null);
-  } catch { return localPending.get(marketId) ?? null; }
-}
-
-function rememberPaypal(marketId: MarketId, attempt: Attempt | null) {
-  if (attempt) localPending.set(marketId, JSON.stringify(attempt));
-  else localPending.delete(marketId);
-  try {
-    const saved = localPending.get(marketId);
-    if (saved) window.sessionStorage.setItem(keyFor(marketId), saved);
-    else window.sessionStorage.removeItem(keyFor(marketId));
-    if (marketId === "us") window.sessionStorage.removeItem(pendingKey);
-  } catch { /* Keep the in-memory recovery reference in this tab. */ }
-  for (const listener of pendingListeners) listener();
-}
-
-export function usePendingPaypal(marketId: MarketId): Attempt | null {
-  const raw = useSyncExternalStore(subscribePending, () => readPending(marketId), () => null);
-  try { return raw ? JSON.parse(raw) as Attempt : null; }
-  catch { return null; }
-}
-
-async function paypalRequest(marketId: MarketId, body: object): Promise<Result> {
-  const response = await fetch(storefrontPath("/api/checkout/paypal"), {
-    method: "POST", headers: { "Content-Type": "application/json", "x-griipbuddy-checkout-market": marketId, ...measurementCheckoutHeaders() }, body: JSON.stringify(body),
-  });
-  if (response.status >= 500) throw new Error("Checkout response unavailable");
-  return response.json() as Promise<Result>;
-}
+const paypalPath = "/api/checkout/paypal";
+const paypalSandboxOrigin = "https://www.sandbox.paypal.com";
+const paymentOutcomes = ["approval_required", "placed", "pending", "abandoned", ...checkoutFailures] as const;
 
 const initialCustomer: Customer = {
   country: "US", name: "", email: "", phone: "", addressLine1: "", addressLine2: "", city: "", state: "", postalCode: "",
 };
 
-export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnabled, callback, onCallbackCleared, destinationControl, shopperAddress, directItem, demo,
+export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnabled, callback: returnCallback, onCallbackCleared, destinationControl, shopperAddress, addresses = [], directItem, demo,
   directName, directProductId, directPersonalization, personalizationIntent }: {
   market: Market;
   intakeOpen: boolean; quoteEnabled: boolean; paymentEnabled: boolean; callback?: PaypalCallback; onCallbackCleared: () => void; destinationControl: ReactNode;
   shopperAddress?: Pick<Customer, "name" | "email">;
+  addresses?: readonly CheckoutAddress[];
   demo?: boolean;
   directItem?: CartItem; directName?: string; directProductId?: string; directPersonalization?: Personalization; personalizationIntent?: string;
 }) {
   const router = useRouter();
   const marketId = market.id;
-  const { ready: cartReady, items: cartItems, sync, message: syncMessage } = useCart();
+  const { ready: cartReady, items: cartItems, revision, sync, message: syncMessage } = useCart();
   const { completePurchase, retrySync } = useCartActions();
   const priced = useCartPricing();
   const pending = usePendingPaypal(marketId);
+  const callback = returnCallback && (!pending || returnCallback.attemptId === pending.id) ? returnCallback : undefined;
   const ready = cartReady || Boolean(directItem || pending || callback);
-  const [customer, setCustomer] = useState({ ...initialCustomer, ...shopperAddress });
+  const usableAddresses = addresses.filter(item => item.value.country === "US" &&
+    item.value.address.length <= 120 && item.value.district.length === 2);
+  const defaultAddress = usableAddresses.find(item => item.isDefault);
+  function shopperCustomer(entry?: CheckoutAddress): Customer {
+    const value = entry?.value;
+    return !value ? { ...initialCustomer, ...shopperAddress } : { ...initialCustomer, name: value.name,
+      email: value.email ?? "", phone: value.phone, addressLine1: value.address, city: value.locality,
+      state: value.district.toUpperCase(), postalCode: value.postalCode ?? "" };
+  }
+  const [customer, setCustomer] = useState(() => shopperCustomer(defaultAddress));
   const [review, setReview] = useState<Review | null>(null);
   const [message, setMessage] = useState<{ text: string; issues?: string[]; error: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [resumeUrl, setResumeUrl] = useState<string>();
+  const [retryPath, setRetryPath] = useState<string>();
   const inFlight = useRef(false);
   const handledCallback = useRef<string>(null);
   const reviewSummary = useRef<HTMLElement>(null);
+  const statusHeading = useRef<HTMLHeadingElement>(null);
   const carriedText = useBuyPersonalization(personalizationIntent, directItem?.variantId);
   const [personalizationDraft, setPersonalizationDraft] = useState<string | null>(null);
   const directText = directPersonalization ? (personalizationDraft ?? carriedText) : "";
@@ -110,10 +83,10 @@ export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnable
   const personalizationValid = (!directText.trim() || Boolean(personalization)) &&
     personalizationAvailable(directPersonalization, personalization);
   const items = directItem ? [{ ...directItem, ...(personalization && { personalization }) }] : priced.cart?.checkoutItems ?? [];
-  const cartChanged = Boolean(review && JSON.stringify([...items].sort(compareCartItems)) !==
-    JSON.stringify([...review.checkout.items].sort(compareCartItems)));
+  const cartChanged = Boolean(review && ((review.checkout.cart.source === "cart" && revision !== review.checkout.cart.revision) ||
+    JSON.stringify([...items].sort(compareCartItems)) !== JSON.stringify([...review.checkout.items].sort(compareCartItems))));
   const activeAttempt = callback?.attemptId ?? pending?.id;
-  const cartEligible = Boolean(directItem || priced.cart && priced.cart.affectedLines === 0);
+  const cartEligible = Boolean(directItem || !priced.refreshing && priced.cart && priced.cart.affectedLines === 0);
   const singleLine = items.length === 1 && (directItem || cartItems.length === 1) ? items[0] : undefined;
   const checkoutContext = singleLine ? { variantId: singleLine.variantId, offerId: singleLine.offerId,
     productId: directItem ? directProductId : priced.cart?.lines.find(line => line.status === "available")?.product?.productId,
@@ -123,6 +96,9 @@ export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnable
   useForegroundObservation(`${marketId}-unavailable`, ready && cartEligible && !quoteEnabled && items.length > 0 && !activeAttempt,
     () => reportStep("ADDRESS", "UNAVAILABLE"));
   const reportInvalidAddress = useCheckoutValidation(marketId, checkoutContext);
+  useEffect(() => {
+    if (activeAttempt || retryPath) statusHeading.current?.focus();
+  }, [activeAttempt, retryPath]);
 
   function updateCustomer(key: Exclude<keyof Customer, "country">, value: string) {
     setReview(null);
@@ -152,26 +128,33 @@ export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnable
   }
 
   function showResult(result: Extract<Result, { message: string }>) {
-    setMessage({ text: result.message, issues: result.issues, error: result.kind !== "abandoned" && result.kind !== "pending" });
+    setMessage({ text: result.message, issues: "issues" in result ? result.issues : undefined,
+      error: result.kind !== "abandoned" && result.kind !== "pending" });
+  }
+
+  async function finish(result: OrderPlaced, attempt: PendingPayPal | null) {
+    if (attempt ? !attempt.direct : result.purchased.some(line => line.cartOfferId || line.cartVariantId)) {
+      await completePurchase(result.orderId, result.purchased, attempt?.cartRevision);
+    }
+    if (attempt?.direct) clearBuyPersonalization(attempt.direct.personalizationIntent, attempt.direct.variantId);
+    if (attempt) rememberPaypal(marketId, null);
+    router.replace(`/orders/${result.orderId}`);
   }
 
   async function processAttempt(action: "capture" | "recover" | "cancel", attemptId: string) {
     if (inFlight.current) return;
     reportStep("RECOVERY");
+    setResumeUrl(undefined);
     await run("RECOVERY", async () => {
-      const result = await paypalRequest(marketId, { action, attemptId });
+      const result = await postCheckout<PayPalPaymentResult>(market, paypalPath, { action, attemptId }, paymentOutcomes);
+      if ("attemptId" in result && result.attemptId !== attemptId) throw new Error("Unexpected PayPal attempt");
       const match = pending?.id === attemptId ? pending : null;
       if (result.kind === "placed") {
-        if (match && !match.direct || !match && result.purchased.some(line => line.cartOfferId || line.cartVariantId)) {
-          await completePurchase(result.orderId, result.purchased);
-        }
-        if (match?.direct) clearBuyPersonalization(match.direct.personalizationIntent, match.direct.variantId);
-        if (match) rememberPaypal(marketId, null);
-        router.replace(`/orders/${result.orderId}`);
+        await finish(result, match);
         return;
       }
       if (result.kind === "approval_required") {
-        setResumeUrl(result.approvalUrl);
+        setResumeUrl(sandboxApprovalUrl(result.approvalUrl, paypalSandboxOrigin));
         if (action === "capture") setMessage({ text: "PayPal approval is still required.", error: false });
         return;
       }
@@ -184,13 +167,13 @@ export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnable
         setResumeUrl(undefined);
         setReview(null);
         clearCallback();
-        if (callback && match?.direct) {
+        if (match?.direct && !directItem) {
           const { variantId, offerId, quantity, personalizationIntent: savedIntent } = match.direct;
           const params = new URLSearchParams({ market: marketId, buy: variantId, quantity: String(quantity) });
           if (offerId) params.set("offer", offerId);
           if (savedIntent) params.set("custom", savedIntent);
-          router.replace(`/checkout?${params}`);
-        }
+          setRetryPath(`${demo ? localizedStorePath("/checkout", marketId) : "/checkout"}?${params}`);
+        } else requestAnimationFrame(() => reviewSummary.current?.focus());
       }
     }, "We couldn’t verify your PayPal payment. Check this attempt before starting a new one.");
   }
@@ -206,12 +189,15 @@ export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnable
 
   function reviewOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!items.length || !personalizationValid || inFlight.current) return;
+    if (!items.length || !cartEligible || !personalizationValid || inFlight.current) return;
     reportStep("ADDRESS");
     reportStep("DELIVERY_PAYMENT");
-    const checkout: Checkout = { customer: { ...customer, state: customer.state.toUpperCase() }, items: [...items] };
+    const checkout: Checkout = {
+      customer: { ...customer, state: customer.state.toUpperCase() }, items: [...items],
+      cart: directItem ? { source: "buy-now" } : { source: "cart", revision },
+    };
     void run("REVIEW", async () => {
-      const result = await paypalRequest(marketId, { action: "quote", checkout });
+      const result = await postCheckout<Result>(market, paypalPath, { action: "quote", checkout }, ["quoted", ...checkoutFailures]);
       if (result.kind === "quoted") {
         reportStep("REVIEW");
         setReview({ checkout, quote: result.quote });
@@ -224,25 +210,36 @@ export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnable
   }
 
   function startPayment() {
-    if (!review || cartChanged || inFlight.current || !paymentEnabled || pending) return;
+    if (!review || !cartEligible || cartChanged || inFlight.current || !paymentEnabled || activeAttempt) return;
     reportStep("SUBMIT");
     const attemptId = crypto.randomUUID();
-    const savedIntent = directItem && personalization ? rememberBuyPersonalization(directItem.variantId, personalization) : undefined;
-    rememberPaypal(marketId, { id: attemptId, direct: directItem ? { ...directItem, personalizationIntent: savedIntent } : undefined });
+    const savedIntent = directItem && personalization
+      ? personalizationDraft !== null || !personalizationIntent
+        ? rememberBuyPersonalization(directItem.variantId, personalization) : personalizationIntent
+      : undefined;
+    const attempt = { id: attemptId, cartRevision: review.checkout.cart.revision, direct: directItem && {
+      variantId: directItem.variantId, offerId: directItem.offerId, quantity: directItem.quantity, personalizationIntent: savedIntent,
+    } };
+    rememberPaypal(marketId, attempt);
     void run("SUBMIT", async () => {
-      const result = await paypalRequest(marketId, { action: "create", checkout: review.checkout, quoteToken: review.quote.quoteToken, attemptId });
+      const result = await postCheckout<PayPalPaymentResult>(market, paypalPath,
+        { action: "create", checkout: review.checkout, quoteToken: review.quote.quoteToken, attemptId }, paymentOutcomes);
+      if ("attemptId" in result && result.attemptId !== attemptId) throw new Error("Unexpected PayPal attempt");
       if (result.kind === "approval_required") {
+        const approvalUrl = sandboxApprovalUrl(result.approvalUrl, paypalSandboxOrigin);
         reportStep("PROVIDER_REDIRECT");
-        window.location.assign(result.approvalUrl);
+        window.location.assign(approvalUrl);
         return;
       }
+      if (result.kind === "placed") { await finish(result, attempt); return; }
       if ("message" in result) {
         if (result.kind !== "pending") reportStep("SUBMIT", checkoutFailureCode(result.kind));
         showResult(result);
       }
-      if (result.kind === "invalid" || result.kind === "conflict" || result.kind === "unavailable" || result.kind === "abandoned") {
+      if (result.kind === "invalid" || result.kind === "conflict" || result.kind === "abandoned") {
         rememberPaypal(marketId, null);
         setReview(null);
+        requestAnimationFrame(() => reviewSummary.current?.focus());
       }
     }, "Couldn’t confirm whether PayPal started. Check this attempt before trying again.");
   }
@@ -255,22 +252,31 @@ export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnable
     <p>{syncMessage}</p><button type="button" className="button button--outline" onClick={retrySync}>Retry cart sync</button>
   </> : "Loading your cart…"}</div>;
 
-  if (activeAttempt) return <section className="commerce-panel commerce-form">
-    <h2>{busy ? "Checking PayPal payment…" : "Your PayPal payment"}</h2>
+  if (activeAttempt) return <section className="commerce-panel commerce-form checkout-status">
+    <h2 ref={statusHeading} tabIndex={-1}>Your PayPal payment</h2>
+    {busy && <p role="status">Checking PayPal payment…</p>}
     {status}
-    {!busy && <div className="commerce-stack">
+    <div className="checkout-status-actions">
       {resumeUrl && <a className="button button--primary" href={resumeUrl} onClick={() => reportStep("PROVIDER_REDIRECT")}>Continue to PayPal</a>}
-      <button type="button" className="button button--outline" onClick={() => void processAttempt(callback?.action ?? "recover", activeAttempt)}>
+      <button type="button" className="button button--outline" disabled={busy} onClick={() => void processAttempt(callback?.action ?? "recover", activeAttempt)}>
         Check payment status
       </button>
-      {callback?.action !== "cancel" && <button type="button" className="link-button" onClick={() => void processAttempt("cancel", activeAttempt)}>
+      {callback?.action !== "cancel" && <button type="button" className="link-button" disabled={busy} onClick={() => void processAttempt("cancel", activeAttempt)}>
         Cancel payment attempt
       </button>}
-    </div>}
+      <Link href="/cart" className="text-link">Back to cart</Link>
+    </div>
+  </section>;
+
+  if (retryPath) return <section className="commerce-panel commerce-form checkout-status">
+    <h2 ref={statusHeading} tabIndex={-1}>Your PayPal payment</h2>
+    {status}
+    <Link className="button button--outline" href={retryPath} prefetch={false}>Review order again</Link>
   </section>;
 
   if (!quoteEnabled) return <div className="commerce-panel commerce-form">
     {destinationControl}
+    {status}
     <p>{intakeOpen ? "United States delivery is unavailable in this preview." : "Checkout is paused. Your cart is still saved."}</p>
     <Link className="button button--outline" href="/cart">Back to cart</Link>
   </div>;
@@ -312,6 +318,11 @@ export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnable
         <h2><span className="checkout-section-number" aria-hidden="true">1</span> Delivery address</h2>
         {demo && <p className="commerce-muted">Use sample contact and address details for this test order.</p>}
         {destinationControl}
+        {usableAddresses.length > 0 && <label>Saved addresses<select defaultValue={defaultAddress?.id ?? ""} onChange={event => {
+          setReview(null);
+          setMessage(null);
+          setCustomer(shopperCustomer(usableAddresses.find(item => item.id === event.target.value)));
+        }}><option value="">Enter a new address</option>{usableAddresses.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
         <label>Full name<input required autoComplete="name" minLength={2} maxLength={100} value={customer.name} onChange={event => updateCustomer("name", event.target.value)} /></label>
         <div className="commerce-fields">
           <label>Phone number<input required type="tel" autoComplete="tel" maxLength={28} value={customer.phone} onChange={event => updateCustomer("phone", event.target.value)} /></label>
@@ -354,7 +365,7 @@ export function PaypalCheckout({ market, intakeOpen, quoteEnabled, paymentEnable
         <p className="commerce-muted">Enter your address to confirm the total.</p>
       </section>}
       {quote && !paymentEnabled ? <p className="commerce-message">PayPal sandbox credentials are required to test payment.</p> :
-        <button className="button button--primary" type="submit" disabled={busy || !personalizationValid}>
+        <button className="button button--primary" type="submit" disabled={busy || !cartEligible || !personalizationValid}>
           {busy ? "Checking order…" : quote ? "Continue to PayPal" : "Review order"} <ArrowRight size={17} aria-hidden="true" />
         </button>}
     </aside>

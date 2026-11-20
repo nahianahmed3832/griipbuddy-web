@@ -3,7 +3,8 @@ import type { CodRemittanceStatus, Prisma } from "../../generated/prisma/client.
 import { defaultMarketId, markets, type MarketId } from "../../config/markets.ts";
 import { uuid } from "../commerce/checkout-types.ts";
 import { parcelWasRefused } from "../commerce/parcel-tracking.ts";
-import { getDb } from "../db/client.ts";
+import { itemizedAmount } from "../marketplace/case-money.ts";
+import { getDb, type DbReader } from "../db/client.ts";
 import { authorize, OperationError } from "./operations.ts";
 
 const amountMinor = z.number().int().min(0).max(2_147_483_647);
@@ -23,9 +24,19 @@ const eligibleDelivery = {
   status: "PLACED",
   fulfillmentStatus: "DELIVERED",
   OR: [{ bangladeshShipment: null }, { bangladeshShipment: { status: "DELIVERED" } }],
-  parcels: { none: { status: { not: "DELIVERED" } } },
+  parcels: { none: { cancelledAt: null, status: { not: "DELIVERED" } } },
 } satisfies Prisma.OrderWhereInput;
-const failedParcel = { status: { in: ["REFUSED", "RETURNED"] } } satisfies Prisma.OrderParcelWhereInput;
+const failedParcel = { cancelledAt: null, status: { in: ["REFUSED", "RETURNED"] } } satisfies Prisma.OrderParcelWhereInput;
+
+async function reconcilesCollectible(db: DbReader, order: { id: string; totalMinor: number }, amountMinor: number) {
+  const lines = await db.orderCaseReturnLine.findMany({
+    where: { orderCase: { orderId: order.id, kind: "CANCEL", cancellationAppliedAt: { not: null }, status: "RESOLVED" } },
+    select: { quantity: true, settlementUnitOffset: true,
+      orderItem: { select: { quantity: true, lineTotalMinor: true, taxAllocatedMinor: true } } },
+  });
+  const adjustment = itemizedAmount(lines);
+  return adjustment !== null && amountMinor === order.totalMinor - adjustment;
+}
 
 export async function recordCodRemittance(actorId: string, orderId: string, input: unknown): Promise<CodRemittanceStatus> {
   if (!uuid.safeParse(orderId).success) throw new OperationError("Order not found.");
@@ -38,13 +49,15 @@ export async function recordCodRemittance(actorId: string, orderId: string, inpu
     await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
     const order = await tx.order.findFirst({
       where: { id: orderId, payment: codPayment, ...eligibleDelivery },
-      select: { currency: true, totalMinor: true, payment: { select: { status: true, amountMinor: true, currency: true } } },
+      select: { id: true, currency: true, totalMinor: true, payment: { select: { status: true, amountMinor: true, currency: true } } },
     });
     if (!order?.payment || order.payment.status !== "COLLECTED" || order.payment.currency !== order.currency) {
       throw new OperationError("Remittance requires a delivered COD order with collection recorded in the order currency.");
     }
     const expectedGrossMinor = order.payment.amountMinor;
-    if (expectedGrossMinor !== order.totalMinor) throw new OperationError("The COD payment amount differs from the order total. Review it before recording remittance.");
+    if (!await reconcilesCollectible(tx, order, expectedGrossMinor)) {
+      throw new OperationError("The COD amount differs from the order and recorded cancellations. Review it before recording remittance.");
+    }
 
     const previous = await tx.codRemittance.findFirst({
       where: { orderId, ...parsed.data }, select: { status: true },
@@ -95,7 +108,7 @@ const orderFilters = {
 
 const deliveryHistoryFields = {
   bangladeshShipment: { select: { status: true, statusUpdatedAt: true } },
-  parcels: { select: { status: true } },
+  parcels: { where: { cancelledAt: null }, select: { status: true } },
   payment: { select: { status: true, amountMinor: true, currency: true, collectedAt: true } },
   events: {
     where: { type: "STATUS_CHANGED", status: "DELIVERED" },
@@ -176,7 +189,7 @@ export async function codReconciliationOrder(actorId: string, orderId: string) {
   const eligible = order.status === "PLACED" && order.fulfillmentStatus === "DELIVERED"
     && (!order.bangladeshShipment || order.bangladeshShipment.status === "DELIVERED")
     && order.parcels.every(parcel => parcel.status === "DELIVERED");
-  const canRecord = eligible && order.payment.status === "COLLECTED" && order.payment.amountMinor === order.totalMinor
+  const canRecord = eligible && order.payment.status === "COLLECTED" && await reconcilesCollectible(db, order, order.payment.amountMinor)
     && order.codRemittances[0]?.status !== "MATCHED";
   return { ...withDeliveryDate(order), payment: order.payment, eligible, canRecord };
 }

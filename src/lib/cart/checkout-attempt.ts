@@ -3,11 +3,13 @@
 import { useSyncExternalStore } from "react";
 import { storefrontBasePath } from "../../config/storefront-path";
 import { defaultMarketId, type MarketId } from "../../config/markets";
+import { MAX_QUANTITY, validCartOfferId, validVariantId } from "./model";
 
 const pendingKey = `griipbuddy:pending-checkout${storefrontBasePath}`;
 const pendingListeners = new Set<() => void>();
 const volatilePending = new Map<MarketId, string>();
 const keyFor = (marketId: MarketId) => `${pendingKey}:${marketId}`;
+type PendingDirect = { variantId: string; offerId?: string; quantity: number; personalizationIntent?: string };
 
 function subscribePending(listener: () => void) {
   pendingListeners.add(listener);
@@ -21,8 +23,11 @@ function readPending(marketId: MarketId): string | null {
   } catch { return volatilePending.get(marketId) ?? null; }
 }
 
-export function rememberPending(marketId: MarketId, attemptId: string | null, direct = false, prepaid = false) {
-  const value = attemptId ? `${prepaid ? "prepaid:" : ""}${direct ? "direct:" : ""}${attemptId}` : null;
+export function rememberPending(marketId: MarketId, attemptId: string | null, directItem?: PendingDirect, prepaid = false,
+  cartRevision?: number) {
+  const attempt = `${prepaid ? "prepaid:" : ""}${directItem ? "direct:" : ""}${attemptId}`;
+  const value = !attemptId ? null : directItem ? `${attempt}|${JSON.stringify(directItem)}`
+    : cartRevision === undefined ? attempt : `${attempt}|revision:${cartRevision}`;
   if (value) volatilePending.set(marketId, value);
   else volatilePending.delete(marketId);
   try {
@@ -38,7 +43,24 @@ export function rememberPending(marketId: MarketId, attemptId: string | null, di
 export function usePendingCheckout(marketId: MarketId) {
   const raw = useSyncExternalStore(subscribePending, () => readPending(marketId), () => null);
   if (!raw) return null;
-  const prepaid = raw.startsWith("prepaid:");
-  const attempt = raw.replace(/^prepaid:/, "");
-  return { id: attempt.replace(/^direct:/, ""), direct: attempt.startsWith("direct:"), prepaid };
+  const [value, item] = raw.split("|", 2);
+  const prepaid = value.startsWith("prepaid:");
+  const attempt = value.replace(/^prepaid:/, "");
+  const direct = attempt.startsWith("direct:");
+  const id = attempt.replace(/^direct:/, "");
+  if (!validCartOfferId(id)) return null;
+  const revision = !direct && item && /^revision:\d{1,10}$/u.test(item) ? Number(item.slice(9)) : undefined;
+  let directItem: PendingDirect | undefined;
+  if (direct && item) {
+    try {
+      const parsed = JSON.parse(item) as Partial<PendingDirect> | null;
+      if (parsed && validVariantId(parsed.variantId) &&
+          (parsed.offerId === undefined || validCartOfferId(parsed.offerId)) && typeof parsed.quantity === "number" &&
+          Number.isInteger(parsed.quantity) && parsed.quantity >= 1 && parsed.quantity <= MAX_QUANTITY) {
+        directItem = { variantId: parsed.variantId, offerId: parsed.offerId, quantity: parsed.quantity,
+          personalizationIntent: validCartOfferId(parsed.personalizationIntent) ? parsed.personalizationIntent : undefined };
+      }
+    } catch { /* Legacy attempts can still recover without direct checkout details. */ }
+  }
+  return { id, direct, prepaid, directItem, cartRevision: revision };
 }

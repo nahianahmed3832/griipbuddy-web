@@ -96,7 +96,7 @@ test("production build journey from owner CSV through customer delivery status",
     });
     await expect(variant.getByLabel("Stock adjustment (0 available)")).toBeVisible();
 
-    const query = page.getByRole("searchbox");
+    const query = page.getByRole("combobox", { name: /Search products|Search for items or shops/ });
     await query.fill(suffix);
     await query.press("Enter");
     await page.getByRole("link", { name: new RegExp(name) }).first().click();

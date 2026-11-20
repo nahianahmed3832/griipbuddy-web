@@ -1,0 +1,12 @@
+.workspace-command { margin-block: 12px; }
+.workspace-command fieldset { display: grid; gap: 11px; min-inline-size: 0; border: 0; padding: 0; margin: 0; }
+.workspace-command label { display: grid; gap: 5px; font-weight: 650; }
+.workspace-command label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
+.workspace-command :is(input:not([type="checkbox"]),select,textarea) { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid #d2c7bb; border-radius: 7px; color: inherit; background: #fff; font: inherit; }
+.workspace-command textarea { resize: vertical; }
+.workspace-command button { justify-self: start; white-space: normal; }
+.workspace-command p { margin-block: 8px 0; }
+.workspace-command [role="alert"] { color: #8c2636; }
+.seller-settings-address { border-top: 1px solid var(--seller-line); margin-block: 14px; padding-block: 14px 0; }
+.seller-settings-address summary { cursor: pointer; font-weight: 700; }
+.seller-settings-address > h3 { margin: 0 0 6px; font-size: 15px; }

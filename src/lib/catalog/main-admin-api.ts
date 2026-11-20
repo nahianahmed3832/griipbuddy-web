@@ -1,16 +1,24 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { getDb } from "../db/client.ts";
-import { privateHeaders, readBody } from "../db/http.ts";
+import { browserCredentialsPresent, privateHeaders, readBody } from "../db/http.ts";
 import { consumeQuota } from "../db/observability.ts";
-import { isMarketSelectable, marketIdInput } from "../market-config.ts";
+import { runAdminHubCommand, SellerHubError } from "../marketplace/seller-hub.ts";
+import { saveSellerVerification, SellerProfileError } from "../marketplace/seller-market-profile.ts";
+import { marketplaceMode } from "../release-config.ts";
+import { marketIdInput, resolveMarketScope } from "../market-config.ts";
+import { ListingReviewError, listingReviewDecision, reviewSellerListing } from "../marketplace/listing-review.ts";
+import { activeStaffActor, type StaffBridgeActor } from "../access/actors.ts";
 import { storeCatalogImage, uploadLimit } from "../staff/catalog-media.ts";
-import { productMediaUploadAvailable } from "../staff/catalog-media-upload.ts";
+import { requireMainAdminMediaStorage } from "../staff/catalog-media-upload.ts";
 import { runStaffCatalogSearchMaintenance } from "../staff/catalog-search-maintenance.ts";
 import { mainAdminOrderPermission, runMainAdminOrderCommand } from "../staff/main-admin-orders.ts";
+import { createDispatchLocation } from "../staff/location-inventory.ts";
 import { catalogWriteInput, CatalogWriteError } from "../staff/operation-error.ts";
 import { catalogCommandPermission, catalogErrorResponse, maxCommandBytes, runCatalogCommand } from "./admin-api.ts";
-import { legacyStaffIdPattern, mainAdminCatalogConfig, mainAdminMarketplaceConfig } from "./main-admin-config.ts";
+import { legacyStaffIdPattern, mainAdminCatalogConfig, mainAdminMarketplaceConfig, scopedCatalogPilotRequested } from "./main-admin-config.ts";
+import { runPlatformExchange } from "./platform-exchange.ts";
+import { requireScopedPilotCommand } from "./scoped-pilot-command.ts";
 import { mainAdminReadInput, mainAdminReadPermission, readMainAdminCatalog } from "./main-admin-reads.ts";
 import { isHomepageCommand, mainAdminHomepageReadInput, readMainAdminHomepage, runMainAdminHomepage } from "./main-admin-homepage.ts";
 import { mainAdminMarketplace, mainAdminMarketplaceInput } from "./main-admin-marketplace.ts";
@@ -30,6 +38,7 @@ const envelope = z.strictObject({
 });
 const upload = z.strictObject({
   data: z.string().min(4).max(maxUploadEncodedBytes),
+  purpose: z.enum(["product", "editorial"]).optional(),
   mime: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
   contentType: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
 }).refine(value => Boolean(value.mime || value.contentType) &&
@@ -40,12 +49,12 @@ const fail = (status: number, code: string, message: string) =>
   Response.json({ error: { code, message } }, { status, headers: responseHeaders });
 
 async function uploadImage(actorId: string, raw: unknown) {
-  const { data, mime, contentType } = catalogWriteInput(upload, raw);
+  const { data, mime, contentType, purpose } = catalogWriteInput(upload, raw);
   const bytes = Buffer.from(data, "base64");
   if (bytes.length > uploadLimit || bytes.toString("base64") !== data) {
     throw new CatalogWriteError("invalid_input", "Supply a valid base64-encoded image of up to 4 MB.");
   }
-  return { src: await storeCatalogImage(actorId, bytes, mime ?? contentType ?? "") };
+  return { src: await storeCatalogImage(actorId, bytes, mime ?? contentType ?? "", purpose) };
 }
 
 export async function handleMainAdminCatalog(request: Request, onMutation?: () => void, onHomepagePublication?: () => void) {
@@ -55,9 +64,15 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
   const marketplace = channel === "marketplace";
   const config = marketplace ? mainAdminMarketplaceConfig() : mainAdminCatalogConfig(homepage);
   if (!config) return fail(404, "not_found", "This endpoint is unavailable.");
+  if (request.headers.has("origin") && !request.headers.has("cookie") &&
+      !request.headers.has("sec-fetch-site") && !request.headers.has("sec-fetch-dest")) {
+    return fail(401, "authentication_required", "A signed request from the GriipBuddy admin is required.");
+  }
+  if (browserCredentialsPresent(request.headers)) {
+    return fail(403, "forbidden", "This endpoint accepts requests from the admin service.");
+  }
   const signature = request.headers.get("x-griip-catalog-signature");
-  if (request.headers.has("origin") || request.headers.has("sec-fetch-site") ||
-      !signature || !/^[a-f0-9]{64}$/.test(signature)) {
+  if (!signature || !/^[a-f0-9]{64}$/.test(signature)) {
     return fail(401, "authentication_required", "A signed request from the GriipBuddy admin is required.");
   }
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
@@ -76,7 +91,7 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
     catch { return fail(400, "invalid_input", "The signed catalog request is not valid JSON."); }
     const { issuedAt, nonce, legacyId, central, marketId, request: payload } = catalogWriteInput(envelope, raw);
     if (Math.abs(issuedAt - Date.now()) >= maxAgeMs) return fail(401, "expired_request", "The signed catalog request has expired.");
-    if (!isMarketSelectable(marketId)) return fail(403, "forbidden", "The requested market is unavailable.");
+    if (!resolveMarketScope(marketId)) return fail(403, "forbidden", "The requested market is unavailable.");
     const marketplaceOperation = marketplace ? catalogWriteInput(mainAdminMarketplaceInput, payload) : undefined;
     const homepageRead = homepage ? mainAdminHomepageReadInput.safeParse(payload).data : undefined;
     const legacyOperation = homepage || marketplace ? undefined : catalogWriteInput(legacyOperationInput, payload);
@@ -91,14 +106,19 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
         where: { marketId }, select: { merchandising: true, commercial: true, operations: true },
       },
     } }) : null;
-    if (!actor?.active || central !== (actor.role === "OWNER")) {
+    const operator = activeStaffActor(actor);
+    if (!actor || !operator || central !== (operator.kind === "core-admin")) {
       return fail(403, "forbidden", "This main admin account has no matching active catalog access.");
     }
+    const serviceActor: StaffBridgeActor = { kind: "internal-service", id: "editable-admin", service: "editable-admin", operator, legacyId };
     if (!reading && isHomepageCommand(operation.action) !== homepage) return fail(404, "not_found", "This operation is unavailable.");
     const orderPermission = reading || homepage || marketplace ? undefined : mainAdminOrderPermission(operation.action);
-    const permission = marketplace ? "owner" : homepage ? "merchandising" : legacyOperation && "read" in legacyOperation ? mainAdminReadPermission(legacyOperation.read) :
+    const listingReview = !homepage && !marketplace && !reading && operation.action === "seller-listing.review";
+    const sellerCommand = !homepage && !marketplace && !reading &&
+      (operation.action === "seller-hub.command" || operation.action === "seller-verification.command");
+    const permission = sellerCommand ? "owner" : listingReview ? "merchandising" : marketplace ? "owner" : homepage ? "merchandising" : legacyOperation && "read" in legacyOperation ? mainAdminReadPermission(legacyOperation.read) :
       orderPermission ?? catalogCommandPermission(reading ? "" : operation.action);
-    if (!central && (permission === "owner" || !actor.marketGrants[0]?.[permission])) {
+    if (serviceActor.operator.kind !== "core-admin" && (permission === "owner" || !actor.marketGrants[0]?.[permission])) {
       return fail(403, "forbidden", "You do not have permission for this catalog operation in the selected market.");
     }
     if (!await consumeQuota(marketplace ? "main-admin.marketplace" : homepage ? "main-admin.homepage" : "main-admin.catalog", actor.userId, 180, 60)) {
@@ -107,6 +127,17 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
     // With future clock tolerance, a nonce may still be valid for twice the maximum request age.
     if (!await consumeQuota("main-admin.catalog.nonce", nonce.toLowerCase(), 1, 125)) {
       return fail(409, "replayed_request", "This signed catalog request has already been used.");
+    }
+
+    if (sellerCommand && !reading) {
+      if (!marketplaceMode()) return fail(404, "not_found", "Seller operations are unavailable.");
+      if (!await consumeQuota("main-admin.seller-operations.write", actor.userId, 60, 600)) {
+        return fail(429, "rate_limited", "Too many seller operations. Try again shortly.");
+      }
+      const data = operation.action === "seller-hub.command"
+        ? await runAdminHubCommand({ id: actor.userId, role: "OWNER" }, marketId, operation.input)
+        : await saveSellerVerification(actor.userId, marketId, operation.input);
+      return Response.json({ data }, { headers: responseHeaders });
     }
 
     if (marketplaceOperation) {
@@ -128,6 +159,7 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
       }
       const data = await runMainAdminHomepage(homepageActor, operation.action, operation.input);
       if (operation.action === "homepage.publish" || operation.action === "homepage.restore" || operation.action === "homepage.inherit") onHomepagePublication?.();
+      if (operation.action === "homepage.editorial-publish" || operation.action === "homepage.editorial-withdraw") onMutation?.();
       return Response.json({ data }, { status: media ? 201 : 200, headers: responseHeaders });
     }
 
@@ -135,8 +167,28 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
       return Response.json({ data: await readMainAdminCatalog(actor.userId, central, marketId, legacyOperation) }, { headers: responseHeaders });
     }
     if (reading) return fail(404, "not_found", "This operation is unavailable.");
+    if (listingReview) {
+      if (!await consumeQuota("seller-listing.review", actor.userId, 40, 600)) {
+        return fail(429, "rate_limited", "Too many listing decisions. Try again in a few minutes.");
+      }
+      const data = await reviewSellerListing(actor.userId, marketId, catalogWriteInput(listingReviewDecision, operation.input));
+      onMutation?.();
+      return Response.json({ data }, { headers: responseHeaders });
+    }
+    if (operation.action === "catalog.exchange.preview" || operation.action === "catalog.exchange.apply") {
+      if (!await consumeQuota("catalog.exchange", actor.userId, 25, 600)) {
+        return fail(429, "rate_limited", "Too many import requests. Wait a few minutes.");
+      }
+      const apply = operation.action === "catalog.exchange.apply";
+      const data = await runPlatformExchange(actor.userId, marketId, apply ? "apply" : "preview", operation.input);
+      if (apply) onMutation?.();
+      return Response.json({ data }, { headers: responseHeaders });
+    }
+    if (!orderPermission && scopedCatalogPilotRequested()) {
+      await requireScopedPilotCommand(marketId, operation.action, operation.input);
+    }
     if (media) {
-      if (!productMediaUploadAvailable()) return fail(403, "forbidden", "Uploads require verified isolated catalog media storage.");
+      await requireMainAdminMediaStorage();
       if (!await consumeQuota("image.upload", actor.userId, 50, 600)) {
         return fail(429, "rate_limited", "Too many uploads. Try again in a few minutes.");
       }
@@ -155,10 +207,17 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
     if (!await consumeQuota("catalog.write", `staff:${actor.userId}`, 100, 600)) {
       return fail(429, "rate_limited", "Too many catalog commands. Try again in a few minutes.");
     }
-    const data = await runCatalogCommand(operation, { kind: "staff", id: actor.userId, role: actor.role }, async () => marketId);
+    const data = operation.action === "inventory.warehouse.create"
+      ? await createDispatchLocation(actor.userId, operation.input, marketId)
+      : await runCatalogCommand(operation, { kind: "staff", id: actor.userId, role: actor.role }, async () => marketId);
     onMutation?.();
     return Response.json({ data }, { headers: responseHeaders });
   } catch (error) {
+    if (error instanceof ListingReviewError || error instanceof SellerHubError || error instanceof SellerProfileError) {
+      const code = error.status === 404 ? "not_found" : error.status === 403 ? "forbidden" :
+        error.status === 409 ? "conflict" : "invalid_input";
+      return fail(error.status, code, error.message);
+    }
     return catalogErrorResponse(error, "main-admin.catalog");
   }
 }

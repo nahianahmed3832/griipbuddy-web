@@ -7,21 +7,28 @@ export type Picks = Readonly<Record<string, string>>;
 const emptyPicks: Picks = {};
 
 function canonical(value: string) {
-  return value.trim().normalize("NFKC").toLowerCase();
+  return value.normalize("NFKC").trim().toLowerCase();
+}
+
+export function isModelChoice(axis: ChoiceAxis) {
+  return /model|device|handset/i.test(axis.key);
 }
 
 function optionPicks(variant: VariantChoice): Picks {
   return Object.fromEntries(variant.options.flatMap(({ optionId, valueId }) => optionId && valueId ? [[optionId, valueId]] : []));
 }
 
-function matches(variant: VariantChoice, picks: Picks) {
-  return Object.entries(picks).every(([axis, value]) =>
-    variant.options.some(option => option.optionId === axis && option.valueId === value));
+function hasChoice(variant: VariantChoice, axisId: string, valueId: string) {
+  return variant.options.some(option => option.optionId === axisId && option.valueId === valueId);
+}
+
+export function matchesProductChoice(variant: VariantChoice, picks: Picks) {
+  return Object.entries(picks).every(([axis, value]) => hasChoice(variant, axis, value));
 }
 
 export function exactChoice<T extends VariantChoice>(axes: readonly ChoiceAxis[], variants: readonly T[], picks: Picks): T | undefined {
   if (!axes.every(axis => Object.hasOwn(picks, axis.id))) return undefined;
-  const matching = variants.filter(variant => matches(variant, picks));
+  const matching = variants.filter(variant => matchesProductChoice(variant, picks));
   return matching.length === 1 ? matching[0] : undefined;
 }
 
@@ -46,8 +53,10 @@ export function readProductChoice<T extends VariantChoice>(axes: readonly Choice
     }
     const key = canonical(entry.slice(0, separator));
     const rawValue = canonical(entry.slice(separator + 1));
-    const axis = axes.find(axis => canonical(axis.id) === key || canonical(axis.key) === key);
-    const value = axis?.values.find(value => canonical(value.id) === rawValue || canonical(value.value) === rawValue);
+    // A stable selector URL must keep its meaning even when a catalog value uses the same text.
+    const axis = axes.find(axis => canonical(axis.id) === key) ?? axes.find(axis => canonical(axis.key) === key);
+    const value = axis?.values.find(value => canonical(value.id) === rawValue)
+      ?? axis?.values.find(value => canonical(value.value) === rawValue);
     if (!axis || !value || values.has(axis.id) && values.get(axis.id) !== value.id) {
       invalid = true;
       continue;
@@ -55,7 +64,7 @@ export function readProductChoice<T extends VariantChoice>(axes: readonly Choice
     values.set(axis.id, value.id);
   }
   const picks: Picks = Object.fromEntries(values);
-  const issue = invalid || submitted.length && !variants.some(variant => matches(variant, picks)) ? "invalid-options" as const : null;
+  const issue = invalid || submitted.length && !variants.some(variant => matchesProductChoice(variant, picks)) ? "invalid-options" as const : null;
   return { picks, selected: issue ? undefined : exactChoice(axes, variants, picks), issue };
 }
 
@@ -64,20 +73,27 @@ export function chooseProductOption<T extends VariantChoice>(
 ) {
   const axis = axes.find(item => item.id === axisId);
   if (!axis?.values.some(value => value.id === valueId)) return null;
-  let matching = variants.filter(variant => matches(variant, { [axis.id]: valueId }));
+  const matching = variants.filter(variant => hasChoice(variant, axisId, valueId));
   if (!matching.length) return null;
-  const choices = new Map<string, string>([[axis.id, valueId]]);
-  const cleared: string[] = [];
-  for (const other of axes) {
-    const previousValue = previous[other.id];
-    if (other.id === axis.id || !previousValue) continue;
-    const withPrevious = matching.filter(variant => matches(variant, { [other.id]: previousValue }));
-    if (withPrevious.length) {
-      choices.set(other.id, previousValue);
-      matching = withPrevious;
-    } else {
-      cleared.push(other.label);
+
+  const otherAxes = axes.filter(other => other.id !== axisId && Object.hasOwn(previous, other.id));
+  let best: { retained: ChoiceAxis[]; models: number } | undefined;
+  for (const variant of matching) {
+    const retained = otherAxes.filter(other => hasChoice(variant, other.id, previous[other.id]));
+    const models = retained.filter(isModelChoice).length;
+    if (!best || models > best.models || models === best.models && retained.length > best.retained.length) {
+      best = { retained, models };
     }
+  }
+
+  // Keep only the shopper's own selections. A compatible row can inform what survives,
+  // but its unchosen values must never become selections automatically.
+  const choices = new Map<string, string>([[axisId, valueId]]);
+  const retained = new Set(best?.retained);
+  const cleared: string[] = [];
+  for (const other of otherAxes) {
+    if (retained.has(other)) choices.set(other.id, previous[other.id]);
+    else cleared.push(other.label);
   }
   const picks = Object.fromEntries(choices);
   return { picks, selected: exactChoice(axes, matching, picks), cleared };

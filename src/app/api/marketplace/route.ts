@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
-import { getShopper } from "@/lib/marketplace/auth";
+import { shopperActor } from "@/lib/marketplace/auth";
 import { marketplaceCommand } from "@/lib/marketplace/commands";
 import { applyMarketplaceCommand, MarketplaceError } from "@/lib/marketplace/write";
-import { guestCookie, readGuestKey } from "@/lib/commerce/guest";
-import { getStaff } from "@/lib/staff/access";
+import { checkoutGuest, guestCookie } from "@/lib/commerce/guest";
+import { getStaffFromHeaders } from "@/lib/staff/access";
 import { firstPartyStoreMode, marketplaceMode } from "@/lib/release-config";
 import { currentMarket } from "@/lib/market-server";
 import { storeShop } from "@/lib/marketplace/constants";
@@ -22,17 +22,17 @@ export async function POST(request: Request) {
       command.action === "create-shop" || command.action === "edit-shop" || command.action === "draft-listing" ||
       command.action === "request-market" || command.action === "follow" || command.action === "open-message" && command.shop !== storeShop.id
     )) return reject("This action is unavailable.", 404);
-    const shopper = await getShopper();
+    const shopper = await shopperActor(request.headers);
     const mayUseStaff = command.action.startsWith("staff-") || command.action === "reply" || command.action === "close-thread";
-    const staff = mayUseStaff ? await getStaff() : null;
-    const subject = staff?.role === "OWNER" ? staff.id : shopper?.id;
+    const staff = mayUseStaff ? await getStaffFromHeaders(request.headers) : null;
+    const owner = staff?.kind === "core-admin" ? staff : undefined;
+    const subject = owner ? `staff:${owner.id}` : shopper ? `shopper:${shopper.id}` : null;
     if (!subject) return reject("Sign in to continue.", 401);
     if (!await consumeQuota("marketplace.write", subject, 90, 300)) return reject("Too many actions. Try again shortly.", 429);
-    const guestKey = command.action === "claim-order" ? readGuestKey((await cookies()).get(guestCookie)?.value) : undefined;
+    const guest = command.action === "claim-order" ? checkoutGuest((await cookies()).get(guestCookie)?.value) : undefined;
     const market = await currentMarket();
-    const owner = staff?.role === "OWNER" ? staff : undefined;
     const data = await applyMarketplaceCommand(command, {
-      shopperId: shopper?.id, guestKey, marketId: market.id, staffOwner: Boolean(owner), staffActorId: owner?.id,
+      shopperId: shopper?.id, guestKey: guest?.id, marketId: market.id, staffOwner: Boolean(owner), staffActorId: owner?.id,
     });
     return Response.json({ data }, { headers: privateHeaders });
   } catch (error) {

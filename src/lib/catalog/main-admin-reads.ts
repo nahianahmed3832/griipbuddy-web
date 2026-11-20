@@ -5,13 +5,19 @@ import type { MarketId } from "../../config/markets.ts";
 import { resolveCatalogMigrationReference, resolveMigratedProductSlug } from "../catalog-migration/compatibility.ts";
 import { nativeSourceSystem } from "../catalog-migration/contracts.ts";
 import { getDb } from "../db/client.ts";
-import { isMarketSelectable } from "../market-config.ts";
+import { isMarketSelectable, marketIdInput } from "../market-config.ts";
+import { hubSections } from "../marketplace/seller-hub.ts";
+import { sellerVerificationQueue } from "../marketplace/seller-market-profile.ts";
+import { marketplaceMode } from "../release-config.ts";
+import { staffSellerHubWorkspace } from "../staff/seller-hub-workspace.ts";
+import { reviewerListingQueue } from "../marketplace/listing-review.ts";
 import { readStaffCatalogSearchMaintenance } from "../staff/catalog-search-maintenance.ts";
 import { catalogImage, productIdField, textField } from "../staff/catalog-input.ts";
 import { uploadLimit } from "../staff/catalog-media.ts";
 import { productMediaUploadAvailable } from "../staff/catalog-media-upload.ts";
 import { mainAdminOrderReads, readMainAdminOrders } from "../staff/main-admin-orders.ts";
 import { readApprovedDevice, searchApprovedDevices } from "../staff/device-fitment.ts";
+import { staffDispatchLocations } from "../staff/location-inventory.ts";
 import { staffMarketIds } from "../staff/market-access.ts";
 import { loadCollectionWorkspace, loadNavigationWorkspace, searchCollectionProducts } from "../staff/navigation-workspace.ts";
 import { CatalogWriteError } from "../staff/operation-error.ts";
@@ -23,20 +29,28 @@ import { categoryAssignmentProducts } from "../staff/taxonomy-assignment-read.ts
 import { categoryAttributeWorkspace, previewCategoryAttributeImpact } from "../staff/taxonomy-attribute-read.ts";
 import { readCategoryImpact } from "../staff/taxonomy-impact.ts";
 import { readCategoryBusinessCodes, resolveRecoveredCategoryId } from "./category-reference.ts";
+import { scopedCatalogPilotRequested } from "./main-admin-config.ts";
+import { exchangeRead, readPlatformExchange } from "./platform-exchange.ts";
+import { scopedCatalogPilotTargets } from "./scoped-pilot.ts";
 
 const pageInput = z.int().min(1).max(10_000).optional();
 const searchInput = textField(0, 120).optional();
 export const mainAdminReadInput = z.discriminatedUnion("read", [
-  ...mainAdminOrderReads,
+  ...mainAdminOrderReads, exchangeRead,
+  z.strictObject({ read: z.literal("seller-hub"), section: z.enum(hubSections), id: z.uuid().optional(), q: searchInput, page: pageInput }),
+  z.strictObject({ read: z.literal("seller-verification"), page: pageInput }),
   z.strictObject({
     read: z.literal("categories"), id: textField(1, 120).optional(), q: searchInput, page: pageInput,
     scope: z.enum(["direct", "descendants", "all", "search"]).optional(),
     menuKey: textField(0, 120).optional(), locale: textField(0, 35).optional(), collectionId: productIdField.optional(),
   }),
   z.strictObject({ read: z.literal("products"), q: searchInput, page: pageInput,
-    state: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]).optional(), source: z.enum(["connected", "legacy"]).optional() }),
+    state: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]).optional(), source: z.enum(["connected", "legacy"]).optional(),
+    offerMarketId: marketIdInput.optional() }),
+  z.strictObject({ read: z.literal("seller-listing-reviews"), q: searchInput }),
   z.strictObject({ read: z.literal("product"), id: textField(1, 120) }),
   z.strictObject({ read: z.literal("inventory"), id: textField(1, 120).optional(), q: searchInput, page: pageInput }),
+  z.strictObject({ read: z.literal("warehouses") }),
   z.strictObject({ read: z.literal("devices"), id: z.string().max(80).optional(), q: textField(0, 100).optional() }),
   z.strictObject({ read: z.literal("device"), id: productIdField }),
   z.strictObject({ read: z.literal("search-status") }),
@@ -50,14 +64,15 @@ type Read = z.infer<typeof mainAdminReadInput>;
 
 export function mainAdminReadPermission(read: Read["read"]) {
   if (read === "orders" || read === "order") return "operations";
-  if (read === "categories") return "merchandising";
+  if (read === "categories" || read === "seller-listing-reviews") return "merchandising";
   if (read === "product" || read === "products" || read === "inventory") return "commercial";
   return "owner";
 }
 
 async function taxonomy(actorId: string, owner: boolean, marketId: MarketId, request: Extract<Read, { read: "categories" }>) {
   const db = getDb();
-  const [rows, navigation, collections, permittedMarkets] = await Promise.all([
+  const scoped = scopedCatalogPilotRequested();
+  const [rows, navigation, collections, permittedMarkets, approved] = await Promise.all([
     db.department.findMany({ include: {
       translations: { orderBy: { locale: "asc" } },
       marketPresentations: { where: { marketId } },
@@ -66,6 +81,7 @@ async function taxonomy(actorId: string, owner: boolean, marketId: MarketId, req
     loadNavigationWorkspace(actorId, marketId, request.menuKey, request.locale),
     loadCollectionWorkspace(actorId, marketId, request.collectionId),
     staffMarketIds(actorId, "merchandising"),
+    scoped && marketId === "bd" ? scopedCatalogPilotTargets(db) : null,
   ]);
   const categories = rows.map(({ slugAliases, ...row }) => ({ ...row, aliases: slugAliases }));
   const reference = request.id;
@@ -87,7 +103,8 @@ async function taxonomy(actorId: string, owner: boolean, marketId: MarketId, req
     }),
   ]) : [null, null, [], []];
   return { categories, navigation, collections, attributes, assignments, businessCodes, history,
-    uploadEnabled: owner && productMediaUploadAvailable(),
+    ...(scoped && { pilotCategoryIds: approved?.categoryIds ?? [] }),
+    uploadEnabled: !scoped && owner && productMediaUploadAvailable(),
     selectedId: rows.some(row => row.id === selectedId) ? selectedId : null, owner, markets: permittedMarkets.filter(isMarketSelectable) };
 }
 
@@ -112,15 +129,19 @@ async function productWorkspace(actorId: string, owner: boolean, marketId: Marke
   const identity = id === "new" ? null : await findProduct(actorId, id);
   if (!identity && !owner) throw new CatalogWriteError("forbidden", "Central owner access is required to create a shared product.");
   const product = identity?.product;
-  const [shared, categories, readiness, commerce] = await Promise.all([
+  const scoped = scopedCatalogPilotRequested();
+  const [shared, categories, readiness, commerce, approved] = await Promise.all([
     owner && product?.foundation ? ownerProductFoundation(actorId, product.id) : null,
     owner ? productCategoryChoices(actorId) : [],
     owner && product?.foundation ? productPublicationReadiness(getDb(), product.id) : null,
     product?.foundation ? readProductWorkspaceCommerce({ kind: "staff", id: actorId }, product.id, marketId) : null,
+    scoped && marketId === "bd" ? scopedCatalogPilotTargets() : null,
   ]);
   const history = shared ? await productWorkspaceHistory(actorId, shared.id, shared.variants.map(variant => variant.id)) : [];
-  return { identity, shared, categories, readiness, commerce: commerce?.data ?? null, history,
-    uploadEnabled: owner && productMediaUploadAvailable() };
+  return { identity, shared, categories: scoped ? categories.filter(category => approved?.categoryIds.includes(category.id)) : categories,
+    readiness, commerce: commerce?.data ?? null, history,
+    ...(scoped && { pilotEditable: Boolean(product && approved?.productIds.includes(product.id)) }),
+    uploadEnabled: !scoped && owner && productMediaUploadAvailable() };
 }
 
 async function inventory(actorId: string, owner: boolean, marketId: MarketId, request: Extract<Read, { read: "inventory" }>) {
@@ -172,17 +193,31 @@ export async function readMainAdminAsset(src: string) {
 
 export function readMainAdminCatalog(actorId: string, owner: boolean, marketId: MarketId, request: Read) {
   switch (request.read) {
+    case "seller-hub":
+    case "seller-verification":
+      if (!owner || !marketplaceMode()) throw new CatalogWriteError("forbidden", "Seller operations are unavailable.");
+      return request.read === "seller-hub"
+        ? staffSellerHubWorkspace(marketId, request.section, request.page ?? 1, request.id, request.q)
+        : sellerVerificationQueue(actorId, marketId, request.page ?? 1);
     case "orders":
     case "order":
     case "order-cases":
     case "order-case": return readMainAdminOrders(actorId, owner, marketId, request);
+    case "catalog-exchange": return readPlatformExchange(actorId, request);
+    case "seller-listing-reviews": return reviewerListingQueue(actorId, marketId, request.q);
     case "categories": return taxonomy(actorId, owner, marketId, request);
-    case "products": return listProductWorkspace(actorId, {
-      q: request.q, page: request.page ?? 1, state: request.state, source: request.source, excludeRedirected: true,
-      ...(!owner && { market: marketId }),
-    });
+    case "products": {
+      if (!owner && request.offerMarketId && request.offerMarketId !== marketId) {
+        throw new CatalogWriteError("forbidden", "Choose the current market to filter product offers.");
+      }
+      return listProductWorkspace(actorId, {
+        q: request.q, page: request.page ?? 1, state: request.state, source: request.source, excludeRedirected: true,
+        market: owner ? request.offerMarketId : marketId,
+      });
+    }
     case "product": return productWorkspace(actorId, owner, marketId, request.id);
     case "inventory": return inventory(actorId, owner, marketId, request);
+    case "warehouses": return staffDispatchLocations(actorId, marketId);
     case "devices": return searchApprovedDevices(actorId, { q: request.q, variantId: request.id });
     case "device": return readApprovedDevice(actorId, request.id);
     case "search-status": return readStaffCatalogSearchMaintenance(actorId, marketId);

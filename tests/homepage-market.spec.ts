@@ -21,9 +21,10 @@ test("owners can draft, schedule, publish and restore homepages in two locales",
   const storefront = await publicContext.newPage();
   try {
     await page.goto("/staff/login");
-    await page.getByRole("textbox", { name: "Email address" }).fill(process.env.TEST_OWNER_EMAIL!);
-    await page.getByLabel("Password", { exact: true }).fill(process.env.TEST_OWNER_PASSWORD!);
-    await page.getByRole("button", { name: "Sign in to staff dashboard" }).click();
+    const signIn = page.getByRole("main");
+    await signIn.getByRole("textbox", { name: "Email address" }).fill(process.env.TEST_OWNER_EMAIL!);
+    await signIn.getByLabel("Password", { exact: true }).fill(process.env.TEST_OWNER_PASSWORD!);
+    await signIn.getByRole("button", { name: "Sign in to staff dashboard" }).click();
     await expect(page.getByRole("heading", { name: "Packing queue" })).toBeVisible();
 
     for (const { market, country, locale, timeZone } of settings) {

@@ -9,10 +9,12 @@ import { orderDetails } from "../commerce/orders.ts";
 import { bangladeshStaffTrackingHistory, demoHandoff, devShipmentAvailable } from "../commerce/bangladesh-shipment.ts";
 import { nextBangladeshTrackingStatuses } from "../commerce/bangladesh-shipment-status.ts";
 import { hasInventoryCommitment, lockVariantInventory } from "../commerce/location-inventory.ts";
+import { legacyProductScope, requireLegacyPilotVariant } from "../catalog/scoped-pilot.ts";
 import { lockConnectedOrderAttempt, releaseUnshippedOrderStock } from "../commerce/order-inventory.ts";
 import { staffParcelHistory } from "../commerce/parcel-tracking.ts";
 import { hybridStoreMode } from "../release-config.ts";
 import { orderHasAdapter } from "../commerce/market-commerce.ts";
+import { activeStaffActor } from "../access/actors.ts";
 import { CatalogWriteError, OperationError } from "./operation-error.ts";
 
 export { OperationError } from "./operation-error.ts";
@@ -23,7 +25,8 @@ function deny(): never {
 
 export async function authorize(db: DbReader, actorId: string, ownerOnly = false) {
   const staff = await db.staffAccess.findUnique({ where: { userId: actorId } });
-  if (!staff?.active || (ownerOnly && staff.role !== "OWNER")) deny();
+  const actor = activeStaffActor(staff);
+  if (!staff || !actor || (ownerOnly && actor.kind !== "core-admin")) deny();
   return staff;
 }
 
@@ -52,7 +55,7 @@ export async function lockProductEdits(tx: Prisma.TransactionClient, id: string)
 export const queueFilters = [
   ["queue", "Packing queue"], ["all", "All orders"], ["UNFULFILLED", "Unfulfilled"],
   ["PACKING", "Packing"], ["READY_TO_SHIP", "Ready to ship"], ["SHIPPED", "Shipped"],
-  ["DELIVERED", "Delivered"], ["refused", "Refused parcels"], ["CANCELLED", "Cancelled"],
+  ["DELIVERED", "Delivered"], ["exceptions", "Delivery exceptions"], ["refused", "Refused parcels"], ["CANCELLED", "Cancelled"],
 ] as const;
 export type QueueFilter = typeof queueFilters[number][0];
 
@@ -71,20 +74,24 @@ export async function listStaffOrders(actorId: string, filter: QueueFilter, page
     ? { status: "PLACED", AND: [
       { OR: [
         { fulfillmentStatus: { in: ["UNFULFILLED", "PACKING", "READY_TO_SHIP"] } },
-        { fulfillmentStatus: "SHIPPED", parcels: { some: { status: "PLANNED" } } },
+        { fulfillmentStatus: "SHIPPED", parcels: { some: { status: "PLANNED", cancelledAt: null } } },
       ] },
       { OR: [{ payment: { method: "COD", status: "AWAITING_COLLECTION" } }, { payment: { status: "PAID" } }] },
     ] }
     : filter === "all" ? {}
       : filter === "CANCELLED" ? { status: "CANCELLED" }
-      : filter === "refused" ? { status: "PLACED", OR: [
+      : filter === "refused" || filter === "exceptions" ? { status: "PLACED", OR: [
         { bangladeshShipment: { is: { status: "REFUSED" } } },
-        { parcels: { some: { status: { in: ["REFUSED", "RETURNED"] } } } },
+        { parcels: { some: { cancelledAt: null, status: { in: ["REFUSED", "RETURNED"] } } } },
+        ...(filter === "exceptions" ? [{ parcels: { some: { cancelledAt: null,
+          trackingStatus: { in: ["DELIVERY_EXCEPTION", "RETURNED"] } } } }] satisfies Prisma.OrderWhereInput[] : []),
       ] }
       : { status: "PLACED", fulfillmentStatus: filter,
         ...(filter === "SHIPPED" && {
           NOT: { bangladeshShipment: { is: { status: "REFUSED" } } },
-          OR: [{ parcels: { none: {} } }, { parcels: { some: { status: { in: ["PLANNED", "IN_TRANSIT", "OUT_FOR_DELIVERY"] } } } }],
+          OR: [{ parcels: { none: { cancelledAt: null } } }, { parcels: { some: {
+            cancelledAt: null, status: { in: ["PLANNED", "IN_TRANSIT", "OUT_FOR_DELIVERY"] },
+          } } }],
         }) };
   const rows = await db.order.findMany({
     where: { AND: [where, scope, ...(marketId ? [{ marketId }] : [])] },
@@ -95,7 +102,7 @@ export async function listStaffOrders(actorId: string, filter: QueueFilter, page
       marketId: true, currency: true, totalMinor: true, payment: { select: { status: true } }, _count: { select: { items: true } },
       bangladeshShipment: { select: { status: true } },
       bangladeshRefusedParcelReceipt: { select: { receivedAt: true } },
-      parcels: { select: { status: true } },
+      parcels: { where: { cancelledAt: null }, select: { status: true, trackingStatus: true } },
       cases: pendingCancellationDetails,
     },
   });
@@ -152,6 +159,9 @@ export async function advanceFulfillment(actorId: string, orderId: string, input
     if (order.payment.method !== "COD" && order.payment.status !== "PAID") {
       throw new OperationError("This prepaid order cannot move through packing while payment is incomplete or a refund is pending.");
     }
+    if ((next === "PACKING" || next === "READY_TO_SHIP") && await tx.orderParcel.findFirst({
+      where: { orderId, cancelledAt: null, preparationState: { not: null } }, select: { id: true },
+    })) throw new OperationError("Confirm the parcel’s exact picked and packed quantities in the parcel controls.");
     if ((next === "SHIPPED" || next === "DELIVERED") && (await hasInventoryCommitment(tx, orderId) ||
         await tx.orderParcel.findFirst({ where: { orderId }, select: { id: true } }))) {
       throw new OperationError("Use the parcel controls to dispatch and update this order.");
@@ -243,7 +253,7 @@ export async function cancelUnshippedOrder(tx: Prisma.TransactionClient, actorId
   const paidRefund = approval?.refundAmountMinor;
   const paymentCanBeCancelled = paidRefund === undefined
     ? order.payment.method === "COD" && order.payment.status === "AWAITING_COLLECTION"
-    : order.payment.method === "SSLCOMMERZ" && order.payment.status === "PAID" &&
+    : (order.payment.method === "SSLCOMMERZ" || order.payment.method === "PAYPAL") && order.payment.status === "PAID" &&
       paidRefund > 0 && paidRefund === order.payment.amountMinor && paidRefund === order.totalMinor;
   if (order.status !== "PLACED" || !canCancelFrom.includes(order.fulfillmentStatus) || !paymentCanBeCancelled) {
     throw new OperationError(paidRefund === undefined ? "Only unshipped orders awaiting collection can be cancelled."
@@ -258,6 +268,8 @@ export async function cancelUnshippedOrder(tx: Prisma.TransactionClient, actorId
   const paymentStatus = paidRefund === undefined ? "VOIDED" : "REFUND_PENDING";
   await tx.order.update({ where: { id: orderId }, data: { status: "CANCELLED", cancelledAt: new Date() } });
   await releaseUnshippedOrderStock(tx, actorId, connectedAttempt, order.items);
+  await tx.orderParcel.updateMany({ where: { orderId, status: "PLANNED", cancelledAt: null },
+    data: { cancelledAt: new Date(), trackingRevision: { increment: 1 } } });
   await tx.payment.update({ where: { orderId }, data: { status: paymentStatus } });
   await tx.fulfillmentEvent.create({ data: { orderId, actorId, status: order.fulfillmentStatus, type: "ORDER_CANCELLED" } });
   await tx.auditEvent.create({
@@ -274,7 +286,7 @@ export async function collectCash(actorId: string, orderId: string) {
         order.currency !== order.payment.currency) {
       throw new OperationError("Record COD collection after the order is delivered.");
     }
-    if (await tx.orderParcel.findFirst({ where: { orderId, status: { not: "DELIVERED" } }, select: { id: true } })) {
+    if (await tx.orderParcel.findFirst({ where: { orderId, cancelledAt: null, status: { not: "DELIVERED" } }, select: { id: true } })) {
       throw new OperationError("Record full COD collection only after every parcel is delivered.");
     }
     const shipment = await tx.bangladeshShipment.findUnique({ where: { orderId }, select: { status: true } });
@@ -288,11 +300,11 @@ export async function collectCash(actorId: string, orderId: string) {
   });
 }
 
-export async function listStaffCatalog(actorId: string, productId?: string) {
+export async function listStaffCatalog(actorId: string, productId?: string, legacyPilot = false) {
   const db = getDb();
   await authorize(db, actorId, true);
   return db.variant.findMany({
-    where: productId ? { productId } : undefined,
+    where: { ...(productId && { productId }), ...(legacyPilot && { product: await legacyProductScope(db) }) },
     take: productId ? 40 : 60,
     orderBy: [{ product: { position: "asc" } }, { position: "asc" }],
     select: {
@@ -323,6 +335,7 @@ export async function adjustStock(actorId: string, input: unknown) {
   await getDb().$transaction(async (tx) => {
     await authorize(tx, actorId, true);
     await lockVariantInventory(tx, [variantId]);
+    await requireLegacyPilotVariant(tx, variantId);
     if (await tx.variant.findFirst({ where: { id: variantId, managedInventory: true }, select: { id: true } })) {
       throw new OperationError("Use owner and warehouse inventory for this variant.");
     }
@@ -352,6 +365,7 @@ export async function updatePrice(actorId: string, input: unknown) {
     const variant = await tx.variant.findUnique({ where: { id: variantId }, select: { productId: true } });
     if (!variant) throw new OperationError("This SKU is unavailable.");
     await lockProductEdits(tx, variant.productId);
+    await requireLegacyPilotVariant(tx, variantId);
     const rows = await tx.$queryRaw<{ amountMinor: number; discountMinor: number | null; offerId: string | null }[]>`
       SELECT "amountMinor", "discountMinor", "offerId" FROM "MarketOffer"
       WHERE "variantId" = ${variantId} AND "marketId" = ${marketId}::"MarketCode" FOR UPDATE

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { MarketId } from "../../config/markets.ts";
 import { getDb } from "../db/client.ts";
-import { marketConfiguration, type MarketConfiguration } from "../market-config.ts";
+import { marketConfiguration, marketContext, type MarketConfiguration } from "../market-config.ts";
 import { storeShop } from "../marketplace/constants.ts";
 import { applyMarketplaceCommand, MarketplaceError } from "../marketplace/write.ts";
 import { firstPartyStoreMode, marketplaceMode, orderIntakeOpen } from "../release-config.ts";
@@ -53,7 +53,7 @@ async function workspace(actorId: string, marketId: MarketId, request: Read) {
         orderBy: [{ addedOn: "desc" }, { id: "asc" }], take: 8, select: { id: true, name: true, publication: true } },
     } });
   return {
-    market: { id: market.id, name: market.name, currency: market.currency, status: market.status, locale: market.defaultLocale,
+    market: { ...marketContext(market), name: market.name, locale: market.defaultLocale,
       timeZone: market.timeZone, checkoutAuthority: market.checkoutAuthority,
       payments: market.payments.filter(payment => payment.evidence === "sandbox").map(({ method, enabled }) => ({ method, enabled })),
       deliveryCoverage: market.delivery.coverage, orderIntake: orderIntakeOpen() },
@@ -67,7 +67,7 @@ async function workspace(actorId: string, marketId: MarketId, request: Read) {
 export async function mainAdminMarketplace(actorId: string, marketId: MarketId, operation: Operation) {
   if (!marketplaceMode()) throw new CatalogWriteError("not_found", "Marketplace management is unavailable.");
   if ("read" in operation) return operation.read === "marketplace-workspace" ? workspace(actorId, marketId, operation)
-    : readMainAdminOrders(actorId, true, marketId, operation);
+    : readMainAdminOrders(actorId, true, marketId, operation, true);
   const { action, input } = operation;
   if (action === "marketplace.seller.publish" || action === "marketplace.seller.grant") {
     if (firstPartyStoreMode()) throw new CatalogWriteError("forbidden", "Third-party seller management is paused for this release.");

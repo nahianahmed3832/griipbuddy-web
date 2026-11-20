@@ -7,7 +7,7 @@ import { categoryAttributeWorkspace, previewCategoryAttributeImpact } from "@/li
 import { taxonomyOwnerResponse } from "@/lib/staff/taxonomy-owner-response";
 
 export function GET(request: Request) {
-  return taxonomyOwnerResponse(actorId => getDb().$transaction(
+  return taxonomyOwnerResponse(request, actorId => getDb().$transaction(
     tx => categoryAttributeWorkspace(actorId, catalogSearchParams(request), tx),
     { isolationLevel: "RepeatableRead" },
   ));
@@ -16,7 +16,7 @@ export function GET(request: Request) {
 const previewQuery = z.strictObject({ page: z.string().regex(/^[1-9][0-9]{0,4}$/).transform(Number).default(1) });
 
 export function POST(request: Request) {
-  return taxonomyOwnerResponse(async actorId => {
+  return taxonomyOwnerResponse(request, async actorId => {
     if (!sameOrigin(request)) throw new CatalogWriteError("forbidden", "Open this action from the catalog workspace.");
     const { page } = catalogWriteInput(previewQuery, catalogSearchParams(request));
     return previewCategoryAttributeImpact(actorId, await readJson(request), page);

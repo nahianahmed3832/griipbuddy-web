@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { requireLegacyCatalogBrowser } from "@/lib/catalog/main-admin-config";
+import { requireScopedLegacyWriter } from "@/lib/catalog/scoped-pilot";
+import { getDb } from "@/lib/db/client";
 import { getStaff } from "@/lib/staff/access";
 import { saveProduct } from "@/lib/staff/catalog";
 import type { ProductInput } from "@/lib/staff/catalog-input";
@@ -13,7 +15,7 @@ export async function saveProductAction(product: ProductInput, revision: number 
   const actor = await getStaff();
   if (actor?.role !== "OWNER") return { error: "Owner access is required." };
   try {
-    requireLegacyCatalogBrowser();
+    if (!await requireScopedLegacyWriter(getDb())) requireLegacyCatalogBrowser();
     const status = await saveProduct(actor.id, product, revision, "editor");
     revalidatePath("/", "layout");
     return { success: status === "Unchanged" ? "No changes to save." : "Product saved.", revision: status === "Unchanged" ? revision : revision === null ? 0 : revision + 1 };
@@ -31,7 +33,7 @@ export async function saveTaxonomyAction(kind: "department" | "collection", exis
   const alt = form.get("photo.alt");
   const position = form.get("position");
   try {
-    requireLegacyCatalogBrowser();
+    if (!await requireScopedLegacyWriter(getDb())) requireLegacyCatalogBrowser();
     await saveTaxonomy(actor.id, {
       id: form.get("id"), slug: form.get("slug"), name: form.get("name"), kind,
       description: form.get("description"), position: typeof position === "string" && /^\d{1,4}$/.test(position) ? Number(position) : NaN,

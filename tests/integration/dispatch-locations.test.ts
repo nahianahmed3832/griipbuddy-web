@@ -14,6 +14,7 @@ import { sellerOrderPage } from "../../src/lib/marketplace/seller-orders.ts";
 import { applyMarketplaceCommand } from "../../src/lib/marketplace/write.ts";
 import { codReconciliationOrder, listCodReconciliation } from "../../src/lib/staff/cod-remittance.ts";
 import { advanceFulfillment, cancelOrder, collectCash } from "../../src/lib/staff/operations.ts";
+import { prepareOrderParcels } from "./fixtures/prepare-parcels.ts";
 
 requireLocalDatabase("griipbuddy_test");
 process.env.GRIIP_MARKETPLACE_PREVIEW = "1";
@@ -124,6 +125,8 @@ test("a mixed order has independently tracked warehouse and seller parcels with 
   assert.deepEqual(await catalog.resolveVariants([sellerVariant], "us"), []);
   const adjustment = { action: "seller-location-stock", variantId: sellerVariant, locationId: bdSeller, expectedAvailable: 3, available: 4 } as const;
   await assert.rejects(applyMarketplaceCommand(adjustment, { shopperId: "different-shopper" }), /unavailable/i);
+  await assert.rejects(applyMarketplaceCommand({ ...adjustment, marketId: "us" },
+    { shopperId: sellerId, marketId: "us" }), { status: 404 });
   await assert.rejects(applyMarketplaceCommand({ ...adjustment, variantId: storeVariant, locationId: bdStore }, { shopperId: sellerId }), /unavailable/i);
   await applyMarketplaceCommand(adjustment, { shopperId: sellerId });
   await assert.rejects(applyMarketplaceCommand({ ...adjustment, available: 9 }, { shopperId: sellerId }), /stock count changed/i);
@@ -143,8 +146,7 @@ test("a mixed order has independently tracked warehouse and seller parcels with 
   assert.equal(await stock(storeVariant, usStore), 5);
   assert.equal(await stock(sellerVariant, bdSeller), 2);
 
-  await advanceFulfillment(packer, orderId, { next: "PACKING" });
-  await advanceFulfillment(packer, orderId, { next: "READY_TO_SHIP" });
+  await prepareOrderParcels(packer, orderId);
   await assert.rejects(advanceFulfillment(owner, orderId, { next: "SHIPPED", carrier: "Fixture courier", trackingReference: "WHOLE-ORDER" }), /parcel/i);
   await dispatchOrderParcel(packer, orderId, storeParcel.id, { carrier: "Fixture courier", trackingReference: "DH-PARCEL" });
   await assert.rejects(dispatchOrderParcel(packer, orderId, sellerParcel.id, { carrier: "Fixture courier", trackingReference: "dh-parcel" }), /tracking/i);
@@ -190,8 +192,7 @@ test("one line can split across local warehouses and COD collection waits for th
   assert.equal(quantities.get(bdStore), 2);
   assert.equal(quantities.get(backupBd), 1);
   assert.equal(parcels[0].items[0].orderItemId, parcels[1].items[0].orderItemId);
-  await advanceFulfillment(packer, orderId, { next: "PACKING" });
-  await advanceFulfillment(packer, orderId, { next: "READY_TO_SHIP" });
+  await prepareOrderParcels(packer, orderId);
   for (const [index, parcel] of parcels.entries()) {
     await dispatchOrderParcel(packer, orderId, parcel.id, { carrier: "Fixture courier", trackingReference: `LOCATION-QA-${index}` });
     await recordOrderParcelTracking(packer, orderId, parcel.id, { status: "DELIVERED", evidence: "Synthetic delivery evidence" });
@@ -229,8 +230,7 @@ test("a single-reference exchange leaves both locations unchanged when its repla
   assert.equal(placed.kind, "placed");
   const { orderId } = placed;
   const parcel = await db.orderParcel.findFirstOrThrow({ where: { orderId } });
-  await advanceFulfillment(packer, orderId, { next: "PACKING" });
-  await advanceFulfillment(packer, orderId, { next: "READY_TO_SHIP" });
+  await prepareOrderParcels(packer, orderId);
   await dispatchOrderParcel(packer, orderId, parcel.id, { carrier: "Fixture courier", trackingReference: "EXCHANGE-ORIGINAL" });
   await recordOrderParcelTracking(packer, orderId, parcel.id, { status: "DELIVERED", evidence: "Synthetic delivery evidence" });
   await collectCash(owner, orderId);

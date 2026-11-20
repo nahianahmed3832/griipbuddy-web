@@ -33,8 +33,9 @@ export function MeasurementPreferences({ marketId, clarityEnabled = false }: { m
     }[action] : "We couldn’t save the change. Please try again.");
   }
 
-  return <details className="measurement-preferences">
+  return <details className="measurement-preferences" data-measurement-choice={choice}>
     <summary>Privacy choices</summary>
+    <p>Required storage supports market selection, shopping bags and account sessions. Optional measurement uses a separate choice.</p>
     <p>Optional shopping measurement helps GriipBuddy see whether product visits lead to orders. It uses a random identifier for up to seven days, and GriipBuddy keeps these records for up to 30 days.</p>
     {choice === "blocked" && <p>Shopping measurement is disabled for this browser or staff session.</p>}
       <div className="measurement-preferences__actions">

@@ -13,7 +13,8 @@ import { departmentAncestorPath } from "@/lib/catalog/departments";
 import { getDb } from "@/lib/db/client";
 import { isMarketSelectable } from "@/lib/market-config";
 import { currentMarket } from "@/lib/market-server";
-import { requireStaff } from "@/lib/staff/access";
+import { requireLegacyCatalogPage } from "@/lib/catalog/main-admin-legacy-page";
+import { legacyCategoryScope, scopedCatalogPilotTargets } from "@/lib/catalog/scoped-pilot";
 import { staffMarketIds } from "@/lib/staff/market-access";
 import { loadCollectionWorkspace, loadNavigationWorkspace } from "@/lib/staff/navigation-workspace";
 import "./taxonomy.css";
@@ -30,7 +31,23 @@ function value(input: string | string[] | undefined) {
 }
 
 export default async function TaxonomyPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const [staff, market, params] = await Promise.all([requireStaff(), currentMarket(), searchParams]);
+  const [staff, market, params] = await Promise.all([requireLegacyCatalogPage("merchandising"), currentMarket(), searchParams]);
+  if (staff.scopedLegacyPilot) {
+    const db = getDb();
+    const categories = await db.department.findMany({ where: await legacyCategoryScope(db),
+      orderBy: [{ position: "asc" }, { id: "asc" }], select: { id: true, name: true } });
+    return <section className="taxonomy-workspace">
+      <header className="taxonomy-heading"><div>
+        <Link className="text-link" href="/staff/catalog">Product catalog</Link>
+        <h1 className="display-type">Legacy categories</h1>
+      </div></header>
+      <div className="taxonomy-card">
+        {categories.length ? <ul>{categories.map(category => <li key={category.id}>
+          <Link className="text-link" href={`${path}/legacy?category=${encodeURIComponent(category.id)}`}>{category.name}</Link>
+        </li>)}</ul> : <p>No legacy categories are available to edit.</p>}
+      </div>
+    </section>;
+  }
   const marketIds = await staffMarketIds(staff.id, "merchandising");
   const owner = staff.role === "OWNER";
   const markets = marketList.filter(item => marketIds.includes(item.id) && isMarketSelectable(item.id))
@@ -39,6 +56,8 @@ export default async function TaxonomyPage({ searchParams }: { searchParams: Pro
   const view = tabs.find(tab => tab.key === value(params.view))?.key ?? "categories";
   const selected = value(params.category);
   const db = getDb();
+  const reviewed = staff.scopedMerchandising ? await scopedCatalogPilotTargets(db) : null;
+  const reviewedCategories = new Set(reviewed?.categoryIds);
 
   const [rows, nav, collections] = await Promise.all([
     canWork && view === "categories" ? db.department.findMany({
@@ -55,7 +74,7 @@ export default async function TaxonomyPage({ searchParams }: { searchParams: Pro
     visibleInNavigation: (marketPresentations[0]?.visibleInNavigation ?? true) &&
       Boolean(departmentAncestorPath(byId, row.id)?.every(item => item.marketPresentations[0]?.visibleInNavigation !== false)),
   }));
-  const categoryId = selected ?? categories.find(row => row.kind && row.state === "ACTIVE")?.id ?? categories[0]?.id;
+  const categoryId = selected ?? categories.find(row => row.kind && row.state === "ACTIVE" && !reviewedCategories.has(row.id))?.id ?? categories[0]?.id;
   const creating = selected === "new" && owner;
   const categoryRow = categoryId && categoryId !== "new" && categories.some(row => row.id === categoryId)
     ? await db.department.findUnique({ where: { id: categoryId }, include: {
@@ -64,6 +83,7 @@ export default async function TaxonomyPage({ searchParams }: { searchParams: Pro
       slugAliases: { orderBy: [{ locale: "asc" }, { slug: "asc" }] },
     } }) : null;
   const category = categoryRow ? { ...categoryRow, aliases: categoryRow.slugAliases } : null;
+  const categoryInMainAdmin = Boolean(category && reviewedCategories.has(category.id));
   const mobileView = selected ? "editor" : "tree";
 
   return <TaxonomyPendingChanges>
@@ -94,9 +114,11 @@ export default async function TaxonomyPage({ searchParams }: { searchParams: Pro
             <TaxonomyTree categories={categories} selected={category?.id} canManage={owner} />
             <div className="taxonomy-editor">
               <Link className="taxonomy-button taxonomy-back-mobile" href={path}><ArrowLeft size={16} aria-hidden="true" /> Category tree</Link>
-              {!owner && <p className="taxonomy-muted">Shared categories are read-only. You can edit presentation for {market.name}.</p>}
+              {!owner && <p className="taxonomy-muted">{categoryInMainAdmin ? "Manage this category’s presentation in the main GriipBuddy admin." :
+                `You can edit market presentation for ${market.name}.`}</p>}
               {category || creating ? <TaxonomyCategoryEditor key={`${category?.id ?? "new"}:${market.id}`}
-                category={category} categories={categories} canManageShared={owner} canManageMarket={canWork}
+                category={category} categories={categories} canManageShared={owner}
+                canManageMarket={canWork && (!staff.scopedMerchandising || Boolean(reviewed && category && !categoryInMainAdmin))}
                 markets={markets} selectedMarket={market.id} languages={[...market.languages]} /> :
                 <section className="taxonomy-card"><h2>{selected ? "Category unavailable" : "Choose a category"}</h2>
                   <p>{selected ? "Select another category from the tree." : "Select a category or create a department to get started."}</p>

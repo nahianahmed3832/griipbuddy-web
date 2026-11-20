@@ -5,6 +5,7 @@ import { store } from "@/config/store";
 import { MarketPicker } from "./market-picker";
 import { Wordmark } from "./wordmark";
 import { MeasurementPreferences } from "./measurement-preferences";
+import { OrderTrackingLink } from "./order-tracking-link";
 import { selectableMarkets } from "@/lib/market-config";
 
 export function SiteFooter({ navigation, market, production, clarityEnabled }: {
@@ -35,6 +36,7 @@ export function SiteFooter({ navigation, market, production, clarityEnabled }: {
           </nav>
           <div>
             <h2>Support</h2>
+            <OrderTrackingLink href="/orders/track">Track your order</OrderTrackingLink>
             {store.supportEmail && <a href={`mailto:${store.supportEmail}`}>{store.supportEmail}</a>}
             {store.policies.map((policy) => <Link key={policy.href} href={policy.href}>{policy.label}</Link>)}
           </div>

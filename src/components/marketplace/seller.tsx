@@ -129,7 +129,7 @@ export function MarketModeration({ shop, grants, markets }: { shop: string; gran
   })}</ul>;
 }
 
-export function ReviewModeration({ review, visible }: { review: string; visible: boolean }) {
+export function ReviewModeration({ review, visible, marketId, expectedUpdatedAt }: { review: string; visible: boolean; marketId: MarketId; expectedUpdatedAt: string }) {
   return <MarketplaceForm label={visible ? "Hide review" : "Restore review"} success={visible ? "Review hidden." : "Review restored."}
-    command={() => ({ action: "staff-review", review, visible: !visible })}/>;
+    command={() => ({ action: "staff-review", review, marketId, expectedUpdatedAt, visible: !visible })}/>;
 }

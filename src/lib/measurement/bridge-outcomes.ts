@@ -1,4 +1,5 @@
 import type { Prisma } from "../../generated/prisma/client.ts";
+import { commerceReferenceFor, type CommerceScope } from "../commerce/service-contract.ts";
 import { getDb } from "../db/client.ts";
 import { marketDay } from "../market-calendar.ts";
 import { marketConfiguration } from "../market-config.ts";
@@ -64,9 +65,16 @@ function sameOutcome(stored: StoredOutcome, id: string, event: BridgeEnvelope["o
     stored.grossMinor === (event.grossMinor ?? null) && stored.deductionsMinor === (event.deductionsMinor ?? null);
 }
 
+function bridgeRecordId(
+  scope: CommerceScope, evidence: BridgeEnvelope["evidence"], kind: "order" | "outcome", sourceId: string,
+) {
+  const ref = commerceReferenceFor(scope, kind, sourceId);
+  return stableMeasurementId("bridge-" + ref.kind, ref.authority, ref.marketId, evidence, ref.sourceId);
+}
+
 export async function importOutcomeBridge(signed: Buffer) {
   const binding = configuredBridge();
-  if (!binding) throw new OutcomeBridgeError("The fixture outcome bridge is disabled or unconfigured.");
+  if (!binding) throw new OutcomeBridgeError("The fixture outcome bridge is disabled or unconfigured.", "unavailable");
   const now = new Date();
   const batch = readSignedBridge(signed, binding, now);
   const scope = [batch.authority, batch.marketId, batch.evidence] as const;
@@ -78,13 +86,13 @@ export async function importOutcomeBridge(signed: Buffer) {
       await tx.$queryRaw`SELECT 1::int AS locked FROM pg_advisory_xact_lock(hashtextextended(${lock}, 0))`;
       let ordersCreated = 0, eventsCreated = 0, linksCreated = 0;
       for (const input of batch.orders) {
-        const id = stableMeasurementId("bridge-order", ...scope, input.sourceOrderId);
+        const id = bridgeRecordId(binding, batch.evidence, "order", input.sourceOrderId);
         const createdAt = new Date(input.bookedAt);
         const previous = await tx.bridgeOrder.findUnique({
           where: { id }, select: { ...bridgeOrderSelect, measurementClaimed: true },
         });
         if (previous) {
-          if (!sameOrder(previous, input)) throw new OutcomeBridgeError("Bridge booking conflicts with existing evidence.");
+          if (!sameOrder(previous, input)) throw new OutcomeBridgeError("Bridge booking conflicts with existing evidence.", "conflict");
         } else {
           await tx.bridgeOrder.create({
             data: { id, authority: batch.authority, marketId: batch.marketId, evidence: batch.evidence, currency: input.currency,
@@ -94,7 +102,7 @@ export async function importOutcomeBridge(signed: Buffer) {
           ordersCreated++;
         }
         for (const event of input.events) {
-          const evidenceId = stableMeasurementId("bridge-outcome", ...scope, event.sourceEventId);
+          const evidenceId = bridgeRecordId(binding, batch.evidence, "outcome", event.sourceEventId);
           const amountMinor = event.amountMinor ?? null;
           const grossMinor = event.grossMinor ?? null;
           const deductionsMinor = event.deductionsMinor ?? null;
@@ -102,7 +110,7 @@ export async function importOutcomeBridge(signed: Buffer) {
           const stored = previous?.events.find(row => row.kind === event.kind);
           if (stored) {
             if (!sameOutcome(stored, evidenceId, event)) {
-              throw new OutcomeBridgeError("Bridge transition conflicts with existing evidence.");
+              throw new OutcomeBridgeError("Bridge transition conflicts with existing evidence.", "conflict");
             }
             continue;
           }
@@ -118,7 +126,7 @@ export async function importOutcomeBridge(signed: Buffer) {
     }, { timeout: 30_000 });
   } catch (error) {
     if (typeof error === "object" && error && "code" in error && error.code === "P2002") {
-      throw new OutcomeBridgeError("Bridge source reused a previously assigned evidence identifier.");
+      throw new OutcomeBridgeError("Bridge source reused a previously assigned evidence identifier.", "conflict");
     }
     throw error;
   }
@@ -126,10 +134,9 @@ export async function importOutcomeBridge(signed: Buffer) {
 
 export async function verifyOutcomeBridge(signed: Buffer) {
   const binding = configuredBridge();
-  if (!binding) throw new OutcomeBridgeError("The fixture outcome bridge is disabled or unconfigured.");
+  if (!binding) throw new OutcomeBridgeError("The fixture outcome bridge is disabled or unconfigured.", "unavailable");
   const batch = readSignedBridge(signed, binding);
-  const scope = [batch.authority, batch.marketId, batch.evidence] as const;
-  const orders = batch.orders.map(input => ({ input, id: stableMeasurementId("bridge-order", ...scope, input.sourceOrderId) }));
+  const orders = batch.orders.map(input => ({ input, id: bridgeRecordId(binding, batch.evidence, "order", input.sourceOrderId) }));
   const timeZone = marketConfiguration(batch.marketId).timeZone;
   const persisted = await getDb().bridgeOrder.findMany({
     where: { id: { in: orders.map(order => order.id) }, authority: batch.authority, marketId: batch.marketId, evidence: batch.evidence },
@@ -149,7 +156,7 @@ export async function verifyOutcomeBridge(signed: Buffer) {
       return {
         day: marketDay(saved.createdAt, timeZone), currency: saved.currency, totalMinor: saved.totalMinor,
         events: input.events.map(event => {
-          const evidenceId = stableMeasurementId("bridge-outcome", ...scope, event.sourceEventId);
+          const evidenceId = bridgeRecordId(binding, batch.evidence, "outcome", event.sourceEventId);
           const stored = saved.events.find(row => row.kind === event.kind);
           if (!stored || !sameOutcome(stored, evidenceId, event)) {
             throw new OutcomeBridgeError("Persisted bridge transition differs from the signed export.");

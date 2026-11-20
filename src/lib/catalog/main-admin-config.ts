@@ -3,6 +3,31 @@ import { OperationError } from "../staff/operation-error.ts";
 
 export const legacyStaffIdPattern = /^[a-f0-9]{24}$/;
 const nativeStaffIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+const bridgeSettings = ["GRIIP_MAIN_ADMIN_CATALOG_SECRET", "GRIIP_MAIN_ADMIN_CATALOG_ORIGIN", "GRIIP_MAIN_ADMIN_CATALOG_ACTORS"] as const;
+
+export function scopedCatalogPilotRequested() {
+  const flag = process.env.GRIIP_MAIN_ADMIN_CATALOG_SCOPED_PILOT;
+  return Boolean(localDatabase() || developmentAcceptanceDatabase()) &&
+    (Boolean(flag && flag !== "0") || Boolean(process.env.GRIIP_MAIN_ADMIN_CATALOG_REVIEW_DIGEST));
+}
+
+export function mainAdminCatalogDormant() {
+  return process.env.GRIIP_MAIN_ADMIN_CATALOG_DORMANT === "1" && developmentAcceptanceDatabase() &&
+    !scopedCatalogPilotRequested() && !bridgeSettings.some(key => Boolean(process.env[key]));
+}
+
+export function mainAdminCatalogRequested() {
+  if (developmentAcceptanceDatabase()) return !mainAdminCatalogDormant();
+  return scopedCatalogPilotRequested() ||
+    Boolean(localDatabase() && bridgeSettings.some(key => Boolean(process.env[key])));
+}
+
+export function scopedCatalogPilotDigest() {
+  const digest = process.env.GRIIP_MAIN_ADMIN_CATALOG_REVIEW_DIGEST;
+  return process.env.GRIIP_MAIN_ADMIN_CATALOG_SCOPED_PILOT === "1" &&
+    digest && /^[0-9a-f]{64}$/.test(digest) && mainAdminCatalogConfig() ? digest : null;
+}
+
 export function mainAdminHomepageRequested() {
   return process.env.GRIIP_MAIN_ADMIN_HOMEPAGE_ENABLED === "1" && Boolean(localDatabase() || developmentAcceptanceDatabase());
 }
@@ -45,7 +70,7 @@ export function mainAdminMarketplaceConfig() {
 }
 
 export function requireLegacyCatalogBrowser() {
-  if (mainAdminCatalogConfig()) {
+  if (mainAdminCatalogRequested()) {
     throw new OperationError("Open the main GriipBuddy admin to manage the catalog.");
   }
 }

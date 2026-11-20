@@ -89,11 +89,11 @@ function publicLegacyOffer(marketId: MarketId) {
   return { ...eligibleOffer(marketId), publication: "ACTIVE" } as const;
 }
 
-export function catalogVariantWhere(marketId: MarketId): Prisma.VariantWhereInput {
+export function catalogVariantWhere(marketId: MarketId, purchasable = false): Prisma.VariantWhereInput {
   return {
     active: true, archivedAt: null, product: { active: true, publication: "ACTIVE" },
     OR: [
-      { offers: { some: connectedOfferScope(marketId) } },
+      { offers: { some: purchasable ? { ...connectedOfferScope(marketId), eligible: true } : connectedOfferScope(marketId) } },
       { managedInventory: false, product: merchantProductEligibility(marketId), offers: { some: publicLegacyOffer(marketId) } },
     ],
   };

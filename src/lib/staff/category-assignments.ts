@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { categoryAttributes, validateCategoryAttributeValues } from "../catalog/category-attributes.ts";
+import { scopedCatalogPilotRequested } from "../catalog/main-admin-config.ts";
 import { getDb } from "../db/client.ts";
 import { productIdField } from "./catalog-input.ts";
 import { assignedAttributeSelection, assignedAttributeValues } from "./category-attribute-values.ts";
@@ -29,11 +30,14 @@ export async function saveProductCategoryAssignments(actorId: string, raw: unkno
     const current = await tx.product.findUnique({
       where: { id: productId },
       select: {
-        departmentId: true, revision: true, publication: true,
+        departmentId: true, revision: true, publication: true, foundation: true,
         secondaryCategories: { select: { departmentId: true }, orderBy: { departmentId: "asc" } },
       },
     });
     if (!current) throw new CatalogWriteError("not_found", "The product does not exist.");
+    if (!current.foundation && scopedCatalogPilotRequested()) {
+      throw new CatalogWriteError("conflict", "Use the legacy catalog editor for this product’s category.");
+    }
     if (current.revision !== revision) throw new CatalogWriteError("conflict", "This product changed. Reload its category assignments.");
     const secondary = [...secondaryCategoryIds].sort();
     const priorSecondary = current.secondaryCategories.map(item => item.departmentId).sort();

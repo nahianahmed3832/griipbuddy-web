@@ -1,6 +1,7 @@
 import { Prisma } from "../../generated/prisma/client.ts";
 import { categoryAttributes, validateCategoryAttributeValues } from "../catalog/category-attributes.ts";
 import { variantOptionSignature } from "../catalog/option-signature.ts";
+import { lockVariantInventory } from "../commerce/location-inventory.ts";
 import { getDb } from "../db/client.ts";
 import { productionMode } from "../release-config.ts";
 import { lockCatalogProductQuoteRows } from "./catalog-locks.ts";
@@ -12,6 +13,7 @@ import { categoryPlacementScope, lockTaxonomy } from "./taxonomy-write.ts";
 type Tx = Prisma.TransactionClient;
 type AttributeValues = NonNullable<ProductFoundationInput["attributeValues"]>;
 const productRelations = {
+  sellerListingReviews: { take: 1, select: { marketId: true } },
   secondaryCategories: { select: { departmentId: true } },
   variants: {
     select: { id: true, sku: true, optionSignature: true, archivedAt: true, position: true,
@@ -82,15 +84,18 @@ function prepareVariants(input: ProductFoundationInput, current: ProductRow | nu
     if (identifiersNotAssigned && (gtin || mpn)) {
       throw new OperationError("Remove the GTIN and manufacturer part number before marking identifiers as unassigned.");
     }
+    const previousAttributes = storedValues(prior?.attributeValues);
+    const attributeValues = row.attributeValues ?? previousAttributes;
     return {
       id: row.id, sku: row.sku, selected,
+      attributesChanged: JSON.stringify(previousAttributes) !== JSON.stringify(attributeValues),
       data: {
         active: row.active, archivedAt: row.active ? null : prior?.archivedAt ?? retiredAt,
         isDefault: row.active && row.id === defaultVariantId, optionSignature,
         options: Object.fromEntries(selected.map(({ key, value }) => [key, value.label])),
         label: selected.map(({ value }) => value.label).join(" / ") || "Standard",
         position: !row.active && prior ? prior.position : position,
-        attributeValues: row.attributeValues ?? storedValues(prior?.attributeValues),
+        attributeValues,
         gtin, mpn, identifiersNotAssigned,
       },
     };
@@ -205,14 +210,24 @@ export async function saveProductFoundation(actorId: string, raw: unknown,
       await authorize(tx, actorId, true);
       await lockTaxonomy(tx);
       await lockProductEdits(tx, id);
+      const identifiers = await tx.variant.findMany({ where: { productId: id }, select: { id: true } });
+      await lockVariantInventory(tx, identifiers.map(row => row.id));
       await lockCatalogProductQuoteRows(tx, id);
       const current = await tx.product.findUnique({ where: { id }, include: productRelations });
+      if (current?.sellerListingReviews.length) throw new CatalogWriteError("conflict", "Change this product through the seller listing review.");
       if (current && !current.foundation) throw new CatalogWriteError("conflict", "This product still uses the legacy catalog editor.");
       if ((current?.revision ?? null) !== expectedRevision) throw new CatalogWriteError("conflict", "This product changed. Reload before saving.");
       if (current && input.slug !== current.slug) throw new OperationError("The product URL stays stable after creation.");
       if (publication === "ACTIVE" && productionMode()) await validateProductionMedia(tx, id);
       const secondary = await validatePlacements(tx, input, current);
       const variants = prepareVariants(input, current);
+      const openArchives = variants.filter(row => !row.data.active &&
+        current?.variants.some(prior => prior.id === row.id && prior.archivedAt === null)).map(row => row.id);
+      if (openArchives.length && await tx.inventoryPool.findFirst({
+        where: { variantId: { in: openArchives }, OR: [
+          { inboundTransfers: { some: { receivedAt: null } } }, { outboundTransfers: { some: { receivedAt: null } } },
+        ] }, select: { id: true },
+      })) throw new OperationError("Receive in-transit stock before archiving this variant.");
       const attributeValues = input.attributeValues ?? storedValues(current?.attributeValues);
       await validateAttributes(tx, input, variants, attributeValues);
       if (await tx.variant.findFirst({
@@ -235,6 +250,8 @@ export async function saveProductFoundation(actorId: string, raw: unknown,
         ...(input.shortDescription !== undefined && { shortDescription: input.shortDescription || null }),
         ...(input.specifications !== undefined && { specifications: input.specifications }),
         ...(input.keywords !== undefined && { keywords: input.keywords }),
+        ...(input.featured !== undefined && { featured: input.featured }),
+        ...(input.newArrival !== undefined && { newArrival: input.newArrival }),
       };
       const product = current
         ? await tx.product.update({ where: { id }, data: { ...data, revision: { increment: 1 } }, select: { id: true, revision: true } })
@@ -254,8 +271,11 @@ export async function saveProductFoundation(actorId: string, raw: unknown,
         ["Short description", current?.shortDescription, data.shortDescription], ["Brand", current?.brand, data.brand],
         ["Specifications", current?.specifications, data.specifications], ["Attributes", current?.attributeValues, data.attributeValues],
         ["Keywords", current?.keywords, data.keywords],
+        ["Featured products", current?.featured, data.featured],
+        ["New arrivals", current?.newArrival, data.newArrival],
       ].filter(([, before, after]) => after !== undefined && JSON.stringify(before) !== JSON.stringify(after))
         .map(([field]) => String(field));
+      if (variants.some(row => row.attributesChanged)) changedFields.push("Variant attributes");
       if (replaceSecondary) changedFields.push("Categories");
       await tx.auditEvent.create({
         data: { actorId, action: "PRODUCT_SAVED", target: id,

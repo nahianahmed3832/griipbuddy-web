@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb, type DbReader } from "@/lib/db/client";
 import { reportFailure } from "@/lib/db/observability";
+import { couponDirectoryShops } from "@/lib/marketplace/coupon-directory";
 import { couponCodeInput, couponConfiguration } from "@/lib/marketplace/coupon-input";
 import { marketplaceMode } from "@/lib/release-config";
 import { getStaff } from "@/lib/staff/access";
@@ -32,6 +33,8 @@ async function changeCoupon(task: (db: DbReader, actorId: string) => Promise<voi
       await task(db, staff.id);
     });
     revalidatePath("/staff/coupons");
+    revalidatePath("/coupons");
+    revalidatePath("/account/coupons");
     return { success };
   } catch (error) {
     if (error instanceof OperationError) return { error: error.message };
@@ -78,4 +81,28 @@ export async function setCouponEnabled(marketId: MarketId, code: string, enabled
       await db.auditEvent.create({ data: { actorId, action: "COUPON_CHANGED", target: normalized.data, changes: { marketId, enabled } } });
     }
   }, enabled ? "Coupon enabled." : "Coupon disabled.");
+}
+
+export async function setCouponDirectoryPublication(marketId: MarketId, code: string, published: boolean): Promise<ActionState> {
+  const normalized = couponCodeInput.safeParse(code);
+  if (!isMarketSelectable(marketId) || !normalized.success || typeof published !== "boolean") return { error: "Unknown coupon." };
+  return changeCoupon(async (db, actorId) => {
+    const where = { code: normalized.data, marketId };
+    const coupon = await db.marketplaceCoupon.findUnique({ where, select: { publishedInDirectory: true } });
+    if (!coupon) throw new OperationError("This coupon is unavailable in the selected market.");
+    if (coupon.publishedInDirectory === published) return;
+    const updated = await db.marketplaceCoupon.updateMany({
+      where: { ...where, publishedInDirectory: !published, ...(published && {
+        enabled: true,
+        AND: [
+          { OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] },
+          couponDirectoryShops(marketId),
+        ],
+      }) },
+      data: { publishedInDirectory: published },
+    });
+    if (!updated.count) throw new OperationError("Reload and choose an eligible coupon.");
+    await db.auditEvent.create({ data: { actorId, action: "COUPON_CHANGED", target: normalized.data,
+      changes: { marketId, publishedInDirectory: published } } });
+  }, published ? "Coupon published to the directory." : "Coupon removed from the directory.");
 }

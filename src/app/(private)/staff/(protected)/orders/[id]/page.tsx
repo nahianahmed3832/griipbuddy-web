@@ -15,6 +15,7 @@ import { orderHasAdapter } from "@/lib/commerce/market-commerce";
 import { fulfillmentLabels, orderDate, orderLabels, paymentLabels, paymentMethodLabels } from "@/lib/commerce/labels";
 import { devShipmentAvailable } from "@/lib/commerce/bangladesh-shipment";
 import { purchasedOptions } from "@/lib/commerce/purchased-options";
+import { parcelItemsToShip } from "@/lib/commerce/parcel-tracking";
 import { storeShop } from "@/lib/marketplace/constants";
 import { staffSellerPreparation } from "@/lib/marketplace/seller-orders";
 import { sellerPreparationLabels } from "@/lib/marketplace/seller-preparation";
@@ -71,7 +72,8 @@ export default async function StaffOrderPage({ params }: { params: Promise<{ id:
               {!hasParcels && !shipment && order.carrier && <p>Manual shipment: {order.carrier} · {order.trackingReference}</p>}
             </section>
             {hasParcels ? <StaffOrderParcels orderId={id} marketId={market.id} parcels={parcels} active={active} owner={owner}
-              canDispatch={canDispatch} simulate={devShipmentAvailable(order)} /> : shipment && <StaffBangladeshTracking order={order} owner={owner} />}
+              canPrepare={canPack && !pendingCancellation && (!cod || awaiting)} canDispatch={canDispatch}
+              simulate={devShipmentAvailable(order)} /> : shipment && <StaffBangladeshTracking order={order} owner={owner} />}
             {sellerPreparation.length > 0 && (
               <section className="commerce-panel">
                 <h2>Seller handoff</h2>
@@ -177,7 +179,7 @@ export default async function StaffOrderPage({ params }: { params: Promise<{ id:
         {hasParcels ? parcels.map((parcel, index) => <section key={parcel.id}>
           <h2>Parcel {index + 1} · {parcel.locationName}</h2>
           {parcel.trackingReference && <p>{parcel.carrier} · {parcel.trackingReference}</p>}
-          <ul>{parcel.items.map(({ quantity, orderItem }) => <li key={orderItem.id}>
+          <ul>{parcelItemsToShip(parcel.items).map(({ quantity, orderItem }) => <li key={orderItem.id}>
             {quantity} × {orderItem.productName} · {purchasedOptions(itemsById.get(orderItem.id) ?? orderItem)} · {orderItem.sku}
             {itemsById.get(orderItem.id)?.personalization && <p className="personalization-note">Personalization: {itemsById.get(orderItem.id)?.personalization}</p>}
           </li>)}</ul>

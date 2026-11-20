@@ -10,6 +10,8 @@ import { guestOrder, reviewCheckout, submitCheckout } from "../../src/lib/commer
 import type { CheckoutDetails } from "../../src/lib/commerce/checkout-types.ts";
 import { applyImport, previewImport } from "../../src/lib/staff/catalog-import.ts";
 import { ownerProduct, saveProduct } from "../../src/lib/staff/catalog.ts";
+import { saveCatalogCollection } from "../../src/lib/staff/navigation.ts";
+import { loadCollectionWorkspace } from "../../src/lib/staff/navigation-workspace.ts";
 import { adjustStock, cancelOrder } from "../../src/lib/staff/operations.ts";
 import { saveDeliveryZone, saveMarketPolicy } from "../../src/lib/staff/market-settings.ts";
 import { consumeQuota } from "../../src/lib/db/observability.ts";
@@ -53,6 +55,7 @@ test("import is repeatable and preserves allocated stock and order snapshots thr
   const owner = await staff("OWNER");
   const suffix = randomUUID().slice(0, 8);
   const id = `fixture-catalog-${suffix}`;
+  const collectionId = `${id}-collection`;
   const code = `FIXTURE-TOTE-${suffix.toUpperCase()}`;
   const csv = (await readFile("public/templates/catalog-example.csv", "utf8"))
     .replaceAll("sample-import-tote", id).replaceAll("DEMO-IMPORT-TOTE", code).replaceAll(",DRAFT,", ",ACTIVE,");
@@ -74,12 +77,20 @@ test("import is repeatable and preserves allocated stock and order snapshots thr
     assert.deepEqual(await applyImport(owner, csv, repeated.token), [{ id, status: "Unchanged" }]);
     const branded = await ownerProduct(owner, id);
     assert.ok(branded);
+    const collection = await saveCatalogCollection(owner, { id: collectionId, slug: collectionId, name: "Legacy catalog fixture",
+      description: "", selection: "CURATED", expectedRevision: null, position: 0, image: null });
     assert.equal(await saveProduct(owner, {
       ...branded.product,
       brand: "Test Maker",
+      collectionIds: [collectionId],
       variants: branded.product.variants.map((item) =>
         item.sku === `${code}-OAT` ? { ...item, gtin: "042100-005264", mpn: "Tote-1" } : { ...item, identifiersNotAssigned: true }),
     }, branded.revision, "editor"), "Update");
+    let collectionWorkspace = (await loadCollectionWorkspace(owner, "bd", collectionId)).current;
+    assert.deepEqual(collectionWorkspace?.products.map(product => product.id), [id]);
+    assert.deepEqual(collectionWorkspace?.history.map(({ summary, revision }) => [summary, revision]), [
+      ["Collection products saved", collection.revision + 1], ["Collection created", collection.revision],
+    ]);
     assert.equal(await db.variant.count({ where: { productId: id } }), 2);
     const variant = await db.variant.findUniqueOrThrow({ where: { sku: `${code}-OAT` }, include: { inventory: true } });
     assert.equal(variant.inventory?.available, 0);
@@ -105,6 +116,12 @@ test("import is repeatable and preserves allocated stock and order snapshots thr
     const existing = await ownerProduct(owner, id);
     assert.ok(existing);
     assert.equal(existing.product.brand, "Test Maker");
+    collectionWorkspace = (await loadCollectionWorkspace(owner, "bd", collectionId)).current;
+    assert.deepEqual(collectionWorkspace?.products, []);
+    assert.deepEqual(collectionWorkspace?.history.map(({ summary, revision }) => [summary, revision]), [
+      ["Collection products saved", collection.revision + 2], ["Collection products saved", collection.revision + 1],
+      ["Collection created", collection.revision],
+    ]);
     const identified = existing.product.variants.find(({ sku }) => sku === `${code}-OAT`);
     assert.equal(identified?.gtin, "042100005264");
     assert.equal(identified?.mpn, "Tote-1");
@@ -140,6 +157,8 @@ test("import is repeatable and preserves allocated stock and order snapshots thr
     await db.marketOffer.deleteMany({ where: { variant: { productId: id } } });
     await db.variant.deleteMany({ where: { productId: id } });
     await db.product.deleteMany({ where: { id } });
+    await db.collection.deleteMany({ where: { id: collectionId } });
+    await db.auditEvent.deleteMany({ where: { target: collectionId } });
     await db.deliveryZone.deleteMany({ where: { district } });
     await db.auditEvent.deleteMany({ where: { target: `bd/${district}/standard` } });
   }

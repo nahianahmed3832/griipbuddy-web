@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { isMarketId, markets, type Market } from "../../config/markets.ts";
+import { priceInMinor } from "./browse-price-input.ts";
+import { browseFilterFields } from "./browse-url-state.ts";
 import { browseFacetLabels } from "./category-browse-facets.ts";
 import { parseCatalogListing } from "./connected-listing-input.ts";
 import { catalogDelivery } from "./connected-public.ts";
@@ -8,7 +10,8 @@ import type { SearchParams } from "./listing.ts";
 const deliveryFields = ["country", "district", "method", "postalCode", "paymentMethod", "quantity"];
 const facetFields = ["brand", "model", "design", "color", "option", "attribute", "availability"] as const;
 const facetNames = { ...browseFacetLabels, option: "Option", attribute: "Specification" };
-const filterFields = [...facetFields, "minMinor", "maxMinor", "sale"];
+const filterFields: ReadonlySet<string> = new Set(browseFilterFields);
+const browsePageSize = parseCatalogListing(new URLSearchParams()).limit;
 
 function singleton(raw: SearchParams, name: string) {
   return typeof raw[name] === "string" ? raw[name] : undefined;
@@ -28,15 +31,6 @@ function appendValid(params: URLSearchParams, name: string, value: string | unde
   }
   params.append(name, value);
   return true;
-}
-
-function priceInMinor(raw: string, digits: number) {
-  const value = raw.trim().replace(/[০-৯]/gu, character => String(character.codePointAt(0)! - 0x09E6));
-  if (!/^\d{1,10}(?:\.\d{1,3})?$/.test(value)) return undefined;
-  const [whole, fraction = ""] = value.split(".");
-  if (fraction.length > digits) return undefined;
-  const amount = Number(whole) * 10 ** digits + Number(fraction.padEnd(digits, "0"));
-  return amount <= 2_147_483_647 ? String(amount) : undefined;
 }
 
 function fixedSide(raw: SearchParams, side: "min" | "max", market: Market) {
@@ -109,8 +103,9 @@ export function prepareCategoryBrowseQuery(raw: SearchParams, market: Market, sc
     if (name !== "category" && name !== "collection") context.append(name, value);
   }
   if (params.has("minMinor") || params.has("maxMinor")) context.set("priceCurrency", market.currency);
-  const sort = params.has("sort") ? parseCatalogListing(params).sort : undefined;
-  return { params, query: context.toString(), page, sort, delivery, removed: [...removed], changedMarket };
+  const rawSort = params.get("sort");
+  const sort = rawSort ? parseCatalogListing(new URLSearchParams({ sort: rawSort })).sort : undefined;
+  return { params, query: context.toString(), page, pageSize: browsePageSize, sort, delivery, removed: [...removed], changedMarket };
 }
 
 export type CategoryBrowseFilterField = (typeof facetFields)[number] | "price" | "sale" | "size";
@@ -124,7 +119,7 @@ export function categoryBrowseControls(
     for (const field of facetFields) params.delete(field);
     for (const [field, value] of new URLSearchParams(browse.selected)) params.append(field, value);
   }
-  const filters = [...params].filter(([field]) => filterFields.includes(field));
+  const filters = [...params].filter(([field]) => filterFields.has(field));
   const fields = new Set<CategoryBrowseFilterField>();
   for (const [field, value] of filters) {
     if (field === "minMinor" || field === "maxMinor") fields.add("price");

@@ -1,0 +1,60 @@
+name: griipbuddy-storefront-prod
+services:
+  db:
+    image: ${PROD_POSTGRES_IMAGE:?Set PROD_POSTGRES_IMAGE}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: griipbuddy_prod_operator
+      POSTGRES_PASSWORD: ${PROD_DB_OPERATOR_PASSWORD:?Set PROD_DB_OPERATOR_PASSWORD}
+      POSTGRES_DB: griipbuddy_production
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -q -U griipbuddy_prod_operator -d griipbuddy_production"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 384m
+  app:
+    image: griipbuddy-storefront-prod:${APP_REVISION:?Set APP_REVISION}
+    restart: unless-stopped
+    env_file: ${PROD_APP_ENV:?Set PROD_APP_ENV}
+    volumes:
+      - type: bind
+        source: ${PROD_POLICY_FILE:?Set PROD_POLICY_FILE}
+        target: /run/griipbuddy/policies.json
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      APP_REVISION: ${APP_REVISION}
+      STOREFRONT_POLICY_FILE: /run/griipbuddy/policies.json
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [database, gateway]
+    ports:
+      - "127.0.0.1:4398:3000"
+    healthcheck:
+      test: [CMD, node, "-e", "fetch('http://127.0.0.1:3000/api/health').then(async r=>{const data=await r.json();process.exit(r.ok&&data.revision===process.env.APP_REVISION&&data.database==='ok'?0:1)}).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 20s
+    mem_limit: 640m
+  operator:
+    profiles: [operator]
+    image: griipbuddy-storefront-prod-operator:${APP_REVISION}
+    env_file: ${PROD_OPERATOR_ENV:?Set PROD_OPERATOR_ENV}
+    networks: [database]
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres:
+networks:
+  database:
+    internal: true
+  gateway:

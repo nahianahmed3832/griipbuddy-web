@@ -1,3 +1,4 @@
+import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { formatMoney, markets } from "../src/config/markets";
 import { storefrontPath } from "../src/config/storefront-path";
@@ -6,7 +7,7 @@ import type { homepageReadPayload } from "../src/lib/catalog/homepage-layout";
 import { getDb } from "../src/lib/db/client";
 import { requireLocalDatabase } from "../src/lib/db/local";
 import type { BrowserMeasurement } from "../src/lib/measurement/schema";
-import { saveHomepageDraft } from "../src/lib/staff/homepage";
+import { publishHomepage, saveHomepageDraft } from "../src/lib/staff/homepage";
 
 type PublishedHome = Awaited<ReturnType<typeof homepageReadPayload>>;
 const inheritedBody = defaultHomepage.sections.filter(section => section.key !== "hero").map(section => section.key);
@@ -20,7 +21,8 @@ function pathForMarket(market: (typeof markets)[keyof typeof markets], path = "/
 function authoredSections(market: (typeof markets)[keyof typeof markets]): HomepageSection[] {
   const label = market.countryCode;
   return [
-    { key: "fixture-categories", type: "DEPARTMENTS", position: 10, title: `${label} fixture categories`, categoryIds: ["d-fashion", "d-electronics"] },
+    { key: "fixture-categories", type: "DEPARTMENTS", position: 10, title: `${label} fixture categories`,
+      categoryIds: ["d-fashion", "d-electronics", "d-home", "d-sports"] },
     { key: "fixture-collections", type: "COLLECTIONS", position: 20, title: `${label} fixture collections`, collectionIds: ["c-carry", "c-home"] },
     { key: "fixture-featured", type: "FEATURED", position: 30, title: `${label} fixture selections`, description: "A saved editorial selection.",
       productIds: ["p-glass", "p-brush", "p-stand", "p-lamp"] },
@@ -32,6 +34,54 @@ function authoredSections(market: (typeof markets)[keyof typeof markets]): Homep
     { key: "fixture-expired", type: "FEATURED", position: 80, title: "Expired fixture section", productIds: ["p-cushion"], endsLocal: "2025-01-01T00:00" },
     { key: "fixture-empty", type: "CURATED", position: 90, title: "Empty fixture section", productIds: ["p-tote"] },
   ];
+}
+
+function tileSections(market: (typeof markets)[keyof typeof markets]): HomepageSection[] {
+  const label = market.countryCode;
+  return [
+    { key: "fixture-shortcuts", type: "TILES", tileLayout: "SHORTCUTS", position: 5, title: `${label} Quick links`, tiles: [
+      { key: "fixture-home", kind: "CATEGORY", referenceId: "d-home", title: "Shop home" },
+      { key: "fixture-fashion", kind: "CATEGORY", referenceId: "d-fashion", title: "Shop fashion" },
+    ] },
+    { key: "fixture-portrait", type: "TILES", tileLayout: "PORTRAIT", position: 12, title: `${label} Portrait tiles`, tiles: [
+      { key: "fixture-home", kind: "CATEGORY", referenceId: "d-home", title: "Home portrait", ctaLabel: "Browse home",
+        image: { src: "/editorial/carry.webp", alt: "Home portrait desktop" },
+        mobileImage: { src: "/editorial/home.webp", alt: "Home portrait mobile" },
+        focalPoint: { x: 25, y: 70 }, mobileFocalPoint: { x: 80, y: 30 } },
+      { key: "fixture-fashion", kind: "CATEGORY", referenceId: "d-fashion", title: "Fashion portrait" },
+    ] },
+    { key: "fixture-showcase", type: "TILES", tileLayout: "SHOWCASE", position: 22, title: `${label} Collection showcase`, tiles: [
+      { key: "fixture-carry", kind: "COLLECTION", referenceId: "c-carry", title: "Carry collection", ctaLabel: "See carry essentials" },
+    ] },
+    { key: "fixture-discovery", type: "TILES", tileLayout: "DISCOVERY", position: 32, title: `${label} Discovery tiles`, tiles: [
+      { key: "fixture-cushion", kind: "PRODUCT", referenceId: "p-cushion", title: "Cushion discovery", ctaLabel: "See cushion" },
+    ] },
+  ];
+}
+
+async function verifyAuthoredTiles(page: Page, payload: PublishedHome, origin: string, mobile: boolean) {
+  const market = markets[payload.marketId];
+  const main = page.getByRole("main");
+  await expect(main.getByRole("heading", { level: 1 })).toHaveText("Essentials for every day");
+  await expect(main.getByRole("navigation", { name: "Category shortcuts", exact: true })).toHaveCount(0);
+  const shortcuts = main.getByRole("navigation", { name: `${market.countryCode} Quick links` }).getByRole("link");
+  await expect(shortcuts).toHaveText(["Shop home", "Shop fashion"]);
+  const portrait = main.locator('[data-home-tile-layout="portrait"]').getByRole("link", { name: "Home portrait: Browse home" });
+  const image = portrait.locator("img");
+  await image.scrollIntoViewIfNeeded();
+  await expect.poll(() => image.evaluate(element => {
+    const source = (element as HTMLImageElement).currentSrc;
+    if (!source) return "";
+    const url = new URL(source);
+    return url.searchParams.get("url") ?? url.pathname;
+  })).toBe(storefrontPath(mobile ? "/editorial/home.webp" : "/editorial/carry.webp"));
+  await expect(image).toHaveCSS("object-position", mobile ? "80% 30%" : "25% 70%");
+  await expect(main.locator('[data-home-tile-layout="showcase"]').getByRole("link", { name: "Carry collection: See carry essentials" })).toBeVisible();
+  const discovery = main.locator('[data-home-tile-layout="discovery"]').getByRole("link", { name: /^Cushion discovery,/ });
+  const product = payload.sections.find(section => section.id === "fixture-discovery")?.tiles?.[0];
+  expect(product?.product).toBeTruthy();
+  expect(sameProductLink(await discovery.getAttribute("href"), product!.href, origin)).toBe(true);
+  await expect(discovery.getByText(formatMoney(product!.product!.amountMinor, market), { exact: true })).toBeVisible();
 }
 
 async function loopbackOnly(context: BrowserContext, origin: string) {
@@ -53,7 +103,7 @@ function sameProductLink(actual: string | null, expected: string, origin: string
     `${reference.pathname}?${new URLSearchParams([...reference.searchParams].sort())}`;
 }
 
-async function verifyBody(page: Page, payload: PublishedHome, origin: string, mobile: boolean, verifyDestinations: boolean) {
+async function verifyBody(page: Page, payload: PublishedHome, origin: string, categoryColumns: number, verifyDestinations: boolean) {
   const market = markets[payload.marketId];
   const main = page.getByRole("main");
   await expect(main.getByRole("heading", { level: 1 })).toHaveText("Essentials for every day");
@@ -65,6 +115,7 @@ async function verifyBody(page: Page, payload: PublishedHome, origin: string, mo
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
 
   const destinations = new Set<string>();
+  const shortcuts = main.getByRole("navigation", { name: "Category shortcuts", exact: true });
   for (const section of payload.sections) {
     const region = main.getByRole("region", { name: section.title, exact: true });
     const bodyLinks = await region.getByRole("link").evaluateAll(links => links.map(link => link.getAttribute("href")));
@@ -86,10 +137,26 @@ async function verifyBody(page: Page, payload: PublishedHome, origin: string, mo
     }
     for (const item of [...section.categories, ...section.collections]) {
       expect(bodyLinks.some(href => href && sameProductLink(href, item.href, origin))).toBe(true);
-      if (section.type === "DEPARTMENTS" || section.type === "COLLECTIONS") {
-        await expect(region.getByRole("link", { name: item.name, exact: true })).toBeVisible();
+      if (section.type === "DEPARTMENTS") {
+        const shortcut = shortcuts.getByRole("link", { name: item.name, exact: true });
+        const tile = region.locator("[data-home-category-grid]").getByRole("link", { name: `${item.name}: View all`, exact: true });
+        await expect(shortcut).toBeVisible();
+        await expect(tile.getByText("View all", { exact: true })).toBeVisible();
+        expect(sameProductLink(await shortcut.getAttribute("href"), item.href, origin)).toBe(true);
+        expect(sameProductLink(await tile.getAttribute("href"), item.href, origin)).toBe(true);
+        const image = tile.locator("img");
+        await expect(image).toHaveAttribute("alt", item.image!.alt);
+        await expect(image).toHaveAttribute("loading", "lazy");
       }
-      await expect(region.getByRole("img", { name: item.image!.alt, exact: true }).first()).toBeVisible();
+      if (section.type === "COLLECTIONS") {
+        const tile = region.locator("[data-home-collection-grid]").getByRole("link", { name: `${item.name}: Shop collection`, exact: true });
+        await expect(tile.getByText("Shop collection", { exact: true })).toBeVisible();
+        expect(sameProductLink(await tile.getAttribute("href"), item.href, origin)).toBe(true);
+        await expect(tile.locator("img")).toHaveAttribute("alt", item.image!.alt);
+      }
+      if (section.type === "CATEGORY_SPOTLIGHT" && item.image) {
+        await expect(region.getByRole("img", { name: item.image.alt, exact: true }).first()).toBeVisible();
+      }
       destinations.add(item.href);
     }
     if (section.destination) {
@@ -97,7 +164,34 @@ async function verifyBody(page: Page, payload: PublishedHome, origin: string, mo
       expect(sameProductLink(await destination.getAttribute("href"), section.destination.href, origin)).toBe(true);
       destinations.add(section.destination.href);
     }
-    if (section.id === "fixture-featured" && mobile) {
+    if (section.id === "fixture-categories") {
+      const tiles = region.locator("[data-home-category-grid]").getByRole("link");
+      const shortcutLinks = shortcuts.getByRole("link");
+      await expect(tiles).toHaveCount(4);
+      await expect(shortcutLinks).toHaveCount(4);
+      const bounds = await tiles.evaluateAll(links => links.map(link => {
+        const { x, y, width, height } = link.getBoundingClientRect();
+        return { x, y, width, height };
+      }));
+      expect(bounds.every(({ width, height }) => height > width)).toBe(true);
+      expect(bounds.filter(({ y }) => y === bounds[0].y)).toHaveLength(categoryColumns);
+      expect(bounds.slice(1, categoryColumns).every(({ x }, index) => x > bounds[index].x)).toBe(true);
+      await page.keyboard.press("Tab");
+      await shortcutLinks.first().focus();
+      for (const index of [1, 2, 3]) {
+        await page.keyboard.press("Tab");
+        await expect(shortcutLinks.nth(index)).toBeFocused();
+      }
+      const first = tiles.first();
+      await first.focus();
+      await expect(first).toBeFocused();
+      const hasFocusOutline = await first.evaluate(link => {
+        const style = getComputedStyle(link);
+        return style.outlineStyle !== "none" && parseFloat(style.outlineWidth) >= 2;
+      });
+      expect(hasFocusOutline).toBe(true);
+    }
+    if (section.id === "fixture-featured" && categoryColumns < 4) {
       const firstTwo = await products.evaluateAll(cards => cards.slice(0, 2).map(card => {
         const bounds = card.getBoundingClientRect();
         return { x: bounds.x, y: bounds.y };
@@ -139,10 +233,12 @@ test("published merchandising matches the customer homepage in both markets and 
   const promotion = await db.marketOffer.findUniqueOrThrow({ where: promotionKey });
   const owner = await db.staffAccess.findFirstOrThrow({ where: { role: "OWNER", active: true } });
   expect(await db.homepageContent.count({ where: { key: { in: keys } } })).toBe(0);
-  const mobile = await browser.newContext({ baseURL, viewport: { width: 320, height: 780 }, isMobile: true, hasTouch: true });
+  const mobile = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const narrow = await browser.newContext({ baseURL, viewport: { width: 320, height: 800 }, isMobile: true, hasTouch: true });
   const staff = await browser.newContext({ baseURL });
-  await Promise.all([loopbackOnly(page.context(), baseURL), loopbackOnly(mobile, baseURL), loopbackOnly(staff, baseURL)]);
+  await Promise.all([page.context(), mobile, narrow, staff].map(context => loopbackOnly(context, baseURL)));
   const phone = await mobile.newPage();
+  const narrowPhone = await narrow.newPage();
   const staffPage = await staff.newPage();
   const events: BrowserMeasurement[] = [];
   page.on("response", response => {
@@ -189,17 +285,35 @@ test("published merchandising matches the customer homepage in both markets and 
       if (market.id === "us") expect(deals.every(product => product.amountMinor <= 1_200)).toBe(true);
       else expect(deals).toEqual(expect.arrayContaining([expect.objectContaining({ id: "p-bands", promotionEndsAt: expect.any(String) })]));
       if (market.id === "us") expect(payload.sections.flatMap(section => section.products).some(product => product.id === "p-lamp")).toBe(false);
-      await page.goto(pathForMarket(market));
-      await phone.goto(pathForMarket(market));
-      await verifyBody(page, payload, baseURL, false, true);
-      await verifyBody(phone, payload, baseURL, true, false);
+      await Promise.all([page, phone, narrowPhone].map(view => view.goto(pathForMarket(market))));
+      await verifyBody(page, payload, baseURL, 4, true);
+      await verifyBody(phone, payload, baseURL, 2, false);
+      await verifyBody(narrowPhone, payload, baseURL, 1, false);
       await expect(page.getByRole("heading", { name: new RegExp(`^${market.id === "bd" ? "US" : "BD"} fixture`) })).toHaveCount(0);
+
+      const scope = { marketId: market.id, locale: market.locale };
+      const { revision } = await db.homepageContent.findUniqueOrThrow({ where: { key }, select: { revision: true } });
+      const saved = await saveHomepageDraft(owner.userId, scope, revision, {
+        sections: [...sections, ...tileSections(market)], hiddenSections: inheritedBody,
+      }, undefined, { editor: "main-admin" });
+      await expect.poll(async () => (await published(page, market)).homepageConfig).toBe(payload.homepageConfig);
+      await publishHomepage(owner.userId, scope, saved.revision, undefined, undefined, { editor: "main-admin" });
+      await expect.poll(async () => (await published(page, market)).homepageConfig).not.toBe(payload.homepageConfig);
+      const configured = await published(page, market);
+      await Promise.all([page, phone].map(view => view.goto(pathForMarket(market))));
+      await verifyAuthoredTiles(page, configured, baseURL, false);
+      await verifyAuthoredTiles(phone, configured, baseURL, true);
     }
 
     await page.goto(pathForMarket(markets.bd));
+    const accessibility = await new AxeBuilder({ page })
+      .include("[data-home-category-grid]").include("[data-home-collection-grid]").include("[data-home-tile-layout]")
+      .withTags(["wcag2a", "wcag2aa"])
+      .analyze();
+    expect(accessibility.violations).toEqual([]);
     const header = page.getByRole("banner");
     await expect(header.getByRole("navigation", { name: "Shop navigation" })).toBeVisible();
-    const search = header.getByRole("searchbox", { name: "Search products", exact: true });
+    const search = header.getByRole("combobox", { name: "Search products", exact: true });
     await search.fill("canvas");
     await search.press("Enter");
     await expect(page).toHaveURL(/\/search\?/);
@@ -208,8 +322,8 @@ test("published merchandising matches the customer homepage in both markets and 
     await expect(page.getByRole("dialog", { name: "Sign in" })).toBeVisible();
     await page.keyboard.press("Escape");
     await header.getByRole("link", { name: /^Cart,/ }).press("Enter");
-    await expect(page).toHaveURL(/\/cart(?:[?#]|$)/);
-    await page.goto(pathForMarket(markets.bd));
+    await expect(page.getByRole("dialog", { name: "Your cart" })).toBeVisible();
+    await page.keyboard.press("Escape");
     expect(events).toHaveLength(0);
 
     await page.getByText("Privacy choices", { exact: true }).click();
@@ -240,7 +354,7 @@ test("published merchandising matches the customer homepage in both markets and 
     if (measurementAllowed) {
       await page.request.post(storefrontPath("/api/measurement"), { headers: { Origin: baseURL }, data: { action: "withdraw" }, maxRedirects: 0, timeout: 3_000 }).catch(() => undefined);
     }
-    await Promise.all([mobile.close(), staff.close()]);
+    await Promise.all([mobile.close(), narrow.close(), staff.close()]);
     await db.homepageContent.updateMany({ where: { key: { in: keys } }, data: { publishedId: null } });
     await db.homepageRelease.deleteMany({ where: { scopeKey: { in: keys } } });
     await db.homepageContent.deleteMany({ where: { key: { in: keys } } });

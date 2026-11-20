@@ -1,9 +1,12 @@
+import { retiredCatalogApiResponse } from "../catalog/main-admin-browser";
 import { privateHeaders } from "../db/http";
 import { reportFailure } from "../db/observability";
 import { getStaff } from "./access";
 import { CatalogWriteError } from "./operation-error";
 
-export async function taxonomyOwnerResponse(read: (actorId: string) => Promise<unknown>) {
+export async function taxonomyOwnerResponse(request: Request, read: (actorId: string) => Promise<unknown>) {
+  const retired = await retiredCatalogApiResponse(request);
+  if (retired) return retired;
   const send = (body: unknown, status = 200) => Response.json(body, { status, headers: privateHeaders });
   try {
     const staff = await getStaff();

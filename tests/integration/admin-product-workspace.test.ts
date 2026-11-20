@@ -186,8 +186,15 @@ test("connected workspace publishes only explicit variants and uses one audited 
     const events = await productWorkspaceHistory(f.owner, shared.id, variants.map(row => row.id));
     assert.ok(events.some(row => row.label === "Product saved" && row.fields === "Title"));
     assert.ok(events.some(row => row.label === "Product publication changed"));
-    assert.ok(events.some(row => row.label === "Market offer updated"));
-    assert.ok(events.some(row => row.label === "Stock receipt (+5)"));
+    const actor = await db.user.findUniqueOrThrow({ where: { id: f.owner }, select: { name: true } });
+    assert.ok(events.some(row => row.label === "Market offer updated" && row.actorName === actor.name && row.market === "bd"));
+    const receipt = events.find(row => row.label === "Stock receipt (+5)");
+    assert.ok(receipt?.stock);
+    assert.equal(receipt.actorName, actor.name);
+    assert.equal(receipt.warehouse, "Shared test warehouse");
+    assert.equal(receipt.market, undefined);
+    assert.equal(JSON.stringify(receipt).includes("fixture-inbound"), false);
+    await assert.rejects(productWorkspaceHistory(f.packer, shared.id, variants.map(row => row.id)), { code: "forbidden" });
   } finally {
     await history.cleanup();
   }

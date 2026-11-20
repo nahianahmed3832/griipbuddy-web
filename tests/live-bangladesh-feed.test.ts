@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { storefrontBasePath } from "../src/config/storefront-path.ts";
 import { refreshBangladeshMerchantItems } from "../src/lib/catalog/live-bangladesh-feed.ts";
 import { merchantBdPreviewPageProduct, merchantBdPreviewRobotsPaths, refreshDevBangladeshMerchantItems } from "../src/lib/catalog/merchant-bd-preview.ts";
 import type { MerchantFeedItem, MerchantFeedSettings } from "../src/lib/catalog/merchant-feed.ts";
@@ -111,7 +112,7 @@ test("puts the same live offer and clean product image on the Bangladesh dev lan
   const { items: [preview] } = await refreshDevBangladeshMerchantItems([{ ...item, stock: 0 }], request);
   const page = await merchantBdPreviewPageProduct(previewProduct(0), previewSettings);
   assert.equal(preview.link, item.link);
-  assert.equal(preview.imageLink, new URL(previewImage, item.link).href);
+  assert.equal(preview.imageLink, new URL(storefrontBasePath + previewImage, item.link).href);
   assert.equal(preview.amountMinor, 108500);
   assert.equal(preview.availability, "out_of_stock");
   assert.equal(page.variants[0].offer?.amountMinor, preview.amountMinor);

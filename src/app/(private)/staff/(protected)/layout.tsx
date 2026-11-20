@@ -1,33 +1,42 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { StaffSignOut } from "@/components/staff-sign-out";
-import { mainAdminCatalogConfig } from "@/lib/catalog/main-admin-config";
+import { mainAdminCatalogRequested } from "@/lib/catalog/main-admin-config";
+import { scopedCatalogPilotReady } from "@/lib/catalog/scoped-pilot";
 import { requireStaff } from "@/lib/staff/access";
 import { staffMarketIds } from "@/lib/staff/market-access";
 import { marketplaceMode } from "@/lib/release-config";
 
 export default async function StaffLayout({ children }: { children: ReactNode }) {
   const staff = await requireStaff();
-  const [homepageMarkets, reportingMarkets, commercialMarkets] = await Promise.all([
-    staffMarketIds(staff.id, "merchandising"), staffMarketIds(staff.id, "reporting"), staffMarketIds(staff.id, "commercial"),
+  const [homepageMarkets, reportingMarkets, commercialMarkets, notificationMarkets] = await Promise.all([
+    staffMarketIds(staff.id, "merchandising"), staffMarketIds(staff.id, "reporting"), staffMarketIds(staff.id, "commercial"), staffMarketIds(staff.id, "operations"),
   ]);
-  const catalogInMainAdmin = Boolean(mainAdminCatalogConfig());
+  const catalogInMainAdmin = mainAdminCatalogRequested();
+  const legacyCatalog = !catalogInMainAdmin || (staff.role === "OWNER" || homepageMarkets.length > 0) && await scopedCatalogPilotReady();
   return (
     <div className="shell inner-page commerce-page staff-area">
       <div className="staff-toolbar">
         <nav aria-label="Staff navigation">
           <Link href="/staff">Orders</Link>
+          {marketplaceMode() && notificationMarkets.length > 0 && <Link href="/staff/notifications">Notifications</Link>}
           {homepageMarkets.length > 0 && <Link href="/staff/homepage">Homepage</Link>}
-          {!catalogInMainAdmin && homepageMarkets.length > 0 && staff.role !== "OWNER" && <Link href="/staff/catalog/taxonomy">Catalog organization</Link>}
+          {legacyCatalog && homepageMarkets.length > 0 && staff.role !== "OWNER" && <Link href="/staff/catalog/taxonomy">Catalog organization</Link>}
           {!catalogInMainAdmin && commercialMarkets.length > 0 && staff.role !== "OWNER" && <Link href="/staff/catalog">Catalog offers</Link>}
-          {reportingMarkets.length > 0 && <><Link href="/staff/acquisition">Acquisition</Link><Link href="/staff/intelligence">Product Intelligence</Link>
+          {(reportingMarkets.length > 0 || (staff.role === "OWNER" && commercialMarkets.length > 0)) && <Link href="/staff/marketing">Marketing</Link>}
+          {reportingMarkets.length > 0 && <><Link href="/staff/operations-reporting">Operations reports</Link><Link href="/staff/acquisition">Acquisition</Link><Link href="/staff/intelligence">Product Intelligence</Link>
             <Link href="/staff/workflows">Workflow Center</Link></>}
           {staff.role === "OWNER" && <>
             <Link href="/staff/cod-reconciliation">COD reconciliation</Link>
-            {!catalogInMainAdmin && <><Link href="/staff/catalog">Catalog</Link>
+            {legacyCatalog && <><Link href="/staff/catalog">Catalog</Link>
               <Link href="/staff/catalog/inventory">Inventory and prices</Link></>}
             <Link href="/staff/settings">Market settings</Link>
-            {marketplaceMode() && <Link href="/staff/marketplace">Marketplace</Link>}
+            {marketplaceMode() && <>
+              <Link href="/staff/marketplace">Marketplace</Link>
+              <Link href="/staff/seller-hub">Seller Hub</Link>
+              <Link href="/staff/seller-verification">Seller verification</Link>
+              <Link href="/staff/seller-finance">Seller finance</Link>
+            </>}
             {marketplaceMode() && <Link href="/staff/coupons">Coupons</Link>}
             {marketplaceMode() && <Link href="/staff/cases">Order cases</Link>}
           </>}

@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { GuestActor } from "../access/actors.ts";
 
 export const guestCookie = "griipbuddy-guest";
 export const guestMaxAge = 30 * 24 * 60 * 60;
@@ -26,6 +27,11 @@ export function readGuestKey(value: string | undefined): string | null {
   if (Number(expires) <= Math.floor(Date.now() / 1000)) return null;
   if (!equalDigest(signature, digest("guest", `${token}.${expires}`))) return null;
   return createHash("sha256").update(token).digest("hex");
+}
+
+export function checkoutGuest(value: string | undefined): GuestActor | null {
+  const id = readGuestKey(value);
+  return id ? { kind: "guest", id } : null;
 }
 
 export function requestDigest(data: string) {

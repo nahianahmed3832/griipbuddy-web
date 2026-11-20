@@ -8,6 +8,8 @@ import "@/app/marketplace.css";
 import { CartPricingProvider } from "@/components/cart-pricing";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+import { storefrontPath } from "@/config/storefront-path";
+import { StorefrontInstallShell } from "./storefront-install-shell";
 import { demoAccount, store } from "@/config/store";
 import { storefrontNavigation } from "@/lib/catalog/storefront-navigation";
 import { catalogBrowseHref } from "@/lib/catalog/category-browse-links";
@@ -26,6 +28,7 @@ import { hasStaffMeasurementSession } from "@/lib/measurement/server";
 export const storeMetadata: Metadata = {
   title: { default: `${store.name} — Shop by department`, template: `%s · ${store.name}` },
   description: store.description,
+  manifest: storefrontPath("/manifest.webmanifest"),
 };
 
 export async function StorefrontDocument({ children, browse = false }: Readonly<{ children: ReactNode; browse?: boolean }>) {
@@ -52,17 +55,18 @@ export async function StorefrontDocument({ children, browse = false }: Readonly<
     <html lang={market.locale}>
       <body className={marketplace ? "marketplace" : undefined} data-market={market.id}
         data-clarity-mask={browse ? "true" : undefined}>
+        {browse && <StorefrontInstallShell />}
         {browse && <Suspense fallback={null}>
           <ClarityReplay project={project} marketId={market.id} eligible={replayEligible} />
         </Suspense>}
         {marketplace && <MeasurementAccountAssociation marketId={market.id} signedIn={Boolean(shopper)} />}
         <a className="skip-link" href="#main-content">Skip to content</a>
         <CartPricingProvider market={market} shopperId={shopper?.id}>
-          {marketplace ? <MarketplaceSession key={shopper?.id ?? "guest"} shopper={shopper && { id: shopper.id, name: shopper.name }} selections={selections} hybrid={hybrid}>
+          {marketplace ? <MarketplaceSession key={`${market.id}:${shopper?.id ?? "guest"}`} shopper={shopper && { id: shopper.id, name: shopper.name }} selections={selections} hybrid={hybrid}>
             {market.status === "staging" && <div className="preview-strip">{market.name} staging · Sample orders and prices</div>}
             <MarketplaceHeader navigation={navigation} market={market} />
             {main}
-            <MarketplaceFooter market={market} clarityEnabled={Boolean(project)} />
+            <MarketplaceFooter market={market} navigation={navigation} clarityEnabled={Boolean(project)} />
           </MarketplaceSession> : <>
             <SiteHeader navigation={navigation} market={market} signedIn={signedIn} production={productionMode()} />
             {main}

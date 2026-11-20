@@ -1,0 +1,40 @@
+.actions {
+  display: flex;
+  gap: .75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.message { flex: 1 0 100%; margin: 0; }
+.comparison {
+  overflow-x: auto;
+  border: 1px solid var(--line, #d8d4de);
+  border-radius: 1rem;
+  margin: 1.5rem 0;
+}
+.comparison table { width: 100%; border-collapse: collapse; text-align: start; }
+.comparison :is(th, td) {
+  padding: .8rem 1rem;
+  border-bottom: 1px solid var(--line, #d8d4de);
+  text-align: start;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.comparison tr:last-child > * { border-bottom: 0; }
+.comparison thead th:not(:first-child) { min-width: 10rem; }
+.comparison tbody th { min-width: 6.25rem; }
+.compareProduct { display: grid; gap: .55rem; margin-bottom: .65rem; }
+.compareProduct img { display: block; object-fit: contain; width: min(100%, 112px); height: auto; aspect-ratio: 1; }
+.brandGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 1rem;
+  list-style: none;
+  padding: 0;
+}
+.brandGrid a { display: block; min-height: 44px; padding: .8rem 1rem; border: 1px solid var(--line, #d8d4de); border-radius: .7rem; overflow-wrap: anywhere; }
+.reviews { display: grid; gap: 1rem; margin-block: 2rem; }
+.reviews :is(p, h2, h3) { margin: 0; overflow-wrap: anywhere; }
+.reviewRow { padding: 1rem; border: 1px solid var(--line, #d8d4de); border-radius: .8rem; display: grid; gap: .4rem; }
+.reviewPager { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
+.question { padding-block: 1rem; }
+.actions :global(.mp-favorite) { position: static; }

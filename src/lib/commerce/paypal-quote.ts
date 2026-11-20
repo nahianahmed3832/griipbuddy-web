@@ -15,6 +15,7 @@ import { quoteMerchandise } from "./checkout-merchandise.ts";
 
 export const paypalCheckoutInput = z.strictObject({
   items: checkoutInput.shape.items,
+  cart: checkoutInput.shape.cart,
   customer: z.strictObject({
     country: z.literal("US"),
     name: plainText(2, 100),
@@ -82,7 +83,7 @@ export function normalizedPayPalInput(raw: unknown) {
     kind: "unavailable", message: "The US preview covers the contiguous 48 states and Washington, DC.",
   });
   return { customer: hybridDemoMode() ? demoCustomer : input.data.customer,
-    items: [...input.data.items].sort(compareCartItems) };
+    items: [...input.data.items].sort(compareCartItems), ...(input.data.cart && { cart: input.data.cart }) };
 }
 
 export async function quotePayPalCheckout(db: DbReader, input: PayPalCheckoutInput,
@@ -121,9 +122,11 @@ export async function quotePayPalCheckout(db: DbReader, input: PayPalCheckoutInp
   };
 }
 
-export function paypalQuoteToken(guestKey: string, input: PayPalCheckoutInput, quote: PayPalQuote, marketId: MarketId) {
-  return quoteDigest(JSON.stringify({ scope: "paypal-sandbox", marketId, revision: quote.marketRevision ?? marketConfiguration(marketId).revision,
-    guestKey, input, quote: storedPayPalQuote.parse(quote) }));
+export function paypalQuoteToken(guestKey: string, input: PayPalCheckoutInput, quote: PayPalQuote, marketId: MarketId,
+  reviewActor: string | null, expiresAt: number) {
+  const digest = quoteDigest(JSON.stringify({ scope: "paypal-sandbox", marketId, revision: quote.marketRevision ?? marketConfiguration(marketId).revision,
+    guestKey, input, reviewActor, expiresAt, quote: storedPayPalQuote.parse(quote) }));
+  return `${expiresAt}.${digest}`;
 }
 
 export function paypalShippingAddress(customer: PayPalCheckoutInput["customer"]): PayPalAddress {

@@ -1,0 +1,15 @@
+.workspace { display: grid; gap: 1.2rem; min-width: 0; }
+.workspace h1 { font-size: clamp(1.8rem, 5vw, 2.8rem); font-weight: 700; line-height: 1.1; margin-bottom: .5rem; }
+.workspace h2 { font-size: 1.15rem; font-weight: 700; }
+.filters, .reportNav, .tableHeading { display: flex; flex-wrap: wrap; gap: .8rem; align-items: end; }
+.filters label { display: grid; gap: .25rem; min-width: min(100%, 10rem); }
+.filters input, .filters select { min-height: 42px; border: 1px solid var(--commerce-border, #b4abb3); border-radius: .35rem; padding: .45rem; background: white; color: #2c202b; }
+.reportNav a[aria-current="page"] { color: white; background: #542849; }
+.cards { display: grid; gap: .7rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
+.cards dd { font-size: 1.35rem; margin: .35rem 0 0; font-weight: 700; }
+.tableSection { min-width: 0; }
+.tableHeading { justify-content: space-between; margin: .5rem 0; }
+.tableScroll { max-width: 100%; overflow-x: auto; }
+.tableScroll table { width: 100%; border-collapse: collapse; }
+.tableScroll th, .tableScroll td { padding: .65rem; text-align: left; border-bottom: 1px solid var(--commerce-border, #d6cdd5); }
+.tableScroll th { white-space: nowrap; }

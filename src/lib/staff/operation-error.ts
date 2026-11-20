@@ -3,7 +3,8 @@ import { validationMessage } from "./catalog-input.ts";
 
 export class OperationError extends Error {}
 
-const catalogStatuses = { invalid_input: 400, forbidden: 403, not_found: 404, conflict: 409, market_mismatch: 409, rate_limited: 429 } as const;
+const catalogStatuses = { invalid_input: 400, forbidden: 403, not_found: 404, conflict: 409,
+  market_mismatch: 409, rate_limited: 429, unavailable: 503 } as const;
 
 export class CatalogWriteError extends OperationError {
   readonly status: (typeof catalogStatuses)[keyof typeof catalogStatuses];

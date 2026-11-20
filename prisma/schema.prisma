@@ -97,6 +97,7 @@ enum InventoryMovementKind {
   TRANSFER_IN
   TRANSFER_OUT
   ADJUSTMENT
+  DAMAGE
 }
 
 enum PaymentStatus {
@@ -154,6 +155,12 @@ enum StaffRole {
 }
 
 enum AuditAction {
+  NOTIFICATION_POLICY_CHANGED
+  SELLER_HUB_CHANGED
+  SELLER_TEAM_CHANGED
+  ORDER_CASE_REFUND_PROCESSING
+  ORDER_CASE_REFUND_CONFIRMED
+  ORDER_CASE_REFUND_FAILED
   STAFF_CREATED
   STAFF_REVOKED
   FULFILLMENT_CHANGED
@@ -173,6 +180,7 @@ enum AuditAction {
   BD_CASE_CANCELLATION_APPROVED
   BD_CASE_REFUND_APPROVED
   BD_EXCHANGE_SHIPPED
+  SHOPPER_PASSWORD_CHANGED
 }
 
 model Department {
@@ -298,6 +306,7 @@ model Product {
   favorites ShopperFavorite[]
   savedIn ShopperListItem[]
   reviews ShopperReview[]
+  questions ShopperRequest[]
   secondaryCategories ProductSecondaryCategory[]
   foundation     Boolean             @default(false)
   attributeValues Json?
@@ -305,11 +314,37 @@ model Product {
   optionDefinitions ProductOption[]
   migrationRedirects CatalogMigrationRedirect[] @relation("ProductMigrationTarget")
   migratedFromSlug CatalogMigrationRedirect? @relation("ProductMigrationSource")
+  sellerListingReviews SellerListingReview[]
 
   @@unique([id, departmentId])
   @@index([departmentId])
   @@index([publication, position])
   @@index([marketplaceShopId, publication])
+}
+
+enum SellerListingReviewState {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  PUBLISHED
+  REJECTED
+  WITHDRAWN
+}
+
+model SellerListingReview {
+  productId           String
+  marketId            MarketCode
+  product             Product                  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  revision            Int                      @default(0)
+  baseProductRevision Int
+  creationRequestHash String?                  @db.Char(64)
+  state               SellerListingReviewState @default(DRAFT)
+  draft               Json
+  feedback            String?
+  updatedAt           DateTime                 @updatedAt
+
+  @@id([productId, marketId])
+  @@index([marketId, state, updatedAt])
 }
 
 model CatalogMigrationRun {
@@ -416,6 +451,17 @@ model CatalogMedia {
   data      Bytes
   editorial Boolean  @default(false)
   createdAt DateTime @default(now())
+  sellerListingAssets SellerListingAsset[]
+}
+
+model SellerListingAsset {
+  shopId  String          @db.Uuid
+  shop    MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  mediaId String          @db.Char(64)
+  media   CatalogMedia    @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+
+  @@id([shopId, mediaId])
+  @@index([mediaId, shopId])
 }
 
 model MerchandisingCandidate {
@@ -706,15 +752,42 @@ model InventoryPool {
   locationId  String
   location    DispatchLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
   onHand      Int              @default(0)
+  lowStockThreshold Int?
   reserved    Int              @default(0)
   updatedAt   DateTime         @updatedAt
   allocations InventoryAllocation[]
   movements   InventoryMovement[] @relation("InventoryMovementPool")
   relatedMovements InventoryMovement[] @relation("InventoryMovementRelatedPool")
+  outboundTransfers InventoryTransfer[] @relation("InventoryTransferFrom")
+  inboundTransfers InventoryTransfer[] @relation("InventoryTransferTo")
 
   @@unique([variantId, ownerId, locationId])
   @@index([ownerId, locationId])
   @@index([locationId])
+}
+
+model InventoryTransfer {
+  id               String        @id @default(uuid()) @db.Uuid
+  fromPoolId       String        @db.Uuid
+  fromPool         InventoryPool @relation("InventoryTransferFrom", fields: [fromPoolId], references: [id], onDelete: Restrict)
+  toPoolId         String        @db.Uuid
+  toPool           InventoryPool @relation("InventoryTransferTo", fields: [toPoolId], references: [id], onDelete: Restrict)
+  marketId         MarketCode
+  quantity         Int
+  reason           String
+  reference        String
+  dispatchKey      String
+  dispatchActorId  String
+  dispatchActorKind String
+  dispatchedAt     DateTime      @default(now())
+  receiveKey       String?
+  receiveActorId   String?
+  receiveActorKind String?
+  receivedAt       DateTime?
+
+  @@unique([fromPoolId, dispatchKey])
+  @@index([toPoolId, receivedAt])
+  @@index([fromPoolId, receivedAt])
 }
 
 model InventoryReservation {
@@ -754,6 +827,7 @@ model InventoryAllocation {
   currency      CurrencyCode
   offerRevision Int
   dispatched    Int                  @default(0)
+  cancelledQuantity Int              @default(0)
   returned      Int                  @default(0)
   movements     InventoryMovement[]
 
@@ -777,6 +851,10 @@ model InventoryMovement {
   reason         String
   reference      String
   actorId        String?
+  actorKind      String?
+  reversesMovementId String?         @unique @db.Uuid
+  reversesMovement   InventoryMovement? @relation("InventoryMovementCompensation", fields: [reversesMovementId], references: [id], onDelete: Restrict)
+  compensation       InventoryMovement? @relation("InventoryMovementCompensation")
   createdAt      DateTime           @default(now())
 
   @@unique([poolId, idempotencyKey])
@@ -821,14 +899,19 @@ model CheckoutAttempt {
   requestHash String   @db.VarChar(64)
   createdAt   DateTime @default(now())
   abandonedAt DateTime?
+  quoteExpiresAt DateTime?
+  reviewActor String?
   recoveredCart Json?
   marketId    MarketCode?
   paymentMethod PaymentMethod?
   commerceEvidence CommerceEvidence?
   commercialSnapshot Json?
+  cartSource String? @db.VarChar(12)
+  cartRevision Int?
   order       Order?
   paypal      PayPalCheckout?
   prepaid     PrepaidCheckout?
+  providerPaymentEvents ProviderPaymentEvent[]
   measurement MeasurementAttempt?
   inventoryReservation InventoryReservation?
 
@@ -844,6 +927,8 @@ model PayPalCheckout {
   stockAllocations Json?
   shopperId       String?
   providerOrderId String?             @unique
+  providerAccountKey String?         @db.VarChar(64)
+  expectedAmountMinor Int?
   approvalUrl     String?
   captureId       String?             @unique
   captureStartedAt DateTime?
@@ -862,6 +947,8 @@ model PrepaidCheckout {
   attemptId           String               @id @db.Uuid
   attempt             CheckoutAttempt      @relation(fields: [attemptId], references: [id], onDelete: Cascade)
   providerId          String               @unique @db.VarChar(30)
+  providerAccountKey  String?              @db.VarChar(64)
+  expectedAmountMinor Int?
   state               PrepaidCheckoutState @default(PREPARING)
   checkout            Json?
   quote               Json?
@@ -879,6 +966,26 @@ model PrepaidCheckout {
   @@index([state, expiresAt])
   @@index([couponCode, state])
   @@index([providerFailedAt])
+}
+
+model ProviderPaymentEvent {
+  provider          PaymentMethod
+  accountKey        String         @db.VarChar(64)
+  eventKey          String         @db.VarChar(160)
+  marketId          MarketCode
+  attemptId         String?        @db.Uuid
+  attempt           CheckoutAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  eventType         String         @db.VarChar(60)
+  evidenceHash      String         @db.VarChar(64)
+  providerReference String         @db.VarChar(80)
+  amountMinor       Int?
+  currency          CurrencyCode?
+  outcome           String?        @db.VarChar(32)
+  receivedAt        DateTime       @default(now())
+  processedAt       DateTime?
+
+  @@id([provider, accountKey, eventKey])
+  @@index([attemptId, receivedAt])
 }
 
 model Order {
@@ -937,6 +1044,9 @@ model Order {
   bangladeshRefusedParcelReceipt BangladeshRefusedParcelReceipt?
   parcels           OrderParcel[]
   inventoryReservation InventoryReservation?
+
+  sellerFinanceEntries SellerFinanceEntry[]
+  sellerFinanceFunding SellerFinanceFunding?
 
   @@index([createdAt, id])
   @@index([status, fulfillmentStatus, createdAt])
@@ -1182,6 +1292,9 @@ model OrderItem {
   personalization   String  @default("") @db.VarChar(120)
   productIdSnapshot String?
   offerIdSnapshot   String? @db.Uuid
+  pricedOfferRevision Int?
+  deliveryAllocatedMinor Int?
+  taxAllocatedMinor Int?
   cartOfferIdSnapshot String? @db.Uuid
   cartVariantIdSnapshot String?
   optionsSnapshot   Json?
@@ -1229,6 +1342,33 @@ enum OrderParcelStatus {
   RETURNED
 }
 
+enum ParcelTrackingStatus {
+  PREPARING
+  HANDED_TO_CARRIER
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_EXCEPTION
+  RETURNED
+}
+
+enum ParcelTrackingSource {
+  MANUAL
+  CARRIER_WEBHOOK
+}
+
+enum ParcelTrackingSyncError {
+  UNAVAILABLE
+  NOT_FOUND
+  RATE_LIMITED
+}
+
+enum ParcelPreparationState {
+  PENDING
+  PICKED
+  PACKED
+}
+
 model OrderParcel {
   id                String                      @id @default(uuid()) @db.Uuid
   orderId           String                      @db.Uuid
@@ -1243,12 +1383,42 @@ model OrderParcel {
   statusUpdatedAt   DateTime                    @default(now())
   receivedAt        DateTime?
   returnDisposition BangladeshReturnDisposition?
+  cancelledAt       DateTime?
+  splitRequestHash  String?                     @db.Char(64)
+  trackingStatus    ParcelTrackingStatus?
+  trackingOccurredAt DateTime?
+  trackingReportedAt DateTime?
+  trackingSyncedAt   DateTime?
+  trackingAttemptAt  DateTime?
+  trackingSyncError  ParcelTrackingSyncError?
+  trackingRevision  Int                        @default(0)
+  estimatedDeliveryAt DateTime?
+  preparationState  ParcelPreparationState?
+  preparationEvents OrderParcelPreparationEvent[]
+  dispatchOperationId  String?                  @db.Uuid
+  dispatchRequestHash  String?                  @db.Char(64)
   items             OrderParcelItem[]
   events            OrderParcelEvent[]
+  trackingObservations ParcelTrackingObservation[]
 
-  @@unique([orderId, locationId])
   @@unique([orderId, trackingReference])
+  @@index([orderId, locationId])
   @@index([locationId])
+}
+
+model OrderParcelPreparationEvent {
+  parcelId      String                 @db.Uuid
+  parcel        OrderParcel            @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  operationId   String                 @db.Uuid
+  requestHash   String                 @db.Char(64)
+  state         ParcelPreparationState
+  revision      Int
+  actorId       String
+  items         Json
+  recordedAt    DateTime               @default(now())
+
+  @@id([parcelId, operationId])
+  @@index([parcelId, recordedAt])
 }
 
 model OrderParcelItem {
@@ -1257,6 +1427,7 @@ model OrderParcelItem {
   orderItemId String      @db.Uuid
   orderItem   OrderItem   @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
   quantity    Int
+  cancelledQuantity Int @default(0)
 
   @@id([parcelId, orderItemId])
   @@index([orderItemId])
@@ -1268,9 +1439,30 @@ model OrderParcelEvent {
   status     OrderParcelStatus
   actorId    String?
   evidence   String?           @db.VarChar(200)
+  reason     String?           @db.VarChar(200)
   recordedAt DateTime          @default(now())
 
   @@id([parcelId, status])
+}
+
+model ParcelTrackingObservation {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  parcelId            String                   @db.Uuid
+  parcel              OrderParcel              @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  source              ParcelTrackingSource
+  status              ParcelTrackingStatus?
+  eventKey            String?                  @db.VarChar(140)
+  providerCode        String?                  @db.VarChar(50)
+  occurredAt          DateTime
+  recordedAt          DateTime                 @default(now())
+  estimatedDeliveryAt DateTime?
+  error               ParcelTrackingSyncError?
+  actorId             String?
+  reason              String?                  @db.VarChar(200)
+  applied             Boolean                 @default(false)
+
+  @@unique([parcelId, eventKey])
+  @@index([parcelId, occurredAt, id])
 }
 
 model BangladeshShipment {
@@ -1671,7 +1863,20 @@ model Shopper {
   addresses ShopperAddress[]
   recommendationReset RecommendationAccountReset?
   cart ShopperCart?
+  marketCarts ShopperMarketCart[]
+  legacyLink ShopperLegacyLink?
   variantWatches ShopperVariantWatch[]
+  marketplaceMemberships MarketplaceSellerMember[]
+  sellerHubReads SellerHubRead[]
+}
+
+model ShopperLegacyLink {
+  shopperId        String   @id
+  shopper          Shopper  @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  legacyCustomerId String   @unique @db.VarChar(24)
+  marketId         MarketCode
+  proofOperationId String   @unique @db.Uuid
+  linkedAt         DateTime @default(now())
 }
 
 model ShopperCart {
@@ -1691,6 +1896,32 @@ model ShopperCartOperation {
   createdAt   DateTime    @default(now())
 
   @@id([shopperId, operationId])
+}
+
+model ShopperMarketCart {
+  shopperId  String
+  marketId   MarketCode
+  shopper    Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  items      Json @default("[]")
+  saved      Json @default("[]")
+  lots       Json @default("{}")
+  revision   Int @default(0)
+  updatedAt  DateTime @updatedAt
+  operations ShopperMarketCartOperation[]
+
+  @@id([shopperId, marketId])
+}
+
+model ShopperMarketCartOperation {
+  shopperId  String
+  marketId   MarketCode
+  cart       ShopperMarketCart @relation(fields: [shopperId, marketId], references: [shopperId, marketId], onDelete: Cascade)
+  purchase   Boolean @default(false)
+  operationId String @db.Uuid
+  requestHash String @db.Char(64)
+  createdAt DateTime @default(now())
+
+  @@id([shopperId, marketId, purchase, operationId])
 }
 
 enum VariantWatchEventKind {
@@ -1773,11 +2004,38 @@ model ShopperVerification {
   @@index([identifier])
 }
 
+model CatalogCopySuggestion {
+  operationId     String     @id @db.Uuid
+  actorKind       String     @db.VarChar(8)
+  actorId         String
+  shopId          String?    @db.Uuid
+  marketId        MarketCode
+  productId       String
+  productRevision Int
+  purpose         String     @db.VarChar(16)
+  state           String     @db.VarChar(12)
+  body            String?    @db.VarChar(900)
+  createdAt       DateTime   @default(now())
+
+  @@index([actorKind, actorId, marketId, shopId, createdAt])
+}
+
+model NewsletterRequest {
+  email       String     @db.VarChar(254)
+  marketId    MarketCode
+  locale      String     @db.VarChar(32)
+  requestedAt DateTime   @default(now())
+
+  @@id([marketId, email])
+}
+
 model MarketplaceCoupon {
   code         String @id @db.VarChar(32)
   marketId     MarketCode @default(bd)
   shopId       String? @db.Uuid
   shop         MarketplaceShop? @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  sellerAuthorId String?
+  publishedInDirectory Boolean @default(false)
   kind         String
   value        Int
   minimumMinor Int @default(0)
@@ -1807,9 +2065,16 @@ model MarketplaceShop {
   requests ShopperRequest[]
   fulfillments MarketplaceSellerFulfillment[]
   marketGrants MarketplaceShopMarket[]
+  sellerListingAssets SellerListingAsset[]
   dispatchLocations DispatchLocation[]
   offerIdentities MarketOfferIdentity[]
   inventoryPools InventoryPool[]
+  teamMembers MarketplaceSellerMember[]
+  hubRecords SellerHubRecord[]
+  hubReads SellerHubRead[]
+  financeEntries SellerFinanceEntry[]
+  financeDestinations SellerFinanceDestination[]
+  financePayouts SellerFinancePayout[]
 }
 
 enum MarketplaceMarketStatus {
@@ -1825,6 +2090,10 @@ model MarketplaceShopMarket {
   status MarketplaceMarketStatus @default(PENDING)
   requestedAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  profile SellerMarketProfile?
+  businessAddresses SellerBusinessAddress[]
+  verificationSubmissions SellerVerificationSubmission[]
 
   @@id([shopId, marketId])
   @@index([marketId, status])
@@ -1913,6 +2182,9 @@ model ShopperRequest {
   shop MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Restrict)
   orderId String? @db.Uuid
   order Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  marketId MarketCode?
+  productId String?
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   subject String
   closed Boolean @default(false)
   createdAt DateTime @default(now())
@@ -1921,6 +2193,7 @@ model ShopperRequest {
 
   @@index([shopperId, updatedAt])
   @@index([shopId, updatedAt])
+  @@index([marketId, productId, updatedAt])
 }
 
 model ShopperMessage {
@@ -1934,15 +2207,23 @@ model ShopperMessage {
   @@index([requestId, createdAt])
 }
 
+enum ShopperAddressKind {
+  SHIPPING
+  BILLING
+}
+
 model ShopperAddress {
   id String @id @default(uuid()) @db.Uuid
   shopperId String
   shopper Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  marketId MarketCode @default(bd)
+  kind ShopperAddressKind @default(SHIPPING)
+  isDefault Boolean @default(false)
   label String
   details Json
   createdAt DateTime @default(now())
 
-  @@index([shopperId, createdAt])
+  @@index([shopperId, marketId, kind, createdAt])
 }
 
 enum OrderCaseKind {
@@ -1962,6 +2243,7 @@ enum OrderCaseStatus {
   RETURN_RECEIVED
   PICKUP_SCHEDULED
   REFUND_APPROVED
+  CANCELLATION_APPROVED
   EXCHANGE_SHIPPED
 }
 
@@ -1983,8 +2265,13 @@ model OrderCase {
   pickupAt DateTime?
   pickupReference String? @db.VarChar(80)
   refundAmountMinor Int?
+  cancellationAppliedAt DateTime?
+  refund OrderCaseRefund?
   replacementTrackingReference String? @db.VarChar(80)
+  openRequestId String? @db.Uuid
+  openRequestDigest String? @db.Char(64)
 
+  @@unique([orderId, openRequestId])
   @@index([orderId, updatedAt])
   @@index([status, updatedAt])
 }
@@ -2011,6 +2298,7 @@ model OrderCaseReturnLine {
   orderItemId String    @db.Uuid
   orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
   quantity    Int
+  settlementUnitOffset Int?
   replacementVariantId String?
   replacementVariant   Variant? @relation("ExchangeReplacement", fields: [replacementVariantId], references: [id], onDelete: Restrict)
   replacementVariantName String?
@@ -2020,16 +2308,425 @@ model OrderCaseReturnLine {
   @@index([replacementVariantId])
 }
 
+enum OrderCaseRefundState {
+  AUTHORIZED
+  PROCESSING
+  CONFIRMED
+  FAILED
+}
+
+model OrderCaseRefund {
+  caseId           String               @id @db.Uuid
+  orderCase        OrderCase            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  method           PaymentMethod
+  currency         CurrencyCode
+  amountMinor      Int
+  state            OrderCaseRefundState @default(AUTHORIZED)
+  authorizedAt     DateTime             @default(now())
+  startedAt        DateTime?
+  confirmedAt      DateTime?
+  providerRefundId String?              @unique @db.VarChar(80)
+}
+
 model OrderCaseEvent {
   id        String          @id @default(uuid()) @db.Uuid
   caseId    String          @db.Uuid
   orderCase OrderCase       @relation(fields: [caseId], references: [id], onDelete: Cascade)
   status    OrderCaseStatus
   note      String?
+  publicNote String?
   actorId   String?
   actor     User?           @relation(fields: [actorId], references: [id], onDelete: SetNull)
   revision  Int
   createdAt DateTime       @default(now())
 
   @@unique([caseId, revision])
+}
+
+model SellerMarketProfile {
+  shopId       String @db.Uuid
+  marketId     MarketCode
+  presentation String @db.VarChar(16)
+  about        String @db.VarChar(1600)
+  announcement String @db.VarChar(200)
+  locale       String @db.VarChar(35)
+  revision     Int
+  grant        MarketplaceShopMarket @relation(fields: [shopId, marketId], references: [shopId, marketId], onDelete: Restrict)
+
+  @@id([shopId, marketId])
+}
+
+model SellerBusinessAddress {
+  id        String @id @db.Uuid
+  shopId    String @db.Uuid
+  marketId  MarketCode
+  purpose   String @db.VarChar(16)
+  line      String @db.VarChar(180)
+  city      String @db.VarChar(90)
+  region    String @db.VarChar(90)
+  postal    String @db.VarChar(20)
+  revision  Int
+  archived Boolean @default(false)
+  grant     MarketplaceShopMarket @relation(fields: [shopId, marketId], references: [shopId, marketId], onDelete: Restrict)
+
+  @@index([shopId, marketId, archived], map: "SellerBusinessAddress_scope_idx")
+}
+
+model SellerVerificationForm {
+  marketId   MarketCode
+  version    Int
+  fields     Json
+  actorId    String
+  createdAt  DateTime @default(now())
+  submissions SellerVerificationSubmission[]
+
+  @@id([marketId, version])
+}
+
+model SellerVerificationSubmission {
+  id          String @id @db.Uuid
+  shopId      String @db.Uuid
+  marketId    MarketCode
+  version     Int
+  answers     Json
+  state       String @db.VarChar(16)
+  note        String? @db.VarChar(400)
+  actorId     String
+  reviewedBy  String?
+  createdAt   DateTime @default(now())
+  reviewedAt  DateTime?
+  grant       MarketplaceShopMarket @relation(fields: [shopId, marketId], references: [shopId, marketId], onDelete: Restrict)
+  form        SellerVerificationForm @relation(fields: [marketId, version], references: [marketId, version], onDelete: Restrict)
+
+  @@index([marketId, state, createdAt], map: "SellerVerificationSubmission_queue_idx")
+  @@index([shopId, marketId, createdAt], map: "SellerVerificationSubmission_org_idx")
+}
+
+model SellerProfileAudit {
+  id          String @id @db.Uuid
+  shopId      String? @db.Uuid
+  marketId    MarketCode
+  target      String
+  actorId     String
+  actorKind   String @db.VarChar(16)
+  action      String @db.VarChar(32)
+  fingerprint String @db.Char(64)
+  createdAt   DateTime @default(now())
+
+  @@index([shopId, marketId, createdAt], map: "SellerProfileAudit_scope_idx")
+}
+
+enum MarketplaceSellerPermission {
+  PROFILE
+  LISTINGS
+  ORDER_PREPARATION
+  SUPPORT
+  FINANCE_VIEW
+  PAYOUT_REQUEST
+  PAYOUT_DESTINATION
+}
+
+model MarketplaceSellerMember {
+  shopId      String @db.Uuid
+  shop        MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopperId   String
+  shopper     Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  marketId    MarketCode
+  permissions MarketplaceSellerPermission[]
+  invitedAt   DateTime @default(now())
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  updatedAt   DateTime @updatedAt
+
+  @@id([shopId, shopperId, marketId])
+  @@index([shopperId, marketId, revokedAt])
+}
+
+enum SellerHubKind {
+  NOTICE
+  REQUEST
+  CAMPAIGN
+  CONVERSATION
+}
+
+enum SellerHubStatus {
+  OPEN
+  ACCEPTED
+  DECLINED
+}
+
+enum SellerHubSender {
+  STAFF
+  SELLER
+}
+
+model SellerHubRecord {
+  id          String @id @default(uuid()) @db.Uuid
+  kind        SellerHubKind
+  marketId    MarketCode?
+  shopId      String? @db.Uuid
+  shop        MarketplaceShop? @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  title       String @db.VarChar(120)
+  body        String
+  category    String? @db.VarChar(16)
+  reference   String? @db.VarChar(32)
+  status      SellerHubStatus @default(OPEN)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  posts       SellerHubPost[]
+  reads       SellerHubRead[]
+
+  @@index([kind, marketId, updatedAt, id])
+  @@index([shopId, marketId, kind, updatedAt])
+  @@unique([shopId, marketId, reference])
+}
+
+model SellerHubPost {
+  id        String @id @default(uuid()) @db.Uuid
+  recordId  String @db.Uuid
+  record    SellerHubRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  from      SellerHubSender
+  text      String
+  createdAt DateTime @default(now())
+
+  @@index([recordId, createdAt, id])
+}
+
+model SellerHubRead {
+  recordId       String @db.Uuid
+  record         SellerHubRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  shopId         String @db.Uuid
+  shop           MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopperId      String
+  shopper        Shopper @relation(fields: [shopperId], references: [id], onDelete: Cascade)
+  marketId       MarketCode
+  seenAt         DateTime
+  acknowledgedAt DateTime?
+
+  @@id([recordId, shopId, shopperId, marketId])
+  @@index([shopperId, shopId, marketId])
+}
+
+model SellerHubOperation {
+  actorKey    String
+  operationId String @db.Uuid
+  fingerprint String @db.Char(64)
+  action      String @db.VarChar(48)
+  resourceId  String
+  createdAt   DateTime @default(now())
+
+  @@id([actorKey, operationId])
+  @@index([resourceId, createdAt])
+}
+
+enum SellerFinanceEntryKind {
+  ACCRUAL
+  HOLD
+  RELEASE
+  REFUND
+}
+
+enum SellerFinanceDestinationState {
+  PENDING
+  VERIFIED
+  REVOKED
+}
+
+enum SellerFinancePayoutState {
+  REQUESTED
+  APPROVED
+  REJECTED
+  PROCESSING
+  RECONCILIATION
+  FAILED
+  COMPLETED
+}
+
+model SellerFinancePolicy {
+  id               String @id @db.Uuid
+  marketId         MarketCode
+  currency         CurrencyCode
+  version          Int
+  commissionBps    Int
+  processingFeeBps Int
+  holdDays         Int
+  effectiveAt      DateTime
+  actorId          String
+  fingerprint      String @db.Char(64)
+  createdAt        DateTime @default(now())
+  entries          SellerFinanceEntry[]
+
+  @@unique([marketId, currency, version])
+  @@unique([marketId, currency, effectiveAt])
+}
+
+model SellerFinanceEntry {
+  id                String @id @default(uuid()) @db.Uuid
+  shopId            String @db.Uuid
+  shop              MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  orderId           String @db.Uuid
+  order             Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  marketId          MarketCode
+  currency          CurrencyCode
+  policyId          String @db.Uuid
+  policy            SellerFinancePolicy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  kind              SellerFinanceEntryKind
+  sourceId          String @db.VarChar(110)
+  sourceAt          DateTime
+  grossMinor        Int @default(0)
+  discountMinor     Int @default(0)
+  taxMinor          Int @default(0)
+  shippingMinor     Int @default(0)
+  commissionMinor   Int @default(0)
+  feeMinor          Int @default(0)
+  netMinor          Int @default(0)
+  refundMinor       Int @default(0)
+  pendingDelta      Int @default(0)
+  heldDelta         Int @default(0)
+  availableDelta    Int @default(0)
+  lineEffects       Json?
+  createdAt         DateTime @default(now())
+
+  @@unique([shopId, marketId, currency, kind, sourceId])
+  @@index([shopId, marketId, currency, createdAt, id])
+  @@index([orderId, kind, shopId])
+}
+
+model SellerFinanceFunding {
+  orderId      String @id @db.Uuid
+  order        Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  operationId  String @unique @db.Uuid
+  marketId     MarketCode
+  currency     CurrencyCode
+  actorId      String
+  testReference String @db.VarChar(64)
+  reason       String @db.VarChar(300)
+  fingerprint  String @db.Char(64)
+  createdAt    DateTime @default(now())
+
+  @@unique([marketId, currency, testReference])
+}
+
+model SellerFinanceDestination {
+  id                String @id @db.Uuid
+  shopId            String @db.Uuid
+  shop              MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  marketId          MarketCode
+  currency          CurrencyCode
+  label             String @db.VarChar(60)
+  referenceHash     String @db.Char(64)
+  maskedReference   String @db.VarChar(20)
+  fingerprint       String @db.Char(64)
+  state             SellerFinanceDestinationState @default(PENDING)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  payouts           SellerFinancePayout[]
+
+  @@unique([id, shopId, marketId, currency])
+  @@index([shopId, marketId, currency, state])
+}
+
+model SellerFinancePayout {
+  id              String @id @db.Uuid
+  shopId          String @db.Uuid
+  shop            MarketplaceShop @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  marketId        MarketCode
+  currency        CurrencyCode
+  destinationId   String @db.Uuid
+  destination     SellerFinanceDestination @relation(fields: [destinationId, shopId, marketId, currency], references: [id, shopId, marketId, currency], onDelete: Restrict)
+  destinationHash String @db.Char(64)
+  amountMinor     Int
+  fingerprint     String @db.Char(64)
+  status          SellerFinancePayoutState @default(REQUESTED)
+  attemptReference String? @unique @db.VarChar(64)
+  reason          String? @db.VarChar(300)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([shopId, marketId, currency, status])
+  @@index([marketId, currency, status, updatedAt])
+}
+
+model SellerFinanceAudit {
+  id          String @id @default(uuid()) @db.Uuid
+  shopId      String? @db.Uuid
+  marketId    MarketCode
+  currency    CurrencyCode
+  recordId    String @db.Uuid
+  actorId     String
+  actorKind   String @db.VarChar(12)
+  action      String @db.VarChar(40)
+  details     Json?
+  createdAt   DateTime @default(now())
+
+  @@index([marketId, currency, recordId, createdAt])
+}
+
+model NotificationInboxReceipt {
+  audience    String     @db.VarChar(12)
+  actorId     String
+  shopScope   String     @default("") @db.VarChar(36)
+  marketId    MarketCode
+  eventKey    String     @db.VarChar(80)
+  readAt      DateTime   @default(now())
+  dismissedAt DateTime?
+
+  @@id([audience, actorId, shopScope, marketId, eventKey])
+}
+
+model NotificationOrderPolicy {
+  marketId     MarketCode @id
+  placed       Boolean    @default(true)
+  fulfillment  Boolean    @default(true)
+  updatedBy    String
+  updatedAt    DateTime   @updatedAt
+}
+
+enum NotificationTestState {
+  QUEUED
+  RETRY_PENDING
+  SINK_ACCEPTED
+  FAILED
+}
+
+model NotificationTestJob {
+  id            String                @id @default(uuid()) @db.Uuid
+  marketId      MarketCode
+  operationId   String                @db.Uuid
+  actorId       String
+  requestHash   String                @db.Char(64)
+  recipientHash String                @db.Char(64)
+  locale        String                @db.VarChar(35)
+  subject       String                @db.VarChar(120)
+  body          String                @db.VarChar(1000)
+  state         NotificationTestState @default(QUEUED)
+  attemptCount  Int                   @default(0)
+  nextAt        DateTime              @default(now())
+  createdAt     DateTime              @default(now())
+  attempts      NotificationTestAttempt[]
+  sink          NotificationTestSink?
+
+  @@unique([marketId, operationId])
+  @@index([state, nextAt, id])
+  @@index([marketId, createdAt])
+}
+
+model NotificationTestAttempt {
+  jobId       String                @db.Uuid
+  job         NotificationTestJob   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  number      Int
+  outcome     NotificationTestState
+  reason      String?               @db.VarChar(45)
+  attemptedAt DateTime              @default(now())
+
+  @@id([jobId, number])
+}
+
+model NotificationTestSink {
+  jobId         String              @id @db.Uuid
+  job           NotificationTestJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  marketId      MarketCode
+  recipientHash String              @db.Char(64)
+  payloadHash   String              @db.Char(64)
+  acceptedAt    DateTime            @default(now())
 }

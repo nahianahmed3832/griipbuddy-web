@@ -46,7 +46,9 @@ test("seller approval controls publication, catalog discovery, cart and quote in
   };
   Object.assign(process.env, { GRIIP_MARKETPLACE_PREVIEW: "1", GRIIP_HYBRID_STOREFRONT: "1", MARKETPLACE_PAYPAL_US_TEST_SHIPPING_MINOR: "500" });
   const seller = randomUUID();
+  const otherSeller = randomUUID();
   const shop = randomUUID();
+  const otherShop = randomUUID();
   const slug = `fixture-seller-${shop}`;
   const department = await db.department.findFirstOrThrow({ select: { id: true } });
   const staff = await db.staffAccess.findFirstOrThrow({ where: { role: "OWNER", active: true } });
@@ -54,10 +56,15 @@ test("seller approval controls publication, catalog discovery, cart and quote in
   let productId: string | undefined;
   try {
     await db.shopper.create({ data: { id: seller, name: "Seller test", email: `${seller}@example.invalid` } });
+    await db.shopper.create({ data: { id: otherSeller, name: "Second seller test", email: `${otherSeller}@example.invalid` } });
     await db.marketplaceShop.create({ data: { id: shop, ownerId: seller, slug, name: "Seller Market Fixture", about: "Synthetic fixture", announcement: "", published: true } });
+    await db.marketplaceShop.create({ data: { id: otherShop, ownerId: otherSeller, slug: `fixture-${otherShop}`,
+      name: "Other Seller", about: "Synthetic fixture", announcement: "", marketGrants: { create: { marketId: "bd", status: "APPROVED" } } } });
     await applyMarketplaceCommand({ action: "request-market", marketId: "bd" }, { shopperId: seller });
     await assert.rejects(applyMarketplaceCommand({ action: "staff-market-grant", shop, marketId: "bd", status: "APPROVED" },
       { shopperId: seller }), (error: unknown) => error instanceof MarketplaceError && error.status === 403);
+    await assert.rejects(applyMarketplaceCommand({ action: "staff-market-grant", shop, marketId: "bd", status: "APPROVED" },
+      { staffOwner: true, staffActorId: seller }), { status: 403 });
     const listing = {
       action: "draft-listing", name: "Two-market case", description: "Synthetic listing for market isolation",
       department: department.id, tags: "", sku: "MARKET-CASE", quantity: 5,
@@ -70,6 +77,15 @@ test("seller approval controls publication, catalog discovery, cart and quote in
     productId = drafted.id;
     const record = await db.product.findUniqueOrThrow({ where: { id: productId }, include: { variants: true } });
     const variantId = record.variants[0].id;
+    await assert.rejects(applyMarketplaceCommand({ ...listing, id: productId, marketPrices: { bd: 3000 } },
+      { shopperId: otherSeller, marketId: "bd" }), { status: 404 });
+    await assert.rejects(applyMarketplaceCommand({ ...listing, id: productId, marketPrices: { us: 1700 } },
+      { shopperId: seller, marketId: "us" }), { status: 403 });
+    await db.marketOffer.create({ data: { marketId: "us", currency: "USD", amountMinor: 1700, eligible: true, variantId } });
+    await assert.rejects(applyMarketplaceCommand({ ...listing, id: productId, marketPrices: { bd: 3000 } },
+      { shopperId: seller, marketId: "bd" }), { status: 403 });
+    assert.equal((await db.marketOffer.findUniqueOrThrow({ where: { variantId_marketId: { variantId, marketId: "us" } } })).amountMinor, 1700);
+    await db.marketOffer.delete({ where: { variantId_marketId: { variantId, marketId: "us" } } });
     await db.productImage.create({ data: { productId, src: "/editorial/hero.webp", alt: "Synthetic fixture", position: 0 } });
     const draft = await catalogProduct(db, productId);
     assert.ok(draft);
@@ -110,8 +126,8 @@ test("seller approval controls publication, catalog discovery, cart and quote in
       await db.auditEvent.deleteMany({ where: { target: productId } });
     }
     await db.auditEvent.deleteMany({ where: { target: shop } });
-    await db.marketplaceShop.deleteMany({ where: { id: shop } });
-    await db.shopper.deleteMany({ where: { id: seller } });
+    await db.marketplaceShop.deleteMany({ where: { id: { in: [shop, otherShop] } } });
+    await db.shopper.deleteMany({ where: { id: { in: [seller, otherSeller] } } });
     for (const [key, value] of Object.entries(mode)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

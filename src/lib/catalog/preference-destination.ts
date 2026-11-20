@@ -79,6 +79,9 @@ export async function shoppingPreferenceDestination(raw: unknown): Promise<{ mar
     if (fromMarketId !== marketId) url.searchParams.set("browseFrom", fromMarketId);
     url.searchParams.set("market", marketId);
     url.searchParams.set("lang", locale);
+  } else if (/^\/products\/[^/]+\/?$/.test(bare)) {
+    url.searchParams.set("market", marketId);
+    url.searchParams.set("lang", locale);
   } else {
     url.searchParams.delete("market");
     url.searchParams.delete("lang");

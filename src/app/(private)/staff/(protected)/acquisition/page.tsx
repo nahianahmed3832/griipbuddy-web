@@ -107,9 +107,14 @@ export default async function AcquisitionPage({ searchParams }: {
           </table></div>}
       </section>
       {report.sampleOrder && <section className="commerce-panel commerce-stack">
-        <h2>GA4 payload preview</h2>
-        <p>Matched test order. This is a schema preview only. No request was sent.</p>
+        <h2>GA4 booking payload preview</h2>
+        <p>Matched test COD booking. Payment confirmation requires separate evidence. This preview sends no request.</p>
         <pre className="acquisition-payload" tabIndex={0}>{JSON.stringify(report.sampleOrder, null, 2)}</pre>
+      </section>}
+      {report.sampleConfirmation && <section className="commerce-panel commerce-stack">
+        <h2>Confirmed transaction preview</h2>
+        <p>Saved test payment evidence from the native order. The event reference is stable across replays.</p>
+        <pre className="acquisition-payload" tabIndex={0}>{JSON.stringify(report.sampleConfirmation, null, 2)}</pre>
       </section>}
     </> : <>
       <MarketSummary market={market} test={test} behavior={report.behavior} commerce={report.commerce} forecast={report.forecast} />

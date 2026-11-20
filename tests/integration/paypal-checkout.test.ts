@@ -16,6 +16,7 @@ process.env.MARKETPLACE_PAYPAL_US_TEST_SHIPPING_MINOR = "699";
 process.env.MARKETPLACE_PAYPAL_SANDBOX_CLIENT_ID = "test-client";
 process.env.MARKETPLACE_PAYPAL_SANDBOX_CLIENT_SECRET = "test-secret";
 process.env.MARKETPLACE_PAYPAL_SANDBOX_WEBHOOK_ID = "test-webhook";
+process.env.MARKETPLACE_PAYPAL_SANDBOX_MERCHANT_ID = "FIXTUREMERCHANT";
 
 const db = getDb();
 after(() => db.$disconnect());
@@ -54,6 +55,7 @@ async function exerciseUsCheckout(t: TestContext, useLocation: boolean) {
       assert.equal(headers.get("PayPal-Request-Id"), body.purchase_units[0].reference_id);
       assert.equal(body.payment_source.paypal.experience_context.shipping_preference, "SET_PROVIDED_ADDRESS");
       assert.equal(body.purchase_units[0].shipping.address.country_code, "US");
+      assert.equal(body.purchase_units[0].payee.merchant_id, "FIXTUREMERCHANT");
       assert.equal(body.purchase_units[0].amount.value, "21.99");
       const id = `PAYORDER${++creates}`;
       const order = { id, status: "APPROVED", purchase_units: body.purchase_units,
@@ -105,6 +107,9 @@ async function exerciseUsCheckout(t: TestContext, useLocation: boolean) {
     const quote = await paypalQuote(input, guestKey);
     assert.equal(quote.kind, "quoted");
     assert.equal(quote.quote.totalMinor, 2199);
+    assert.ok(Date.parse(quote.quote.expiresAt) > Date.now());
+    const expiredToken = `${Date.now() - 1}.${quote.quote.quoteToken.split(".")[1]}`;
+    assert.equal((await createPayPalCheckout(input, attempts[0], expiredToken, guestKey)).kind, "conflict");
     assert.equal((await createPayPalCheckout(input, attempts[0], "f".repeat(64), guestKey)).kind, "conflict");
     assert.equal(creates, 0);
 
@@ -125,7 +130,13 @@ async function exerciseUsCheckout(t: TestContext, useLocation: boolean) {
     const captured = await createPayPalCheckout(input, attempts[2], quote.quote.quoteToken, guestKey);
     assert.equal(captured.kind, "approval_required");
     assert.equal((await recoverPayPalCheckout(attempts[2], "wrong-guest", "capture")).kind, "abandoned");
-    await assert.rejects(recoverPayPalCheckout(attempts[2], guestKey, "capture"), /simulate connection loss/);
+    process.env.MARKETPLACE_PAYPAL_SANDBOX_MERCHANT_ID = "OTHERFIXTUREMERCHANT";
+    const movedAccount = await recoverPayPalCheckout(attempts[2], guestKey, "recover");
+    assert.equal(movedAccount.kind, "pending");
+    assert.match(movedAccount.message, /merchant account reconciliation/);
+    assert.equal(captures, 0);
+    process.env.MARKETPLACE_PAYPAL_SANDBOX_MERCHANT_ID = "FIXTUREMERCHANT";
+    await assert.rejects(recoverPayPalCheckout(attempts[2], guestKey, "recover"), /simulate connection loss/);
     assert.equal(await stock(), 2);
     assert.equal(await db.order.count({ where: { attemptId: attempts[2] } }), 0);
     if (useLocation) {
@@ -146,6 +157,9 @@ async function exerciseUsCheckout(t: TestContext, useLocation: boolean) {
     assert.equal(order.totalMinor, 2199);
     assert.deepEqual(order.parcels.map(parcel => [parcel.locationId, parcel.status]), useLocation ? [[locationId, "PLANNED"]] : []);
     assert.equal(captures, 1);
+    assert.equal(await db.providerPaymentEvent.count({ where: {
+      attemptId: attempts[2], eventType: "CAPTURE_VERIFIED", outcome: "PAID",
+    } }), 1);
 
     assert.equal(await refundPayPalOrder(staffId, orderId), "pending");
     await assert.rejects(advanceFulfillment(staffId, orderId, { next: "PACKING" }), /refund is pending/);
@@ -198,6 +212,7 @@ async function exerciseUsCheckout(t: TestContext, useLocation: boolean) {
       db.payment.deleteMany({ where: { orderId: { in: orderIds } } }),
       db.orderItem.deleteMany({ where: { orderId: { in: orderIds } } }),
       db.order.deleteMany({ where: { id: { in: orderIds } } }),
+      db.providerPaymentEvent.deleteMany({ where: { attemptId: { in: attempts } } }),
       db.checkoutAttempt.deleteMany({ where: { id: { in: attempts } } }),
       db.user.delete({ where: { id: staffId } }),
       db.marketOffer.deleteMany({ where: { variantId } }),

@@ -1,23 +1,73 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
 import type { Market } from "@/config/markets";
-import type { ProductCardData } from "@/lib/catalog/listing";
 import type { ListSummary } from "@/lib/marketplace/constants";
+import type { SavedProduct } from "@/lib/marketplace/saved-product-cards";
 import { captureMeasurement } from "@/lib/measurement/browser";
-import { ProductGrid } from "../product-grid";
+import { ProductGrid, savedParentHref } from "../product-grid";
 import { MarketplaceForm, useMarketplaceSubmission } from "./action-form";
 import { marketplaceRequest, useMarketplace } from "./session";
 
-export function FavoritesGrid({ cards, market }: { cards: readonly ProductCardData[]; market: Market }) {
+export function FavoritesGrid({ products, market, regional }: { products: readonly SavedProduct[]; market: Market; regional: boolean }) {
   const state = useMarketplace()!;
   const [query, setQuery] = useState("");
-  const rows = cards.filter(card => state.favorites.includes(card.id) && card.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const search = query.trim().toLocaleLowerCase(market.locale);
+  const rows = products.filter(item => (!item.card || state.favorites.includes(item.id)) &&
+    item.name.toLocaleLowerCase(market.locale).includes(search));
+  const cards = rows.flatMap(item => item.card ?? []);
   return <>
-    {cards.length > 0 && <label className="store-dialog__field mp-list-search">Search your favorites<input type="search" value={query} onChange={event => setQuery(event.target.value)}/></label>}
-    {rows.length ? <ProductGrid cards={rows} market={market} placement={{ placement: "favorites" }}/> : <p>{query ? "No favorites match this search." : "Select a heart on a listing to save it here."}</p>}
+    {products.length > 0 && <label className="store-dialog__field mp-list-search">Search your favorites<input type="search" value={query} onChange={event => setQuery(event.target.value)}/></label>}
+    {cards.length > 0 && <ProductGrid cards={cards} market={market} placement={{ placement: "favorites" }} savedParents={{ regional, favorites: true }} />}
+    <OtherSavedProducts products={rows} market={market} regional={regional} favorites />
+    {!rows.length && <p>{search ? "No favorites match this search." : "Select a heart on a listing to save it here."}</p>}
   </>;
+}
+
+export function SavedProductsRetry() {
+  const router = useRouter();
+  const [pending, refresh] = useTransition();
+  return <div className="mp-inline">
+    <p role="alert">We couldn’t check your saved product details.</p>
+    <button className="button button--outline" type="button" disabled={pending} onClick={() => refresh(() => router.refresh())}>
+      {pending ? "Checking…" : "Try again"}
+    </button>
+  </div>;
+}
+
+export function OtherSavedProducts({ products, market, regional, favorites = false, list }: {
+  products: readonly SavedProduct[]; market: Market; regional: boolean; favorites?: boolean; list?: string;
+}) {
+  const remaining = products.filter(item => !item.card);
+  if (!remaining.length) return null;
+  return <ul className="mp-shop-grid">
+    {remaining.map(item => <li className="mp-list-card" key={item.id}>
+      {item.slug ? <Link prefetch={false} href={savedParentHref(item.slug, market, regional)}>
+        <strong>{item.name}</strong><p>Choose options</p>
+      </Link>
+      : <><strong>{item.name}</strong><p>{item.archived ? "This product was archived." : `Unavailable in ${market.name}`}</p></>}
+      {favorites && <RemoveSavedFavorite item={item} market={market} />}
+      {list && <RemoveListItem list={list} item={item} market={market} />}
+    </li>)}
+  </ul>;
+}
+
+function RemoveSavedFavorite({ item, market }: { item: SavedProduct; market: Market }) {
+  const marketplace = useMarketplace();
+  const state = useMarketplaceSubmission();
+  if (!marketplace?.shopper) return null;
+  return <div className="mp-form">
+    <button className="button button--outline" type="button" disabled={state.pending} onClick={() => {
+      const measure = captureMeasurement();
+      void state.submit(async () => {
+        await marketplace.favorite(item.id, false);
+        measure({ action: "WISHLIST_REMOVE", productId: item.id, marketId: market.id, placement: "wishlist" });
+      }, "Removed.");
+    }}>{state.pending ? "Removing…" : `Remove ${item.name} from favorites`}</button>
+    {state.feedback}
+  </div>;
 }
 
 export function EditList({ list }: { list: ListSummary }) {
@@ -40,19 +90,19 @@ export function EditList({ list }: { list: ListSummary }) {
   </div>;
 }
 
-export function RemoveListItem({ list, card, market }: { list: string; card: ProductCardData; market: Market }) {
+export function RemoveListItem({ list, item, market }: { list: string; item: SavedProduct; market: Market }) {
   const state = useMarketplaceSubmission();
   return <form className="mp-form" method="post" onSubmit={event => {
       event.preventDefault();
       const measure = captureMeasurement();
       void state.submit(async () => {
-        await marketplaceRequest({ action: "list-item", list, product: card.id, selected: false });
-        measure({ action: "WISHLIST_REMOVE", productId: card.id, variantId: card.variantId, marketId: market.id,
-          displayedPriceMinor: card.priceMinor, currency: market.currency, placement: "wishlist" });
+        await marketplaceRequest({ action: "list-item", list, product: item.id, selected: false });
+        measure({ action: "WISHLIST_REMOVE", productId: item.id, marketId: market.id,
+          displayedPriceMinor: item.card?.priceMinor, currency: item.card ? market.currency : undefined, placement: "wishlist" });
       }, "Removed.");
     }}>
     <button className="button button--outline" type="submit" disabled={state.pending}>
-      {state.pending ? "Saving…" : `Remove ${card.name}`}
+      {state.pending ? "Removing…" : `Remove ${item.name}`}
     </button>
     {state.feedback}
   </form>;

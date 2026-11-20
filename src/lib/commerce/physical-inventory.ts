@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { MarketId } from "../../config/markets.ts";
-import { Prisma, type InventoryMovementKind, type InventoryPool } from "../../generated/prisma/client.ts";
+import { Prisma, type InventoryMovementKind, type InventoryPool, type InventoryTransfer } from "../../generated/prisma/client.ts";
 import { validVariantId } from "../cart/model.ts";
 import { getDb, type DbReader } from "../db/client.ts";
 import { isMarketSelectable, marketConfiguration, marketIdInput, type MarketPaymentMethod } from "../market-config.ts";
@@ -30,9 +30,11 @@ const movementFields = {
   reference: z.string().trim().min(1).max(160),
 };
 const movementInput = z.strictObject({
-  ...movementFields, poolId: z.uuid(), kind: z.enum(["RECEIPT", "ADJUSTMENT"]),
+  ...movementFields, poolId: z.uuid(), kind: z.enum(["RECEIPT", "ADJUSTMENT", "DAMAGE"]),
   quantity: z.int().min(-maxStock).max(maxStock).refine(quantity => quantity !== 0),
-}).refine(({ kind, quantity }) => kind !== "RECEIPT" || quantity > 0, "A receipt quantity must be positive.");
+})
+  .refine(({ kind, quantity }) => kind !== "RECEIPT" || quantity > 0, "A receipt quantity must be positive.")
+  .refine(({ kind, quantity }) => kind !== "DAMAGE" || quantity < 0, "Record damaged stock as a negative quantity.");
 const transferInput = z.strictObject({
   ...movementFields, fromPoolId: z.uuid(), toPoolId: z.uuid(), quantity: z.int().positive().max(maxStock),
 }).refine(({ fromPoolId, toPoolId }) => fromPoolId !== toPoolId, "Choose two different warehouse pools.");
@@ -153,7 +155,8 @@ export async function marketRoutedInventory(db: DbReader, marketId: MarketId, of
   return totals;
 }
 
-export async function marketInventoryAvailability(db: DbReader, scope: DeliveryScope, offers: readonly PoolScope[]) {
+export async function marketInventoryAvailability(db: DbReader, scope: DeliveryScope, offers: readonly PoolScope[],
+  allowedPoolIds?: readonly string[]) {
   const { marketId, paymentMethod } = scope;
   const poolsByOffer = new Map<string, PoolResult>();
   const destination = inventoryDestinationInput.safeParse(scope.destination);
@@ -173,6 +176,7 @@ export async function marketInventoryAvailability(db: DbReader, scope: DeliveryS
     { OR: [{ methods: { isEmpty: true } }, { methods: { has: method } }] },
   ] } satisfies Prisma.DispatchLocationMarketWhereInput;
   const rows = await db.inventoryPool.findMany({ where: {
+    ...(allowedPoolIds && { id: { in: [...allowedPoolIds] } }),
     variant: { managedInventory: true },
     OR: [...variantsByOwner].map(([ownerId, variants]) => ({ ownerId, variantId: { in: [...variants] },
       location: warehouseForPool(ownerId, routeScope) })),
@@ -196,8 +200,8 @@ export async function marketInventoryAvailability(db: DbReader, scope: DeliveryS
   return { acceptsDestination, poolsByOffer };
 }
 
-export async function eligibleInventoryPools(db: DbReader, request: DeliveryScope & PoolScope): Promise<PoolResult> {
-  const { poolsByOffer } = await marketInventoryAvailability(db, request, [request]);
+export async function eligibleInventoryPools(db: DbReader, request: DeliveryScope & PoolScope, allowedPoolIds?: readonly string[]): Promise<PoolResult> {
+  const { poolsByOffer } = await marketInventoryAvailability(db, request, [request], allowedPoolIds);
   return poolsByOffer.get(inventoryPoolScopeKey(request)) ?? noDelivery;
 }
 
@@ -232,16 +236,17 @@ async function assertWorkspaceWarehouse(tx: Tx, locationId: string, marketId: Ma
   })) throw new CatalogWriteError("forbidden", "This warehouse is outside the selected market.");
 }
 
-async function assertWorkspaceVariant(tx: Tx, actor: CommercialActor, variantId: string, scope: WorkspaceStockContext, ownerId: string) {
+async function assertWorkspaceVariant(tx: Tx, variantId: string, scope: WorkspaceStockContext, ownerId: string) {
   await tx.$queryRaw`
     SELECT p.id FROM "Product" p JOIN "Variant" v ON v."productId" = p.id WHERE v.id = ${variantId} FOR SHARE OF p
   `;
   if (!await tx.variant.findFirst({ where: {
     id: variantId, productId: scope.productId,
-    ...(actor.kind === "seller" && { OR: [
+    OR: [
       { product: { marketplaceShopId: ownerId } },
+      ...(ownerId === storeShop.id ? [{ product: { marketplaceShopId: null } }] : []),
       { offers: { some: { marketId: scope.marketId, identity: { sellerId: ownerId, retiredAt: null } } } },
-    ] }),
+    ],
   }, select: { id: true } })) throw new CatalogWriteError("forbidden", "This stock is outside the selected product.");
 }
 
@@ -291,7 +296,7 @@ export async function initializeInventoryPool(actor: CommercialActor, raw: unkno
     if (!variant?.product.foundation || variant.optionSignature === null) throw new OperationError("Choose a structured catalog variant.");
     const ownerId = await authorizeWarehouse(tx, actor, locationId);
     if (scope) {
-      await assertWorkspaceVariant(tx, actor, variantId, scope, ownerId);
+      await assertWorkspaceVariant(tx, variantId, scope, ownerId);
       await assertWorkspaceWarehouse(tx, locationId, scope.marketId);
       if (!variant.active) throw new OperationError("Choose an active variant before opening a stock pool.");
     }
@@ -314,26 +319,30 @@ export async function initializeInventoryPool(actor: CommercialActor, raw: unkno
 
 type Movement = {
   poolId: string; kind: InventoryMovementKind; quantity: number; reservedDelta?: number;
-  idempotencyKey: string; reason: string; reference: string; actorId?: string; allocationId?: string; relatedPoolId?: string;
+  idempotencyKey: string; reason: string; reference: string; actorId?: string; actorKind?: CommercialActor["kind"];
+  allocationId?: string; relatedPoolId?: string; reversesMovementId?: string;
 };
 
 // The caller holds the variant inventory lock and authorizes the referenced operation.
 export async function applyInventoryMovement(tx: Tx, movement: Movement, expectedUpdatedAt?: Date) {
   const { poolId, kind, quantity, idempotencyKey, reason, reference, reservedDelta = 0 } = movement;
   const data = { poolId, kind, quantity, idempotencyKey, reason, reference, actorId: movement.actorId ?? null,
-    allocationId: movement.allocationId ?? null, relatedPoolId: movement.relatedPoolId ?? null };
-  const negative = kind === "DISPATCH" || kind === "TRANSFER_OUT";
+    actorKind: movement.actorKind ?? null, allocationId: movement.allocationId ?? null, relatedPoolId: movement.relatedPoolId ?? null,
+    reversesMovementId: movement.reversesMovementId ?? null };
+  const negative = kind === "DISPATCH" || kind === "TRANSFER_OUT" || kind === "DAMAGE";
   if (!Number.isInteger(quantity) || quantity === 0 || (kind !== "ADJUSTMENT" && (quantity < 0) !== negative) ||
     (kind === "DISPATCH" ? reservedDelta !== quantity : reservedDelta !== 0) ||
     ((kind === "DISPATCH" || kind === "RETURN") !== Boolean(data.allocationId)) ||
-    ((kind === "TRANSFER_OUT" || kind === "TRANSFER_IN") !== Boolean(data.relatedPoolId))) {
+    ((kind === "TRANSFER_OUT" || kind === "TRANSFER_IN") !== Boolean(data.relatedPoolId)) ||
+    (data.reversesMovementId !== null && kind !== "ADJUSTMENT") || (data.actorKind && !data.actorId)) {
     throw new OperationError("Invalid stock movement.");
   }
   const previous = await tx.inventoryMovement.findUnique({ where: { poolId_idempotencyKey: { poolId, idempotencyKey } } });
   if (previous) {
     if (previous.kind !== kind || previous.quantity !== quantity || previous.reason !== reason ||
-      previous.reference !== reference || previous.actorId !== data.actorId || previous.allocationId !== data.allocationId ||
-      previous.relatedPoolId !== data.relatedPoolId) throw new OperationError("This stock movement key already belongs to a different event.");
+      previous.reference !== reference || previous.actorId !== data.actorId || (previous.actorKind && previous.actorKind !== data.actorKind) ||
+      previous.allocationId !== data.allocationId || previous.relatedPoolId !== data.relatedPoolId ||
+      previous.reversesMovementId !== data.reversesMovementId) throw new OperationError("This stock movement key already belongs to a different event.");
     return { movement: previous, replayed: true };
   }
   const pool = await tx.inventoryPool.findUniqueOrThrow({ where: { id: poolId } });
@@ -357,7 +366,7 @@ async function stockPoolScope(tx: Tx, actor: CommercialActor, pool: InventoryPoo
     throw new OperationError("The warehouse no longer belongs to this pool owner.");
   }
   if (scope) {
-    await assertWorkspaceVariant(tx, actor, pool.variantId, scope, pool.ownerId);
+    await assertWorkspaceVariant(tx, pool.variantId, scope, pool.ownerId);
     await assertWorkspaceWarehouse(tx, pool.locationId, scope.marketId);
   }
 }
@@ -370,7 +379,7 @@ export async function recordStockMovement(actor: CommercialActor, raw: unknown,
     if (!pool) throw new OperationError("Choose an existing warehouse pool.");
     await lockVariantInventory(tx, [pool.variantId]);
     await stockPoolScope(tx, actor, pool, scope);
-    return applyInventoryMovement(tx, { ...input, actorId: actor.id }, scope?.expectedUpdatedAt);
+    return applyInventoryMovement(tx, { ...input, actorId: actor.id, actorKind: actor.kind }, scope?.expectedUpdatedAt);
   });
 }
 
@@ -378,21 +387,155 @@ export async function transferStock(actor: CommercialActor, raw: unknown,
   scope?: WorkspaceStockContext & { expectedUpdatedAt: Date; expectedDestinationUpdatedAt: Date }) {
   const { fromPoolId, toPoolId, quantity, ...input } = parseInput(transferInput, raw);
   return getDb().$transaction(async tx => {
-    const pools = await tx.inventoryPool.findMany({ where: { id: { in: [fromPoolId, toPoolId] } }, orderBy: { locationId: "asc" } });
-    const from = pools.find(pool => pool.id === fromPoolId);
-    const to = pools.find(pool => pool.id === toPoolId);
-    if (!from || !to || from.ownerId !== to.ownerId || from.variantId !== to.variantId) {
-      throw new OperationError("Stock transfers require the same owner and SKU at both warehouses.");
-    }
-    await lockVariantInventory(tx, [from.variantId]);
-    for (const pool of pools) await stockPoolScope(tx, actor, pool, scope);
+    await authorizeTransferPools(tx, actor, fromPoolId, toPoolId, scope);
     const sent = await applyInventoryMovement(tx, {
-      ...input, actorId: actor.id, poolId: fromPoolId, relatedPoolId: toPoolId, kind: "TRANSFER_OUT", quantity: -quantity,
+      ...input, actorId: actor.id, actorKind: actor.kind, poolId: fromPoolId, relatedPoolId: toPoolId, kind: "TRANSFER_OUT", quantity: -quantity,
     }, scope?.expectedUpdatedAt);
     const received = await applyInventoryMovement(tx, {
-      ...input, actorId: actor.id, poolId: toPoolId, relatedPoolId: fromPoolId, kind: "TRANSFER_IN", quantity,
+      ...input, actorId: actor.id, actorKind: actor.kind, poolId: toPoolId, relatedPoolId: fromPoolId, kind: "TRANSFER_IN", quantity,
     }, scope?.expectedDestinationUpdatedAt);
     if (sent.replayed !== received.replayed) throw new OperationError("This transfer reference is incomplete.");
     return { sent: sent.movement, received: received.movement, replayed: sent.replayed };
+  });
+}
+
+export function inventoryTransferView(transfer: InventoryTransfer) {
+  const { id, fromPoolId, toPoolId, marketId, quantity, reason, reference, dispatchedAt, receivedAt } = transfer;
+  return {
+    id, fromPoolId, toPoolId, marketId, quantity, reason, reference,
+    dispatchedAt: dispatchedAt.toISOString(), receivedAt: receivedAt?.toISOString() ?? null,
+    state: receivedAt ? "RECEIVED" as const : "IN_TRANSIT" as const,
+  };
+}
+
+async function authorizeTransferPools(tx: Tx, actor: CommercialActor, fromPoolId: string, toPoolId: string, scope?: WorkspaceStockContext) {
+  const pools = await tx.inventoryPool.findMany({
+    where: { id: { in: [fromPoolId, toPoolId] } }, orderBy: [{ locationId: "asc" }, { id: "asc" }],
+  });
+  const [first, second] = pools;
+  if (!first || !second || first.ownerId !== second.ownerId || first.variantId !== second.variantId) {
+    throw new OperationError("Stock transfers require the same owner and SKU at both warehouses.");
+  }
+  await lockVariantInventory(tx, [first.variantId]);
+  for (const pool of pools) await stockPoolScope(tx, actor, pool, scope);
+}
+
+export async function dispatchInventoryTransfer(actor: CommercialActor, raw: unknown,
+  scope: WorkspaceStockContext & { expectedUpdatedAt: Date; expectedDestinationUpdatedAt: Date }) {
+  const { fromPoolId, toPoolId, quantity, idempotencyKey, reason, reference } = parseInput(transferInput, raw);
+  return getDb().$transaction(async tx => {
+    await authorizeTransferPools(tx, actor, fromPoolId, toPoolId, scope);
+    const where = { fromPoolId_dispatchKey: { fromPoolId, dispatchKey: idempotencyKey } };
+    const prior = await tx.inventoryTransfer.findUnique({ where });
+    if (prior) {
+      if (prior.toPoolId !== toPoolId || prior.quantity !== quantity || prior.reason !== reason || prior.reference !== reference ||
+        prior.marketId !== scope.marketId || prior.dispatchActorKind !== actor.kind || prior.dispatchActorId !== actor.id) {
+        throw new CatalogWriteError("conflict", "This dispatch key already belongs to a different transfer.");
+      }
+      return { ...inventoryTransferView(prior), replayed: true };
+    }
+    const destination = await tx.inventoryPool.findUniqueOrThrow({ where: { id: toPoolId }, select: {
+      updatedAt: true, onHand: true, location: { select: { active: true } },
+    } });
+    const source = await tx.inventoryPool.findUniqueOrThrow({ where: { id: fromPoolId }, select: {
+      location: { select: { active: true } }, variant: { select: { active: true, archivedAt: true } },
+    } });
+    if (!source.variant.active || source.variant.archivedAt) throw new OperationError("Choose an active SKU before dispatching a transfer.");
+    if (!source.location.active || !destination.location.active) throw new OperationError("Choose active dispatch and receiving warehouses.");
+    if (destination.updatedAt.getTime() !== scope.expectedDestinationUpdatedAt.getTime()) {
+      throw new CatalogWriteError("conflict", "The receiving pool changed. Reload before dispatching.");
+    }
+    if (destination.onHand + quantity > maxStock) throw new OperationError("The receiving pool would exceed its supported balance.");
+    const sent = await applyInventoryMovement(tx, {
+      poolId: fromPoolId, relatedPoolId: toPoolId, kind: "TRANSFER_OUT", quantity: -quantity,
+      idempotencyKey, reason, reference, actorId: actor.id, actorKind: actor.kind,
+    }, scope.expectedUpdatedAt);
+    if (sent.replayed) throw new CatalogWriteError("conflict", "This dispatch key already belongs to another stock movement.");
+    const transfer = await tx.inventoryTransfer.create({ data: {
+      fromPoolId, toPoolId, quantity, reason, reference, marketId: scope.marketId,
+      dispatchKey: idempotencyKey, dispatchActorId: actor.id, dispatchActorKind: actor.kind,
+    } });
+    return { ...inventoryTransferView(transfer), replayed: false };
+  });
+}
+
+export async function receiveInventoryTransfer(actor: CommercialActor, raw: unknown, scope: WorkspaceStockContext) {
+  const { transferId, idempotencyKey } = parseInput(z.strictObject({
+    transferId: z.uuid(), idempotencyKey: movementFields.idempotencyKey,
+  }), raw);
+  return getDb().$transaction(async tx => {
+    const current = await tx.inventoryTransfer.findUnique({ where: { id: transferId } });
+    if (!current || current.marketId !== scope.marketId) throw new CatalogWriteError("not_found", "This transfer is unavailable in the selected market.");
+    await authorizeTransferPools(tx, actor, current.fromPoolId, current.toPoolId, scope);
+    const transfer = await tx.inventoryTransfer.findUniqueOrThrow({ where: { id: transferId } });
+    if (transfer.receivedAt) {
+      if (transfer.receiveKey !== idempotencyKey || transfer.receiveActorId !== actor.id || transfer.receiveActorKind !== actor.kind) {
+        throw new CatalogWriteError("conflict", "This transfer has already been received.");
+      }
+      return { ...inventoryTransferView(transfer), replayed: true };
+    }
+    const receiving = await tx.inventoryPool.findUniqueOrThrow({
+      where: { id: transfer.toPoolId }, select: { location: { select: { active: true } } },
+    });
+    if (!receiving.location.active) throw new OperationError("The receiving warehouse is inactive. This transfer remains in transit.");
+    const received = await applyInventoryMovement(tx, {
+      poolId: transfer.toPoolId, relatedPoolId: transfer.fromPoolId, kind: "TRANSFER_IN",
+      quantity: transfer.quantity, idempotencyKey: `transfer:${transfer.id}:receive`, reason: transfer.reason,
+      reference: transfer.reference, actorId: actor.id, actorKind: actor.kind,
+    });
+    if (received.replayed) throw new CatalogWriteError("conflict", "This receipt already belongs to another stock movement.");
+    const updated = await tx.inventoryTransfer.update({ where: { id: transferId }, data: {
+      receivedAt: new Date(), receiveKey: idempotencyKey, receiveActorId: actor.id, receiveActorKind: actor.kind,
+    } });
+    return { ...inventoryTransferView(updated), replayed: false };
+  });
+}
+
+export async function compensateInventoryMovement(actor: CommercialActor, raw: unknown,
+  scope: WorkspaceStockContext & { expectedUpdatedAt: Date }) {
+  const { movementId, ...input } = parseInput(z.strictObject({
+    ...movementFields, movementId: z.uuid(),
+  }), raw);
+  return getDb().$transaction(async tx => {
+    const original = await tx.inventoryMovement.findUnique({ where: { id: movementId }, include: { pool: true } });
+    if (!original) throw new CatalogWriteError("not_found", "This movement is unavailable.");
+    await lockVariantInventory(tx, [original.pool.variantId]);
+    await stockPoolScope(tx, actor, original.pool, scope);
+    if (original.reversesMovementId || !["ADJUSTMENT", "RECEIPT", "DAMAGE"].includes(original.kind)) {
+      throw new OperationError("Only original standalone adjustments, damage or receipts can be compensated here.");
+    }
+    const compensation = await tx.inventoryMovement.findUnique({ where: { reversesMovementId: movementId } });
+    if (compensation && compensation.idempotencyKey !== input.idempotencyKey) {
+      throw new CatalogWriteError("conflict", "This movement has already been compensated.");
+    }
+    return applyInventoryMovement(tx, {
+      ...input, poolId: original.poolId, kind: "ADJUSTMENT", quantity: -original.quantity,
+      reversesMovementId: original.id, actorId: actor.id, actorKind: actor.kind,
+    }, scope.expectedUpdatedAt);
+  });
+}
+
+export async function setInventoryThreshold(actor: CommercialActor, raw: unknown,
+  scope: WorkspaceStockContext & { expectedUpdatedAt: Date }) {
+  const { poolId, threshold } = parseInput(z.strictObject({
+    poolId: z.uuid(), threshold: z.int().min(0).max(maxStock).nullable(),
+  }), raw);
+  return getDb().$transaction(async tx => {
+    const identity = await tx.inventoryPool.findUnique({ where: { id: poolId } });
+    if (!identity) throw new CatalogWriteError("not_found", "This stock pool is unavailable.");
+    await lockVariantInventory(tx, [identity.variantId]);
+    await stockPoolScope(tx, actor, identity, scope);
+    const pool = await tx.inventoryPool.findUniqueOrThrow({ where: { id: poolId } });
+    if (pool.lowStockThreshold === threshold) return availableInventory(pool);
+    if (pool.updatedAt.getTime() !== scope.expectedUpdatedAt.getTime()) {
+      throw new CatalogWriteError("conflict", "Warehouse stock changed. Reload before saving its threshold.");
+    }
+    const updated = await tx.inventoryPool.update({ where: { id: poolId }, data: { lowStockThreshold: threshold } });
+    await tx.auditEvent.create({ data: {
+      action: "STOCK_CHANGED", actorId: actor.kind === "staff" ? actor.id : null, target: pool.variantId,
+      changes: { source: "inventory-low-stock-threshold", poolId, actor, marketId: scope.marketId,
+        before: pool.lowStockThreshold, after: threshold },
+    } });
+    return availableInventory(updated);
   });
 }

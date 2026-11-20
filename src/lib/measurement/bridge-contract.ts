@@ -1,22 +1,22 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { isMarketId, marketList, type Currency, type MarketId } from "../../config/markets.ts";
+import type { Currency, MarketId } from "../../config/markets.ts";
+import {
+  bindCommerceScope, CommerceContractError, commerceAuthorityId, commerceCurrency, commerceMarketId,
+  commerceSourceId, validateCommerceMoney,
+} from "../commerce/service-contract.ts";
 import { developmentAcceptanceDatabase, localDatabase, stagingDatabase } from "../db/local.ts";
 import { marketConfiguration } from "../market-config.ts";
 
 export const bridgeSignatureDomain = "griipbuddy-outcome-bridge:v1\n";
 export const bridgeMaxSignedBytes = 256 * 1024;
-const authorityId = z.string().regex(/^[a-z][a-z0-9-]{1,63}$/);
-const sourceId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/);
 const minor = z.int().min(0).max(2_147_483_647);
 const occurredAt = z.iso.datetime({ precision: 3 });
-const authorityMarket = z.custom<MarketId>(isMarketId);
-const authorityCurrency = z.custom<Currency>(value => marketList.some(market => market.currency === value));
 const bridgeKind = z.enum(["ORDER_ACCEPTED", "ORDER_DELIVERED", "COD_COLLECTED", "COD_REMITTED"]);
 export const bridgeHandoffProof = /^([a-f0-9]{64})\.(\d{10})\.([a-z][a-z0-9-]{1,15})\.([a-f0-9]{64})\.([a-f0-9]{64})$/;
 
 const outcome = z.strictObject({
-  sourceEventId: sourceId,
+  sourceEventId: commerceSourceId,
   kind: bridgeKind,
   at: occurredAt,
   amountMinor: minor.nullish(),
@@ -28,8 +28,8 @@ export const bridgeLines = z.array(z.strictObject({
 })).min(1).max(50);
 export type BridgeLine = z.output<typeof bridgeLines>[number];
 const order = z.strictObject({
-  sourceOrderId: sourceId,
-  currency: authorityCurrency,
+  sourceOrderId: commerceSourceId,
+  currency: commerceCurrency,
   paymentMethod: z.literal("COD"),
   bookedAt: occurredAt,
   subtotalMinor: minor.nullish(),
@@ -43,8 +43,8 @@ const order = z.strictObject({
 });
 const envelope = z.strictObject({
   version: z.literal(1),
-  authority: authorityId,
-  marketId: authorityMarket,
+  authority: commerceAuthorityId,
+  marketId: commerceMarketId,
   evidence: z.literal("fixture"),
   orders: z.array(order).min(1).max(100),
 });
@@ -59,7 +59,12 @@ export type BridgeBinding = {
   scope: "isolated-fixture" | "development-report";
 };
 
-export class OutcomeBridgeError extends Error {}
+export class OutcomeBridgeError extends CommerceContractError {
+  constructor(message: string, code: CommerceContractError["code"] = "invalid_input") {
+    super(code, message);
+    this.name = "OutcomeBridgeError";
+  }
+}
 
 export function configuredBridge(): BridgeBinding | null {
   const env = process.env;
@@ -67,16 +72,14 @@ export function configuredBridge(): BridgeBinding | null {
   const isolated = localDatabase() === "griipbuddy_test" || (env.GRIIP_MARKET_REVIEW_FIXTURES === "1" && stagingDatabase());
   const developmentReport = developmentAcceptanceDatabase() && env.GRIIP_OUTCOME_BRIDGE_USE_LEGACY_CHECKOUT !== "1";
   if (!isolated && !developmentReport) return null;
-  const authority = authorityId.safeParse(env.GRIIP_OUTCOME_BRIDGE_AUTHORITY);
-  const marketId = authorityMarket.safeParse(env.GRIIP_OUTCOME_BRIDGE_MARKET);
+  const authority = commerceAuthorityId.safeParse(env.GRIIP_OUTCOME_BRIDGE_AUTHORITY);
+  const marketId = commerceMarketId.safeParse(env.GRIIP_OUTCOME_BRIDGE_MARKET);
   const secret = env.GRIIP_OUTCOME_BRIDGE_SECRET;
   if (!authority.success || !marketId.success || !secret || secret.length < 32 || secret.length > 512) return null;
   const market = marketConfiguration(marketId.data);
   if (market.status !== "staging" || !market.payments.some(payment => payment.method === "COD" && payment.enabled && payment.evidence === "sandbox")) return null;
-  return {
-    authority: authority.data, marketId: market.id, currency: market.currency, secret,
-    scope: isolated ? "isolated-fixture" : "development-report",
-  };
+  const scope = bindCommerceScope({ authority: authority.data, marketId: market.id, currency: market.currency });
+  return { ...scope, secret, scope: isolated ? "isolated-fixture" : "development-report" };
 }
 
 function invalid(message: string): never {
@@ -84,7 +87,14 @@ function invalid(message: string): never {
 }
 
 function validateOrder(row: BridgeOrderInput, binding: BridgeBinding, now: Date) {
-  if (row.currency !== binding.currency) invalid("Order currency differs from the configured market.");
+  try {
+    validateCommerceMoney(binding, { currency: row.currency, amountMinor: row.totalMinor });
+  } catch (error) {
+    if (error instanceof CommerceContractError && error.code === "market_mismatch") {
+      throw new OutcomeBridgeError("Order currency differs from the configured market.", error.code);
+    }
+    throw error;
+  }
   const { subtotalMinor, discountMinor, taxMinor, deliveryMinor, totalMinor, events } = row;
   if (subtotalMinor != null && discountMinor != null && discountMinor > subtotalMinor) invalid("Order discount exceeds its merchandise subtotal.");
   if (subtotalMinor != null && discountMinor != null && taxMinor != null && deliveryMinor != null &&
@@ -119,7 +129,7 @@ export function readSignedBridge(signed: Buffer, binding: BridgeBinding, now = n
   const body = signed.subarray(65);
   const expected = createHmac("sha256", binding.secret).update(bridgeSignatureDomain).update(body).digest();
   if (!/^[a-f0-9]{64}$/.test(signature) || !timingSafeEqual(Buffer.from(signature, "hex"), expected)) {
-    invalid("Bridge signature verification failed.");
+    throw new OutcomeBridgeError("Bridge signature verification failed.", "forbidden");
   }
   let decoded: unknown;
   try { decoded = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)); }
@@ -128,7 +138,7 @@ export function readSignedBridge(signed: Buffer, binding: BridgeBinding, now = n
   if (!result.success) invalid("Unsupported bridge version or order fields.");
   const data = result.data;
   if (data.authority !== binding.authority || data.marketId !== binding.marketId) {
-    invalid("Bridge authority or market differs from the configured route.");
+    throw new OutcomeBridgeError("Bridge authority or market differs from the configured route.", "market_mismatch");
   }
   if (new Set(data.orders.map(row => row.sourceOrderId)).size !== data.orders.length) invalid("Bridge batch repeats a source order.");
   const eventIds = new Set<string>();

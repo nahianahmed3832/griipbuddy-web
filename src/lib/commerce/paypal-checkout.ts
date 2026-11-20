@@ -5,14 +5,17 @@ import { orderIntakeOpen } from "../release-config.ts";
 import type { MarketId } from "../../config/markets.ts";
 import type { CheckoutFailure, OrderPlaced } from "./checkout-types.ts";
 import { CommerceError } from "./errors.ts";
+import { scopedCatalogPilotRequested } from "../catalog/main-admin-config.ts";
+import { pilotCheckoutScope, pilotQuoteScope } from "./scoped-pilot-checkout.ts";
 import { equalDigest, requestDigest } from "./guest.ts";
 import { createOrderParcels } from "./location-inventory.ts";
-import { lockAttempt, lockVariantQuoteRows, placedOrder } from "./orders.ts";
-import { checkoutOrderLine } from "./checkout-merchandise.ts";
+import { checkoutReviewActor, lockAttempt, lockVariantQuoteRows, newQuoteExpiry, placedOrder, validateCheckoutCart, validateReviewActor } from "./orders.ts";
+import { allocateCheckoutLines } from "./checkout-merchandise.ts";
 import { legacyPurchaseStock, placeReservedPurchase, releasePurchaseStock, reservePurchaseStock } from "./checkout-inventory.ts";
 import { expireInventoryReservations } from "./inventory-reservations.ts";
 import { paypalCheckoutAvailability, paypalSandboxConfig } from "./paypal-config.ts";
 import { commercialTerms, configuredPayment, providerMarket } from "./market-commerce.ts";
+import { finishPaymentEvent, paymentEventDigest, recordPaymentEvent, type PaymentEventOutcome } from "./provider-payment-events.ts";
 import {
   captureSandboxOrder, createSandboxOrder, inspectSandboxOrder, inspectSandboxRefund, PayPalProviderError, refundSandboxCapture, samePayPalAmount,
   type PayPalOrder,
@@ -45,6 +48,8 @@ function abandoned(attemptId: string, message = "This PayPal checkout has ended.
   return { kind: "abandoned", attemptId, message };
 }
 
+const accountReview = (attemptId: string) => ({ ...pending(attemptId), message: "This payment needs merchant account reconciliation. Your cart is saved." });
+
 function sessionResult(session: Session): PayPalPaymentResult {
   const order = placedOrder(session.attempt);
   if (order) return order;
@@ -55,17 +60,21 @@ function sessionResult(session: Session): PayPalPaymentResult {
   return pending(session.attemptId);
 }
 
-export async function paypalQuote(raw: unknown, guestKey: string, marketId: MarketId | undefined = providerMarket("PAYPAL")) {
+export async function paypalQuote(raw: unknown, guestKey: string, marketId: MarketId | undefined = providerMarket("PAYPAL"), shopperId?: string | null) {
   if (!marketId || !paypalCheckoutAvailability(marketId).quoteEnabled) return unavailable("Test checkout is unavailable for this market.");
   const input = normalizedPayPalInput(raw);
+  await pilotCheckoutScope(getDb(), { marketId, paymentMethod: "PAYPAL", items: input.items });
   if (input.items.some(item => item.offerId)) await expireInventoryReservations(new Date(), 20);
+  await validateCheckoutCart(getDb(), { ...input, marketId }, shopperId);
+  const expiresAt = newQuoteExpiry();
   const quote = await quotePayPalCheckout(getDb(), input, marketId);
   return {
     kind: "quoted" as const,
     quote: {
       currency: quote.currency, shippingMinor: quote.shippingMinor, taxMinor: quote.taxMinor,
       deliveryLabel: quote.deliveryLabel, merchandiseSubtotalMinor: quote.merchandiseSubtotalMinor, totalMinor: quote.totalMinor,
-      quoteToken: paypalQuoteToken(guestKey, input, quote, marketId),
+      quoteToken: paypalQuoteToken(guestKey, input, quote, marketId, checkoutReviewActor(shopperId), expiresAt.getTime()),
+      expiresAt: expiresAt.toISOString(),
       lines: quote.lines.map(line => ({
         name: line.productName, variantLabel: line.variantName, quantity: line.quantity, lineMinor: line.lineTotalMinor,
         ...(line.personalization && { personalization: line.personalization }),
@@ -82,6 +91,13 @@ async function lockPayPalSession(tx: Prisma.TransactionClient, attemptId: string
 
 function readSnapshot(session: Session) {
   return { input: normalizedPayPalInput(session.checkout), quote: storedPayPalQuote.parse(session.quote) };
+}
+
+async function requirePayPalSessionScope(tx: Prisma.TransactionClient, session: Session) {
+  if (!scopedCatalogPilotRequested()) return;
+  const marketId = session.attempt.marketId ?? providerMarket("PAYPAL");
+  if (!marketId) throw new CommerceError({ kind: "unavailable", message: "The payment market is unavailable." });
+  await pilotQuoteScope(tx, marketId, "PAYPAL", storedPayPalQuote.parse(session.quote).lines);
 }
 
 function paypalPurchaseContext(session: Session, input: PayPalCheckoutInput, marketId: MarketId) {
@@ -109,11 +125,13 @@ async function cancelSession(tx: Prisma.TransactionClient, session: Session, rea
   return abandoned(session.attemptId, reason);
 }
 
-async function provideApproval(attemptId: string, guestKey: string, marketId: MarketId): Promise<PayPalPaymentResult> {
+async function provideApproval(attemptId: string, guestKey: string, marketId: MarketId, shopperId?: string | null): Promise<PayPalPaymentResult> {
   return getDb().$transaction(async tx => {
     const session = await lockPayPalSession(tx, attemptId);
-    if (session?.attempt.guestKey !== guestKey || session.attempt.marketId !== marketId) return abandoned(attemptId);
+    if (session?.attempt.guestKey !== guestKey || session.attempt.marketId !== marketId || !validateReviewActor(session.attempt, shopperId)) return abandoned(attemptId);
     if (session.state !== "CREATING" && session.state !== "APPROVAL") return sessionResult(session);
+    if (session.providerAccountKey !== paypalSandboxConfig(marketId)?.accountKey) return accountReview(attemptId);
+    await requirePayPalSessionScope(tx, session);
     if (session.expiresAt <= new Date()) return cancelSession(tx, session);
     if (!paypalCheckoutAvailability(marketId).paymentEnabled) return unavailable("PayPal sandbox checkout is currently unavailable.");
     if (session.state === "APPROVAL") return sessionResult(session);
@@ -128,42 +146,54 @@ async function provideApproval(attemptId: string, guestKey: string, marketId: Ma
   }, paymentTransaction);
 }
 
-export async function createPayPalCheckout(raw: unknown, attemptId: string, quoteToken: string, guestKey: string, shopperId?: string,
+export async function createPayPalCheckout(raw: unknown, attemptId: string, quoteToken: string, guestKey: string, shopperId?: string | null,
   marketId: MarketId | undefined = providerMarket("PAYPAL")): Promise<PayPalPaymentResult> {
   const operating = marketId && configuredPayment(marketId, "PAYPAL");
-  if (!marketId || !operating || !paypalCheckoutAvailability(marketId).paymentEnabled) return unavailable("PayPal sandbox checkout is currently unavailable.");
+  const accountKey = paypalSandboxConfig(marketId)?.accountKey;
+  if (!marketId || !operating || !accountKey || !paypalCheckoutAvailability(marketId).paymentEnabled) return unavailable("PayPal sandbox checkout is currently unavailable.");
   const input = normalizedPayPalInput(raw);
   const hash = requestDigest(JSON.stringify({ scope: "paypal-sandbox", marketId, input }));
+  const match = /^(\d{13})\.[a-f0-9]{64}$/.exec(quoteToken);
+  const tokenExpiry = match ? Number(match[1]) : null;
+  const reviewActor = checkoutReviewActor(shopperId);
+  const matchesToken = (expected: string) => equalDigest(expected.split(".")[1], quoteToken.split(".")[1] ?? "");
   const created = await getDb().$transaction(async tx => {
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${attemptId}), 678)`;
     const known = await tx.checkoutAttempt.findUnique({ where: { id: attemptId }, include: { paypal: true } });
     if (known) {
-      if (known.guestKey !== guestKey || known.marketId !== marketId || known.requestHash !== hash || !known.paypal) return false;
-      if (known.paypal.quote && !equalDigest(paypalQuoteToken(guestKey, input, storedPayPalQuote.parse(known.paypal.quote), marketId), quoteToken)) return false;
+      if (known.guestKey !== guestKey || known.marketId !== marketId || known.requestHash !== hash || !known.paypal || !validateReviewActor(known, shopperId)) return false;
+      if (known.paypal.quote && (!tokenExpiry || known.quoteExpiresAt?.getTime() !== tokenExpiry ||
+          !matchesToken(paypalQuoteToken(guestKey, input, storedPayPalQuote.parse(known.paypal.quote), marketId, reviewActor, tokenExpiry)))) return false;
       return true;
     }
+    if (tokenExpiry === null || tokenExpiry <= Date.now()) return false;
+    await validateCheckoutCart(tx, { ...input, marketId }, shopperId, true);
     const quote = await quotePayPalCheckout(tx, input, marketId);
-    if (!equalDigest(paypalQuoteToken(guestKey, input, quote, marketId), quoteToken)) return false;
+    if (!matchesToken(paypalQuoteToken(guestKey, input, quote, marketId, reviewActor, tokenExpiry))) return false;
     const snapshot = commercialTerms(operating, {
       deliveryService: "sandbox-standard", deliveryZone: input.customer.state.toLowerCase(),
       policyRevision: quote.policyRevision, taxBasisPoints: quote.taxBasisPoints,
     });
     await tx.checkoutAttempt.create({ data: {
       id: attemptId, guestKey, marketId, paymentMethod: "PAYPAL", commerceEvidence: snapshot.evidence, commercialSnapshot: snapshot,
-      requestHash: hash, paypal: { create: {
-        checkout: input, quote, shopperId, expiresAt: new Date(Date.now() + approvalLifetimeMs),
+      requestHash: hash, quoteExpiresAt: new Date(tokenExpiry), reviewActor, cartSource: input.cart?.source, cartRevision: input.cart?.revision, paypal: { create: {
+        checkout: input, quote, shopperId, providerAccountKey: accountKey, expectedAmountMinor: quote.totalMinor,
+        expiresAt: new Date(Date.now() + approvalLifetimeMs),
       } },
     } });
     return true;
   });
   if (!created) return { kind: "conflict", message: "Review the current market order total before going to PayPal." };
-  return provideApproval(attemptId, guestKey, marketId);
+  return provideApproval(attemptId, guestKey, marketId, shopperId);
 }
 
 function verifiedUnit(session: Session, input: PayPalCheckoutInput, quote: PayPalQuote, provider: PayPalOrder) {
   const unit = provider.purchase_units?.[0];
-  if (provider.id !== session.providerOrderId || provider.purchase_units?.length !== 1 ||
-      unit?.reference_id !== session.attemptId || !samePayPalAmount(unit.amount, quote.totalMinor)) return null;
+  const config = paypalSandboxConfig(session.attempt.marketId ?? undefined);
+  if (!config?.accountKey || session.providerAccountKey !== config.accountKey || provider.id !== session.providerOrderId ||
+      provider.purchase_units?.length !== 1 || unit?.reference_id !== session.attemptId ||
+      unit.payee?.merchant_id !== config.merchantId || session.expectedAmountMinor !== quote.totalMinor ||
+      !samePayPalAmount(unit.amount, quote.totalMinor)) return null;
   const approved = unit.shipping?.address;
   const expected = paypalShippingAddress(input.customer);
   const canonical = (value: string | undefined) => (value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
@@ -173,25 +203,30 @@ function verifiedUnit(session: Session, input: PayPalCheckoutInput, quote: PayPa
   return unit;
 }
 
-async function acceptCapture(tx: Prisma.TransactionClient, session: Session, provider: PayPalOrder): Promise<PayPalPaymentResult | null> {
-  if (provider.id !== session.providerOrderId) throw new Error("Provider order did not match the payment session.");
-  if (provider.status === "VOIDED") return cancelSession(tx, session, "PayPal voided this payment. Your card or balance hasn’t been charged.");
+async function acceptCapture(tx: Prisma.TransactionClient, session: Session, provider: PayPalOrder, expectedCaptureId?: string): Promise<PayPalPaymentResult | null> {
   const { input, quote } = readSnapshot(session);
   const unit = verifiedUnit(session, input, quote, provider);
-  if (!unit) throw new Error("Provider amount or destination could not be verified.");
+  if (!unit) throw new Error("Provider account, order, amount, or destination could not be verified.");
+  if (provider.status === "VOIDED") return cancelSession(tx, session, "PayPal voided this payment. Your card or balance hasn’t been charged.");
   const captures = unit.payments?.captures ?? [];
   if (captures.length === 1 && ["DECLINED", "DENIED", "FAILED"].includes(captures[0].status)) {
     return cancelSession(tx, session, "PayPal declined the payment. Review your cart and try again.", true);
   }
   const capture = captures[0];
   if (provider.status !== "COMPLETED" || captures.length !== 1 || capture.status !== "COMPLETED" ||
-      !samePayPalAmount(capture.amount, quote.totalMinor)) return null;
+      !samePayPalAmount(capture.amount, quote.totalMinor) || (expectedCaptureId && capture.id !== expectedCaptureId)) return null;
 
   const customer = input.customer;
   const { marketId, commerceEvidence, commercialSnapshot } = session.attempt;
-  if (!marketId || marketId !== providerMarket("PAYPAL") || commerceEvidence === "production") {
+  if (!marketId || !session.providerAccountKey || marketId !== providerMarket("PAYPAL") || commerceEvidence === "production") {
     throw new Error("PayPal captured outside the configured sandbox market.");
   }
+  const captureEvent = await recordPaymentEvent(tx, {
+    provider: "PAYPAL", eventKey: `capture:${capture.id}`, accountKey: session.providerAccountKey, marketId,
+    attemptId: session.attemptId, providerReference: capture.id,
+    evidenceHash: paymentEventDigest([session.providerOrderId, capture.id, quote.totalMinor, quote.currency]),
+    eventType: "CAPTURE_VERIFIED", amountMinor: quote.totalMinor, currency: quote.currency,
+  });
   const shopper = session.shopperId
     ? await tx.shopper.findUnique({ where: { id: session.shopperId }, select: { id: true } })
     : null;
@@ -206,7 +241,7 @@ async function acceptCapture(tx: Prisma.TransactionClient, session: Session, pro
     deliveryMethod: "sandbox-standard", deliveryLabel: quote.deliveryLabel, deliveryGuidance: "Sandbox order · no physical shipment",
     taxLabel: quote.taxLabel ?? "Tax (test)", subtotalMinor: quote.subtotalMinor, discountMinor: quote.discountMinor,
     deliveryMinor: quote.shippingMinor, taxMinor: quote.taxMinor, totalMinor: quote.totalMinor,
-    items: { create: quote.lines.map(line => ({ ...checkoutOrderLine(line), currency: quote.currency })) },
+    items: { create: allocateCheckoutLines({ ...quote, deliveryMinor: quote.shippingMinor }).map(line => ({ ...line, currency: quote.currency })) },
     payment: { create: { method: "PAYPAL", status: "PAID", amountMinor: quote.totalMinor, currency: quote.currency } },
     events: { create: { type: "ORDER_PLACED", status: "UNFULFILLED" } },
     }, select: { id: true } });
@@ -214,11 +249,13 @@ async function acceptCapture(tx: Prisma.TransactionClient, session: Session, pro
     return { kind: "placed", orderId: saved.id, purchased: input.items };
   }, { reference: capture.id, currency: quote.currency, amountMinor: quote.totalMinor });
   if (order.kind === "refund_required") {
+    await finishPaymentEvent(tx, captureEvent, "PAYMENT_EXCEPTION");
     if (order.newlyRecorded) await tx.payPalCheckout.update({ where: { attemptId: session.attemptId }, data: {
       captureId: capture.id, refundStartedAt: new Date(),
     } });
     return { ...pending(session.attemptId), message: "Payment arrived after the stock hold ended. Your cart is saved while PayPal reconciles the refund." };
   }
+  await finishPaymentEvent(tx, captureEvent, "PAID");
   await tx.payPalCheckout.update({ where: { attemptId: session.attemptId }, data: {
     state: "COMPLETED", captureId: capture.id, checkout: Prisma.DbNull, quote: Prisma.DbNull,
     stockAllocations: Prisma.DbNull, approvalUrl: null, shopperId: null,
@@ -226,15 +263,17 @@ async function acceptCapture(tx: Prisma.TransactionClient, session: Session, pro
   return order;
 }
 
-async function processCapture(attemptId: string, retry: boolean): Promise<PayPalPaymentResult> {
+async function processCapture(attemptId: string, retry: boolean, expectedCaptureId?: string): Promise<PayPalPaymentResult> {
   const result = await getDb().$transaction(async tx => {
     const session = await lockPayPalSession(tx, attemptId);
     if (!session) return abandoned(attemptId);
     if (session.state !== "CAPTURING" || !session.providerOrderId) return sessionResult(session);
+    if (session.providerAccountKey !== paypalSandboxConfig(session.attempt.marketId ?? undefined)?.accountKey) return accountReview(attemptId);
+    await requirePayPalSessionScope(tx, session);
     const reservation = await tx.inventoryReservation.findUnique({ where: { attemptId }, select: { state: true, expiresAt: true } });
     if (reservation?.state === "PAYMENT_EXCEPTION") return pending(attemptId);
     const provider = await inspectSandboxOrder(session.providerOrderId);
-    const known = await acceptCapture(tx, session, provider);
+    const known = await acceptCapture(tx, session, provider, expectedCaptureId);
     if (known) return known;
     if (!retry || provider.status !== "APPROVED" || !session.captureStartedAt ||
         (reservation && (reservation.state !== "HELD" || reservation.expiresAt <= new Date())) ||
@@ -271,6 +310,8 @@ async function settlePayPalPurchaseException(attemptId: string, allowRequest: bo
     if (reservation?.state !== "PAYMENT_EXCEPTION" || reservation.paymentReference !== session.captureId ||
         reservation.paymentCurrency !== "USD" || reservation.paymentAmountMinor === null) return null;
     if (session.state === "CANCELLED") return abandoned(attemptId, "PayPal refunded the late payment. Your cart is saved.");
+    if (session.providerAccountKey !== paypalSandboxConfig(session.attempt.marketId ?? undefined)?.accountKey) return accountReview(attemptId);
+    await requirePayPalSessionScope(tx, session);
     if (!session.refundId && (!allowRequest || Date.now() - session.refundStartedAt.getTime() >= captureRetryLifetimeMs)) {
       return { ...pending(attemptId), message: "A late PayPal capture needs refund reconciliation. Your cart is saved." };
     }
@@ -293,7 +334,7 @@ async function settlePayPalPurchaseException(attemptId: string, allowRequest: bo
 }
 
 export async function recoverPayPalCheckout(attemptId: string, guestKey: string, action: "capture" | "cancel" | "recover",
-  marketId: MarketId | undefined = providerMarket("PAYPAL")): Promise<PayPalPaymentResult> {
+  marketId: MarketId | undefined = providerMarket("PAYPAL"), shopperId?: string | null): Promise<PayPalPaymentResult> {
   if (!marketId || marketId !== providerMarket("PAYPAL")) return abandoned(attemptId);
   const prepared = await getDb().$transaction(async tx => {
     // Also serialize with the initial create. A recover/cancel during a lost create response
@@ -306,18 +347,21 @@ export async function recoverPayPalCheckout(attemptId: string, guestKey: string,
       }, skipDuplicates: true });
       return { result: abandoned(attemptId) };
     }
-    if (session.attempt.guestKey !== guestKey || session.attempt.marketId !== marketId) return { result: abandoned(attemptId) };
+    if (session.attempt.guestKey !== guestKey || session.attempt.marketId !== marketId || !validateReviewActor(session.attempt, shopperId)) return { result: abandoned(attemptId) };
 
     if (session.state === "CAPTURING") return { capture: true };
     if (session.state === "CANCELLED" || session.state === "COMPLETED") return { result: sessionResult(session) };
+    if (session.providerAccountKey !== paypalSandboxConfig(marketId)?.accountKey) return { result: accountReview(attemptId) };
+    await requirePayPalSessionScope(tx, session);
     if (action === "cancel" || session.expiresAt <= new Date()) return { result: await cancelSession(tx, session) };
     if (session.state === "CREATING" || !session.providerOrderId) return { approval: true };
-    if (action !== "capture") return { result: sessionResult(session) };
     if (!orderIntakeOpen() || !configuredPayment(marketId, "PAYPAL")) {
       return { result: await cancelSession(tx, session, "Order intake is paused. PayPal hasn’t charged this order.") };
     }
     const provider = await inspectSandboxOrder(session.providerOrderId);
     if (provider.status === "VOIDED") return { result: await cancelSession(tx, session) };
+    if (provider.status === "COMPLETED") return { result: { ...pending(attemptId),
+      message: "PayPal reports a payment outside the active stock hold. Your cart is saved while the payment is reviewed." } };
     if (provider.status !== "APPROVED") return { result: sessionResult(session) };
 
     const { input, quote } = readSnapshot(session);
@@ -328,7 +372,9 @@ export async function recoverPayPalCheckout(attemptId: string, guestKey: string,
     await tx.$queryRaw`SELECT "marketId" FROM "CheckoutPolicy" WHERE "marketId" = ${marketId}::"MarketCode" FOR SHARE`;
     try {
       const current = await quotePayPalCheckout(tx, input, marketId);
-      if (paypalQuoteToken(guestKey, input, current, marketId) !== paypalQuoteToken(guestKey, input, quote, marketId)) {
+      const expiry = session.attempt.quoteExpiresAt?.getTime() ?? 0;
+      const actor = session.attempt.reviewActor;
+      if (paypalQuoteToken(guestKey, input, current, marketId, actor, expiry) !== paypalQuoteToken(guestKey, input, quote, marketId, actor, expiry)) {
         return { result: await cancelSession(tx, session, "Order details changed before payment. Review the updated cart before trying again.") };
       }
     } catch (error) {
@@ -340,20 +386,36 @@ export async function recoverPayPalCheckout(attemptId: string, guestKey: string,
     return { capture: true };
   }, paymentTransaction);
   if (prepared.result) return prepared.result;
-  if (prepared.approval) return provideApproval(attemptId, guestKey, marketId);
+  if (prepared.approval) return provideApproval(attemptId, guestKey, marketId, shopperId);
   return processCapture(attemptId, action === "capture" || action === "recover");
 }
 
-export async function reconcilePayPalCapture(providerOrderId: string) {
+export async function reconcilePayPalCapture(providerOrderId: string, accountKey: string, captureId: string, completed: boolean): Promise<PaymentEventOutcome | null> {
   const config = paypalSandboxConfig();
-  if (!config) return;
-  const session = await getDb().payPalCheckout.findUnique({
-    where: { providerOrderId, attempt: { marketId: config.marketId } }, select: { attemptId: true, state: true },
+  if (!config?.accountKey || config.accountKey !== accountKey) return "REJECTED";
+  const db = getDb();
+  const session = await db.payPalCheckout.findUnique({
+    where: { providerOrderId, attempt: { marketId: config.marketId } },
+    select: { attemptId: true, state: true, providerAccountKey: true, captureId: true },
   });
-  if (session?.state === "CAPTURING") await processCapture(session.attemptId, false);
+  if (!session) return "IGNORED";
+  if (session.providerAccountKey !== accountKey) return "REJECTED";
+  if (session.state === "COMPLETED") return session.captureId === captureId ? "PAID" : "IGNORED";
+  if (session.state !== "CAPTURING") return completed ? "PAYMENT_EXCEPTION" : "IGNORED";
+  const result = await processCapture(session.attemptId, false, completed ? captureId : undefined);
+  const review = await db.inventoryReservation.findUnique({ where: { attemptId: session.attemptId }, select: { state: true } });
+  if (review?.state === "PAYMENT_EXCEPTION") return "PAYMENT_EXCEPTION";
+  if (result.kind === "placed") return "PAID";
+  if (result.kind === "abandoned") return "CLOSED";
+  // A signed completion can reach the app before PayPal's order lookup reflects it.
+  return completed ? null : "PROCESSED";
 }
 
 export async function reconcilePayPalPurchaseRefund(refundId: string) {
-  const session = await getDb().payPalCheckout.findUnique({ where: { refundId }, select: { attemptId: true } });
+  const config = paypalSandboxConfig();
+  if (!config?.accountKey) return;
+  const session = await getDb().payPalCheckout.findUnique({
+    where: { refundId, providerAccountKey: config.accountKey, attempt: { marketId: config.marketId } }, select: { attemptId: true },
+  });
   if (session) await settlePayPalPurchaseException(session.attemptId, false);
 }

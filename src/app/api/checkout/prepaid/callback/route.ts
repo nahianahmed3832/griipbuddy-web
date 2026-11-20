@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { storefrontPath } from "@/config/storefront-path";
-import { acceptPrepaidCallback } from "@/lib/commerce/prepaid-checkout";
+import { acceptPrepaidCallback, PrepaidCallbackIdentityError } from "@/lib/commerce/prepaid-checkout";
 import { prepaidConfig } from "@/lib/commerce/prepaid-config";
 import { privateHeaders, readBody } from "@/lib/db/http";
 import { consumeQuota, reportFailure } from "@/lib/db/observability";
@@ -16,6 +16,9 @@ export async function POST(request: Request) {
   const body = await readBody(request, 16_384);
   if (!body) return new Response(null, { status: 400, headers: privateHeaders });
   const fields = new URLSearchParams(body.toString("utf8"));
+  if (fields.getAll("tran_id").length !== 1 || fields.getAll("val_id").length > 1) {
+    return new Response(null, { status: 400, headers: privateHeaders });
+  }
   const providerId = fields.get("tran_id");
   if (!providerId || !/^GB[0-9a-f]{26}$/.test(providerId)) return new Response(null, { status: 400, headers: privateHeaders });
   const isNotification = new URL(request.url).searchParams.get("flow") === "notify";
@@ -29,6 +32,7 @@ export async function POST(request: Request) {
     checkout.searchParams.set("prepaid", attemptId);
     return NextResponse.redirect(checkout, { status: 303, headers: privateHeaders });
   } catch (error) {
+    if (error instanceof PrepaidCallbackIdentityError) return new Response(null, { status: 403, headers: privateHeaders });
     reportFailure("prepaid.callback", undefined, error);
     // Providers can retry notifications and shoppers can recover from their saved cart.
     return new Response(null, { status: 503, headers: privateHeaders });

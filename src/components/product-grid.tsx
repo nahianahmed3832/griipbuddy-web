@@ -11,6 +11,10 @@ export function productHref(card: Pick<ProductCardData, "slug" | "variantId">): 
   return `/products/${card.slug}?variant=${card.variantId}`;
 }
 
+export function savedParentHref(slug: string, market: Market, regional: boolean): string {
+  return marketProductHref(slug, market, regional);
+}
+
 export function marketProductHref(slug: string, market: Market, regional: boolean, variantId?: string): string {
   const [path, query] = productLandingPath(slug, market.id, regional, variantId).split("?");
   const params = new URLSearchParams(query);
@@ -19,10 +23,10 @@ export function marketProductHref(slug: string, market: Market, regional: boolea
   return `${path}?${params}`;
 }
 
-export function ProductGrid({ cards, market, preview, activity, placement = { placement: "product-grid" }, offset = 0,
+export function ProductGrid({ cards, market, preview, activity, placement = { placement: "product-grid" }, offset = 0, savedParents,
   linkForCard = productHref, presentation }: {
   cards: readonly ProductCardData[]; market: Market; preview?: boolean; activity?: Readonly<Record<string, CardActivity>>;
-  placement?: Placement; offset?: number;
+  placement?: Placement; offset?: number; savedParents?: { regional: boolean; favorites?: boolean };
   linkForCard?: (card: ProductCardData) => string;
   presentation?: "home";
 }) {
@@ -35,11 +39,12 @@ export function ProductGrid({ cards, market, preview, activity, placement = { pl
         const discount = card.inStock && compare ? discountPercentage(card) : 0;
         const details = activity?.[card.id];
         const rating = details?.rating;
+        const href = savedParents ? savedParentHref(card.slug, market, savedParents.regional) : linkForCard(card);
         return (
-        <li key={card.id} className={card.shop ? "mp-listing-card" : undefined}>
-          <MeasuredProductLink card={card} market={market}
+        <li key={card.id} className={card.shop || savedParents?.favorites ? "mp-listing-card" : undefined}>
+          <MeasuredProductLink card={savedParents ? { id: card.id, priceMinor: card.priceMinor } : card} market={market}
             context={{ ...placement, position: offset + index + 1 }} preview={preview}
-            className="product-card" href={preview ? "#product-preview" : linkForCard(card)} prefetch={!home && !preview && !card.shop}>
+            className="product-card" href={preview ? "#product-preview" : href} prefetch={!home && !preview && !card.shop}>
             <div className="product-card__image">
               <Image src={storefrontPath(card.image.src)} alt={card.image.alt} fill sizes={home
                 ? "(max-width: 650px) 48vw, (max-width: 1024px) 33vw, 410px"
@@ -51,6 +56,7 @@ export function ProductGrid({ cards, market, preview, activity, placement = { pl
             {card.shop && <p className="mp-shop-name">{card.shop.name}</p>}
             <p className="product-card__price">{card.multiplePrices && <span>From </span>}{formatMoney(card.priceMinor, market)}
               {compare && card.regularMinor !== undefined && <del>{formatMoney(card.regularMinor, market)}</del>}</p>
+            {savedParents && <p className="mp-shop-name">Choose options</p>}
             {rating && <p className="mp-card-rating">
               <span aria-hidden="true">★ {rating.average.toFixed(1)} <span className="mp-card-rating-count">({rating.count})</span></span>
               <span className="sr-only">{rating.average.toFixed(1)} out of 5, {rating.count} {rating.count === 1 ? "review" : "reviews"}</span>
@@ -59,7 +65,8 @@ export function ProductGrid({ cards, market, preview, activity, placement = { pl
             {!!details?.recentUnits && <p className="mp-card-sold">{details.recentUnits.toLocaleString(market.locale)} sold in 30 days</p>}
             {!details?.recentUnits && !!details?.demoUnits && <p className="mp-card-sold">{details.demoUnits.toLocaleString(market.locale)} sold in demo</p>}
           </MeasuredProductLink>
-          {card.shop && !preview && <FavoriteButton product={card.id} name={card.name} market={market} variantId={card.variantId} priceMinor={card.priceMinor} />}
+          {(card.shop || savedParents?.favorites) && !preview && <FavoriteButton product={card.id} name={card.name}
+            market={market} variantId={savedParents ? undefined : card.variantId} priceMinor={card.priceMinor} />}
         </li>
         );
       })}

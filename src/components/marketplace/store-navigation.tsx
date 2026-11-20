@@ -1,10 +1,10 @@
 "use client";
 
-import { ArrowUpRight, ChevronDown, ChevronRight, Compass, Heart, House, Menu, ShoppingBag, Tag, UserRound } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Compass, Heart, House, Menu, ShoppingBag, Tag, UserRound, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { MarketId } from "@/config/markets";
 import { withoutRegionalPrefix } from "@/config/regional-path";
 import { storefrontBasePath, storefrontPath } from "@/config/storefront-path";
@@ -72,28 +72,75 @@ function CategoryLinks({ categories, ...context }: { categories: readonly Storef
   </ul>;
 }
 
-function MobileMenuLinks({ links, ...context }: { links: StorefrontNavLink[] } & MenuLinksContext) {
-  return <ul className="store-category-mobile">
-    {links.map(link => <li key={link.id}>
-      {link.category && link.category.children.length > 0 ? <details>
-        <summary>{link.label}<ChevronDown size={16} aria-hidden="true" /></summary>
-        <NavLink link={link} {...context}>See all {link.label}</NavLink>
-        <CategoryLinks categories={link.category.children} {...context} />
-      </details> : <NavLink link={link} {...context} />}
-    </li>)}
-  </ul>;
+function MobileMenuLinks({ links, trail, onTrailChange, ...context }: {
+  links: StorefrontNavLink[];
+  trail: string[];
+  onTrailChange: (trail: string[]) => void;
+} & MenuLinksContext) {
+  const back = useRef<HTMLButtonElement>(null);
+  const branchButtons = useRef(new Map<string, HTMLButtonElement>());
+  const focus = useRef<{ id: string } | "back" | null>(null);
+  const path: StorefrontNavLink[] = [];
+  let rows = links;
+  for (const id of trail) {
+    const branch = rows.find(row => row.id === id);
+    if (!branch?.category?.children.length) break;
+    path.push(branch);
+    rows = branch.category.children.map(category => ({ ...category, category }));
+  }
+  const active = path.at(-1);
+
+  useLayoutEffect(() => {
+    if (focus.current === "back") back.current?.focus();
+    else if (focus.current) branchButtons.current.get(focus.current.id)?.focus();
+    focus.current = null;
+  }, [trail]);
+
+  return <div className="store-category-mobile">
+    {active && <div className="store-category-mobile-branch">
+      <button ref={back} type="button" className="store-category-back" onClick={() => {
+        focus.current = { id: active.id };
+        onTrailChange(path.slice(0, -1).map(row => row.id));
+      }}><ChevronLeft size={18} aria-hidden="true" />Back</button>
+      <h2>{active.label}</h2>
+      <NavLink link={active} {...context}>See all {active.label}<ArrowUpRight size={15} aria-hidden="true" /></NavLink>
+    </div>}
+    <ul>
+      {rows.map((link, index) => <li key={link.id} className="store-category-mobile-row">
+        <NavLink link={link} {...context} position={index + 1} />
+        {!!link.category?.children.length && <button type="button" className="store-category-expand"
+          aria-label={`Browse ${link.label} subcategories`}
+          ref={button => {
+            if (button) branchButtons.current.set(link.id, button);
+            else branchButtons.current.delete(link.id);
+          }} onClick={() => {
+            focus.current = "back";
+            onTrailChange([...path.map(row => row.id), link.id]);
+          }}><ChevronRight size={19} aria-hidden="true" /></button>}
+      </li>)}
+    </ul>
+  </div>;
 }
 
 export function StoreCategoryMenu({ navigation, marketId }: { navigation: StorefrontNavigation; marketId: MarketId }) {
   const disclosure = useRef<HTMLDetailsElement>(null);
   const trigger = useRef<HTMLElement>(null);
+  const sections = useRef<HTMLElement>(null);
+  const focusSections = useRef(false);
+  const panelId = useId();
   const current = navigationPath(usePathname());
   const [selected, select] = useState<string>();
-  const categories = navigation.links.flatMap(link => link.category ? [{ ...link, category: link.category }] : []);
-  const shortcuts = navigation.links.filter(link => !link.category && (navigation.managed || link.id !== "shop"));
+  const [trail, setTrail] = useState<string[]>([]);
+  const shop = !navigation.managed && navigation.links.find(link => link.id === "shop");
+  const links = navigation.links.filter(link => link !== shop);
+  const categories = links.flatMap(link => link.category?.children.length ? [{ ...link, category: link.category }] : []);
   const active = categories.find(link => link.id === selected) ??
     categories.find(link => currentCategory(link.category, current)) ?? categories[0];
-  const shop = !navigation.managed && navigation.links.find(link => link.id === "shop");
+
+  useLayoutEffect(() => {
+    if (focusSections.current) sections.current?.querySelector("a")?.focus();
+    focusSections.current = false;
+  }, [active?.id]);
 
   function close() {
     if (disclosure.current) disclosure.current.open = false;
@@ -115,12 +162,18 @@ export function StoreCategoryMenu({ navigation, marketId }: { navigation: Storef
     <details
       ref={disclosure}
       className="department-menu mp-store-categories"
-      onToggle={event => { if (!event.currentTarget.open) select(undefined); }}
+      onToggle={event => {
+        if (!event.currentTarget.open) {
+          select(undefined);
+          setTrail([]);
+        }
+      }}
       onBlur={event => {
         if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) close();
       }}
       onKeyDown={event => {
         if (event.key === "Escape" && event.currentTarget.open) {
+          event.preventDefault();
           close();
           trigger.current?.focus();
         }
@@ -135,43 +188,51 @@ export function StoreCategoryMenu({ navigation, marketId }: { navigation: Storef
         <div className="mp-category-menu-intro">
           <strong>Categories</strong>
           {shop && <NavLink link={shop} {...context}>Shop all <ArrowUpRight size={15} aria-hidden="true" /></NavLink>}
+          <button type="button" className="store-category-close" aria-label="Close categories" onClick={() => {
+            close();
+            trigger.current?.focus();
+          }}><X size={19} aria-hidden="true" /></button>
         </div>
         {!navigation.links.length && <p className="store-category-empty">Use search to find products in this market.</p>}
-        <div className="store-category-desktop">
-          {active && <div className="mp-category-mega">
+        {links.length > 0 && <div className="store-category-desktop">
+          <div className="mp-category-mega" data-subcategories={Boolean(active)}>
             <ul className="mp-category-parents">
-              {categories.map(link => (
+              {links.map((link, index) => (
                 <li key={link.id}>
-                  <button type="button" aria-pressed={active.id === link.id}
-                    onPointerEnter={event => { if (event.pointerType === "mouse") select(link.id); }}
-                    onClick={() => select(link.id)}>
+                  {link.category?.children.length ? <button type="button" aria-expanded={active?.id === link.id} aria-controls={panelId}
+                    data-active={currentCategory(link.category, current) || undefined}
+                    onPointerEnter={event => {
+                      if (event.pointerType === "mouse" && !sections.current?.contains(document.activeElement)) select(link.id);
+                    }}
+                    onClick={event => {
+                      if (event.detail === 0) {
+                        if (active?.id === link.id) sections.current?.querySelector("a")?.focus();
+                        else focusSections.current = true;
+                      }
+                      select(link.id);
+                    }}>
                     {link.label}<ChevronRight size={15} aria-hidden="true" />
-                  </button>
+                  </button> : <NavLink link={link} {...context} position={index + 1} />}
                 </li>
               ))}
             </ul>
-            <div className="mp-category-sections">
-              <NavLink className="mp-category-overview" link={active} {...context}>
+            {active && <section className="mp-category-sections" id={panelId} ref={sections} aria-label={`Subcategories of ${active.label}`}>
+              <NavLink className="mp-category-overview" link={active} {...context} position={links.findIndex(link => link.id === active.id) + 1}>
                 See all {active.label}<ArrowUpRight size={14} aria-hidden="true" />
               </NavLink>
-              {active.category.children.length > 0 ? <ul className="mp-category-menu-grid">
-                {active.category.children.map(category => <li key={category.id}>
-                  <NavLink link={{ ...category, category }} {...context}>
+              <ul className="mp-category-menu-grid">
+                {active.category.children.map((category, index) => <li key={category.id}>
+                  <NavLink link={{ ...category, category }} {...context} position={index + 1}>
                     <Image src={storefrontPath(category.image.src)} alt="" width={42} height={42} />
                     {category.label}
                   </NavLink>
                   {category.children.length > 0 && <CategoryLinks categories={category.children} {...context} />}
                 </li>)}
-              </ul> : <div className="mp-category-image">
-                <Image src={storefrontPath(active.category.image.src)} alt="" width={236} height={102} />
-              </div>}
-            </div>
-          </div>}
-          {shortcuts.length > 0 && <ul className="store-category-shortcuts">
-            {shortcuts.map(link => <li key={link.id}><NavLink link={link} {...context} /></li>)}
-          </ul>}
-        </div>
-        <MobileMenuLinks links={navigation.links.filter(link => navigation.managed || link.id !== "shop")} {...context} />
+              </ul>
+            </section>}
+          </div>
+        </div>}
+        {links.length > 0 && <MobileMenuLinks links={links} {...context} trail={trail} onTrailChange={setTrail} />}
       </nav>
     </details>
   );

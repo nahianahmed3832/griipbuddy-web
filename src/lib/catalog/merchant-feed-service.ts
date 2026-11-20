@@ -1,4 +1,5 @@
 import type { MarketId } from "../../config/markets.ts";
+import { marketConfiguration } from "../market-config.ts";
 import { merchantBdPreviewPhoto, refreshDevBangladeshMerchantItems } from "./merchant-bd-preview.ts";
 import { devLiveBangladeshFeed, merchantFeedSettings } from "./merchant-feed-config.ts";
 import { collectMerchantFeed, type MerchantFeedIssue } from "./merchant-feed.ts";
@@ -6,7 +7,9 @@ import { catalog } from "./repository.ts";
 
 export async function loadMerchantFeed(marketId: MarketId) {
   const settings = merchantFeedSettings(marketId);
-  const products = await catalog.listProducts({ marketId });
+  const { status } = marketConfiguration(marketId);
+  if (status !== "active" && status !== "staging") return { settings, items: [], issues: [] };
+  const products = await catalog.listProducts({ marketId, publishedOffersOnly: true });
   const liveBdPreview = marketId === "bd" && devLiveBangladeshFeed();
   const { items, issues } = collectMerchantFeed(liveBdPreview ? products.map(merchantBdPreviewPhoto) : products, settings);
   if (!liveBdPreview) return { settings, items, issues };

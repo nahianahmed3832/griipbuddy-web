@@ -1,13 +1,21 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 
-const local = !process.env.GRIIPBUDDY_STAGE_URL && process.env.GRIIPBUDDY_ENV_FILE === ".env.test";
-test.skip(!local, "Requires an isolated local test database.");
+const stage = process.env.GRIIPBUDDY_STAGE_URL;
+const available = Boolean(stage || process.env.GRIIPBUDDY_ENV_FILE === ".env.test");
+test.skip(!available, "Requires an isolated local test DB or the known HTTPS staging host.");
 test.use({ trace: "off" });
+const isolate = "https://photographic-geological-inventory-wood.trycloudflare.com";
 
 function contextOptions(baseURL: string) {
-  if (new URL(baseURL).origin !== "http://127.0.0.1:3101") throw new Error("Expected the isolated local origin.");
-  return { baseURL };
+  if (stage && new URL(baseURL).origin !== isolate) throw new Error("Refusing to create a test order outside the verified staging host.");
+  if (!stage && new URL(baseURL).origin !== "http://127.0.0.1:3101") throw new Error("Expected the isolated local origin.");
+  return {
+    baseURL,
+    httpCredentials: stage ? {
+      username: process.env.STAGING_USER!, password: process.env.STAGING_PASSWORD!, origin: isolate,
+    } : undefined,
+  };
 }
 
 async function signIn(browser: Browser, baseURL: string, role: "OWNER" | "PACKER") {
@@ -61,10 +69,10 @@ async function screenshot(page: Page, name: string) {
 
 test("consented checkout records one committed order, evidenced collection, privacy and cohort separation", async ({ browser, baseURL }, info) => {
   test.skip(info.project.name !== "desktop", "Single journey; mobile commerce has its own regression.");
-  test.setTimeout(80_000);
+  test.setTimeout(stage ? 150_000 : 80_000);
   const shopper = await browser.newContext(contextOptions(baseURL!));
   const page = await shopper.newPage();
-  page.setDefaultTimeout(10_000);
+  page.setDefaultTimeout(stage ? 20_000 : 10_000);
   const blocked = await browser.newContext({ ...contextOptions(baseURL!), extraHTTPHeaders: { "Sec-GPC": "1" } });
   const owner = await signIn(browser, baseURL!, "OWNER");
   const packer = await signIn(browser, baseURL!, "PACKER");
@@ -216,8 +224,9 @@ test("consented checkout records one committed order, evidenced collection, priv
     await expect(page.getByRole("heading", { name: "Order confirmed" })).toBeVisible();
   } finally {
     await shopper.request.post("/api/measurement", { headers: query, data: { action: "withdraw" } }).catch(() => undefined);
-    if (createdId) {
-      // Clean up only the fixture created by this run.
+    if (!stage && createdId) {
+      // Clean only this run's isolated fixture. Staging keeps the order for
+      // the acceptance receipt; withdrawal already removes its measurement.
       const { getDb } = await import("../src/lib/db/client");
       const { requireLocalDatabase } = await import("../src/lib/db/local");
       requireLocalDatabase("griipbuddy_test");

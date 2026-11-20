@@ -1,3 +1,4 @@
+import { retiredCatalogApiResponse } from "@/lib/catalog/main-admin-browser";
 import { privateHeaders } from "@/lib/db/http";
 import { reportFailure } from "@/lib/db/observability";
 import { getStaff } from "@/lib/staff/access";
@@ -5,6 +6,8 @@ import { CatalogWriteError } from "@/lib/staff/operation-error";
 import { readCategoryImpact } from "@/lib/staff/taxonomy-impact";
 
 export async function GET(request: Request) {
+  const retired = await retiredCatalogApiResponse(request);
+  if (retired) return retired;
   const errorResponse = (status: number, code: string, message: string) =>
     Response.json({ error: { code, message } }, { status, headers: privateHeaders });
   try {

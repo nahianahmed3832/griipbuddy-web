@@ -4,11 +4,13 @@ import { catalogProduct, catalogVariantInclude, catalogVariants, catalogVariantW
 import { catalog } from "../catalog/repository.ts";
 import type { CartCatalogItem } from "../catalog/types.ts";
 import { contiguousStates } from "../commerce/address.ts";
+import { CommerceError } from "../commerce/errors.ts";
 import { integratedCheckout } from "../commerce/integrated-checkout.ts";
 import { legacyLocationId } from "../commerce/location-inventory.ts";
 import { deliveryChoices } from "../commerce/orders.ts";
 import { paypalCheckoutAvailability } from "../commerce/paypal-config.ts";
 import { inventoryPoolScopeKey } from "../commerce/physical-inventory.ts";
+import { pilotCheckoutScope, reviewedCheckoutVariants } from "../commerce/scoped-pilot-checkout.ts";
 import { getDb, type DbReader } from "../db/client.ts";
 import { marketConfiguration } from "../market-config.ts";
 import { storeShop } from "../marketplace/constants.ts";
@@ -19,9 +21,10 @@ import { cartOfferKey, MAX_QUANTITY, type CartItemReference } from "./model.ts";
 type CartMarket = { id: MarketId; locale: string };
 type OwnerVariant = { variantId: string; ownerId: string };
 
-async function purchaseDestinations(marketId: MarketId, db: DbReader) {
+async function purchaseDestinations(marketId: MarketId, db: DbReader, codOnly = false) {
   const market = marketConfiguration(marketId);
   if (market.checkoutAuthority !== "native" || integratedCheckout(marketId)) return [];
+  if (codOnly) return deliveryChoices(marketId, "COD", db);
   const [cod, prepaid] = await Promise.all([deliveryChoices(marketId, "COD", db), deliveryChoices(marketId, "SSLCOMMERZ", db)]);
   const destinations = [...cod, ...prepaid].map(({ district, method }) => ({ district, method }));
   if (!paypalCheckoutAvailability(marketId).paymentEnabled) return destinations;
@@ -36,9 +39,9 @@ async function purchaseDestinations(marketId: MarketId, db: DbReader) {
 
 // The cart may lack an address. Report the maximum routable stock for a single
 // configured destination and check the chosen destination again in checkout.
-async function cartStock(marketId: MarketId, offers: readonly OwnerVariant[], db: DbReader) {
+async function cartStock(marketId: MarketId, offers: readonly OwnerVariant[], db: DbReader, reviewedPools?: readonly string[]) {
   if (!offers.length) return new Map<string, number>();
-  const destinations = await purchaseDestinations(marketId, db);
+  const destinations = await purchaseDestinations(marketId, db, Boolean(reviewedPools));
   if (!destinations.length) return new Map<string, number>();
   const choices = new Map(destinations.map(destination => [`${destination.district}:${destination.method}`, destination]));
   const byOwner = new Map<string, string[]>();
@@ -47,7 +50,7 @@ async function cartStock(marketId: MarketId, offers: readonly OwnerVariant[], db
   }
   const routeScope = { marketId, active: true } satisfies Prisma.DispatchLocationMarketWhereInput;
   const pools = await db.inventoryPool.findMany({
-    where: { variant: { managedInventory: true }, OR: [...byOwner].map(([ownerId, variants]) => ({
+    where: { ...(reviewedPools && { id: { in: [...reviewedPools] } }), variant: { managedInventory: true }, OR: [...byOwner].map(([ownerId, variants]) => ({
       ownerId, variantId: { in: variants }, location: {
         id: { not: legacyLocationId }, active: true, marketServices: { some: routeScope },
         ...(ownerId === storeShop.id ? { OR: [{ shopId: null }, { shopId: ownerId }] } : { shopId: ownerId }),
@@ -93,8 +96,21 @@ export async function resolveCartCatalog(references: readonly CartItemReference[
         select: { id: true, variantId: true, marketId: true, sellerId: true } }),
     ]);
     const variants = await catalogVariants(rows, context, tx);
-    const stock = await cartStock(marketId, variants.flatMap(({ id, offer }) => offer.eligible
-      ? [{ variantId: id, ownerId: offer.sellerId }] : []), tx);
+    const purchasable = variants.flatMap(({ id, offer }) => offer.eligible && offer.id
+      ? [{ variantId: id, offerId: offer.id, ownerId: offer.sellerId }] : []);
+    const reviewed = await reviewedCheckoutVariants(tx, [...lines, ...requested.map(variantId => ({ variantId }))]);
+    const stock = await cartStock(marketId, purchasable.filter(row => !reviewed.has(row.variantId)), tx);
+    const pilotOffers = purchasable.filter(row => reviewed.has(row.variantId));
+    if (pilotOffers.length) {
+      try {
+        const pilot = await pilotCheckoutScope(tx, { marketId, paymentMethod: "COD", items: pilotOffers });
+        if (pilot) for (const [key, available] of await cartStock(marketId, pilotOffers, tx, pilot.poolIds)) {
+          stock.set(key, available);
+        }
+      } catch (error) {
+        if (!(error instanceof CommerceError)) throw error;
+      }
+    }
     const visible = new Map(rows.map(row => [row.id, {
       ...catalogProduct(row.product, context), personalization: marketplaceMode() && row.product.personalizationPrompt
         ? { prompt: row.product.personalizationPrompt, required: row.product.personalizationRequired } : undefined,
@@ -127,14 +143,14 @@ export async function resolveCartCatalog(references: readonly CartItemReference[
         ...(changed ? { offerIssue: "changed" as const } : !offer.eligible || available === undefined ? { offerIssue: "ineligible" as const } : {}),
       });
     }
-    return { resolved, connected };
+    return { resolved, connected, reviewed };
   }
-  const { resolved, connected } = reader ? await read(reader)
+  const { resolved, connected, reviewed } = reader ? await read(reader)
     : await getDb().$transaction(read, { isolationLevel: "RepeatableRead" });
 
   const outstanding = lines.flatMap(line => {
     const target = resolved.get(line.variantId);
-    return target && !line.offerId && !connected.has(cartOfferKey(line)) ? [target] : [];
+    return target && !reviewed.has(target) && !line.offerId && !connected.has(cartOfferKey(line)) ? [target] : [];
   });
   // The existing legacy lookup also supports its configured recovered inventory bridge.
   const legacy = new Map((outstanding.length ? await catalog.resolveVariants([...new Set(outstanding)], marketId) : [])

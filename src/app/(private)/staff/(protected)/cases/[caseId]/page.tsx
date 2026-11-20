@@ -38,10 +38,10 @@ export default async function StaffCasePage({ params }: { params: Promise<{ case
               : "The parcel is held for review."}</p>
           </section>
         )}
-        {orderCase.status === "REFUND_APPROVED" && (
+        {orderCase.status === "REFUND_APPROVED" && orderCase.refund?.state !== "CONFIRMED" && !orderCase.canProcessRefund && (
           <section className="commerce-panel">
-            <h2>Refund to process</h2>
-            <p>Process the approved refund separately and include the payment confirmation when you resolve the case.</p>
+            <h2>Refund needs reconciliation</h2>
+            <p>Provider processing is unavailable for this case. Review the original payment in the payment workspace.</p>
           </section>
         )}
         <ReviewOrderCase orderCase={orderCase} market={marketConfiguration(orderCase.order.marketId)} />

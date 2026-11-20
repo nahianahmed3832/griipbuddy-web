@@ -38,15 +38,6 @@
   font-size: 12px;
   line-height: 1.4;
 }
-.checkout-save {
-  padding: 4px 7px;
-  border-radius: 4px;
-  background: #fff0eb;
-  color: #a42a12;
-  font-size: 12px;
-  font-weight: 700;
-  text-wrap: nowrap;
-}
 .checkout-extras summary {
   cursor: pointer;
   font-weight: 650;

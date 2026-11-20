@@ -1,8 +1,11 @@
+import { ChevronRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { formatMoney, type Market } from "@/config/markets";
 import { localizedStorePath } from "@/config/regional-path";
 import { storefrontPath } from "@/config/storefront-path";
+import { browseRequestState, clearBrowseFilters, needsBrowseUrlNormalization } from "@/lib/catalog/browse-url-state";
 import { catalogBrowseHref, catalogProductHref } from "@/lib/catalog/category-browse-links";
 import { categoryBrowseControls, prepareCategoryBrowseQuery } from "@/lib/catalog/category-browse-query";
 import { listConnectedCatalog } from "@/lib/catalog/connected-listing";
@@ -11,6 +14,7 @@ import { CatalogApiError } from "@/lib/catalog/connected-public";
 import { heroPhoto } from "@/lib/catalog/imagery";
 import type { SearchParams } from "@/lib/catalog/listing";
 import { hybridDemoMode } from "@/lib/release-config";
+import { BrowseUrlNormalization } from "./browse-url-normalization";
 import { ConnectedBrowseChips, ConnectedBrowseFilters, ConnectedBrowsePagination, ConnectedBrowseSort } from "./connected-browse-controls";
 import { CategoryListingMeasurement, ListingMeasurement, MeasuredCategoryLink, MeasuredProductLink } from "./measurement-observers";
 import { Breadcrumbs, EmptyState, SectionHeading } from "./store-ui";
@@ -22,61 +26,76 @@ type Card = Awaited<ReturnType<typeof listConnectedCatalog>>["items"][number];
 type RelatedCollections = Awaited<ReturnType<typeof connectedCategoryCollections>>;
 type Destination = { type: "category"; data: Category; collections: RelatedCollections } |
   { type: "collection"; data: Collection } | { type: "shop"; categories: Category["children"] };
-const browsePageSize = 24;
 
 export function ConnectedCatalogCards({ products, market, categoryId, offset, placement, linkToRepresentative = false }: {
   products: Card[]; market: Market; categoryId?: string; offset: number; linkToRepresentative?: boolean;
-  placement: "category-grid" | "collection" | "search-results" | "shop";
+  placement: "category-grid" | "collection" | "search-results" | "shop" | "similar" | "complementary";
 }) {
   const context = { id: market.id, locale: market.locale, regional: hybridDemoMode() };
   const search = placement === "search-results";
   return <ul className="product-grid connected-catalog-grid">
     {products.map((product, index) => {
       const { representative, fromPrice } = product;
-      const image = representative.image ?? heroPhoto;
-      const price = representative.offer.amountMinor;
-      const selection = linkToRepresentative ? { ...product, matchedVariantId: representative.variantId } : product;
-      const known = linkToRepresentative ? [] : product.knownOptions;
-      const labels = (known.length ? known : representative.options).map(option => option.valueLabel).filter(Boolean).slice(0, 3);
+      const { image, offer, availability } = representative;
+      const localOffer = offer.marketId === market.id && offer.currency === market.currency;
+      const representativeLink = linkToRepresentative && localOffer && offer.eligible;
+      const selection = representativeLink ? { ...product, matchedVariantId: representative.variantId } : product;
+      const known = representativeLink ? [] : product.knownOptions;
+      const labels = [...new Set((known.length ? known : representative.options).map(option => option.valueLabel).filter(Boolean))].slice(0, 3);
+      const exact = selection.matchedVariantId === representative.variantId;
+      const price = localOffer && offer.eligible ? offer.amountMinor : undefined;
+      const range = !selection.matchedVariantId && fromPrice?.currency === market.currency &&
+        fromPrice.maxAmountMinor > fromPrice.amountMinor;
+      const comparison = exact && price !== undefined && offer.regularMinor > price ? offer.regularMinor : undefined;
+      const unavailable = availability === "out_of_stock" ? "Out of stock"
+        : availability === "delivery_unavailable" ? "Unavailable for this delivery" : null;
+      const shownOption = !exact;
       return <li key={product.id}>
         <MeasuredProductLink className="product-card" href={catalogProductHref(selection, context, categoryId)} prefetch={false}
           card={{ id: product.id, variantId: selection.matchedVariantId ?? undefined, priceMinor: price,
-            offerId: search && product.matchedVariantId ? representative.offer.id ?? undefined : undefined }}
+            offerId: search && product.matchedVariantId ? offer.id ?? undefined : undefined }}
           market={market} context={{ categoryId, placement, position: offset + index + 1 }}>
           <div className="product-card__image">
-            <Image src={storefrontPath(image.src)} alt={image.alt} fill unoptimized={search}
+            {image ? <Image src={storefrontPath(image.src)} alt={image.alt} fill unoptimized={search}
               sizes="(max-width: 759px) 47vw, (max-width: 1050px) 27vw, 280px" />
-            {representative.availability === "out_of_stock" && <span className="product-card__badge">Out of stock</span>}
-            {representative.availability === "delivery_unavailable" && <span className="product-card__badge">Unavailable for this delivery</span>}
+              : <span className="connected-card-image-placeholder">Image unavailable</span>}
+            {unavailable && <span className="product-card__badge">{shownOption
+              ? `Shown option ${unavailable.toLowerCase()}` : unavailable}</span>}
           </div>
           <h3>{product.name}</h3>
-          {!!labels.length && <p className="connected-card-options">{!known.length && "Shown in "}{labels.join(" · ")}</p>}
+          {!!labels.length && <p className="connected-card-options">
+            {!known.length && (shownOption || search) && "Shown in "}{labels.join(" · ")}
+          </p>}
           {search && product.searchMatch && product.searchMatch.kind !== "text" && !labels.includes(product.searchMatch.label) &&
             <p className="connected-card-options">{product.searchMatch.label}</p>}
-          <p className="product-card__price">
-            {!selection.matchedVariantId && fromPrice && fromPrice.maxAmountMinor > fromPrice.amountMinor &&
-              <span>{price === fromPrice.amountMinor ? "From " : "Shown option "}</span>}{formatMoney(price, market)}
-          </p>
+          {price === undefined ? <p className="connected-card-unavailable">Unavailable in this market</p>
+            : <p className="product-card__price">
+              {range && <span>{price === fromPrice.amountMinor ? "From " : "Shown option "}</span>}
+              <data value={price}>{formatMoney(price, market)}</data>
+              {comparison !== undefined && <> <span className="sr-only">Regular price </span>
+                <del className="connected-card-comparison">{formatMoney(comparison, market)}</del></>}
+            </p>}
         </MeasuredProductLink>
       </li>;
     })}
   </ul>;
 }
 
-function CategoryShortcuts({ categories, market, title }: { categories: Category["children"]; market: Market; title: string }) {
+function CategoryShortcuts({ categories, market, compact = false }: { categories: Category["children"]; market: Market; compact?: boolean }) {
   const children = categories.filter(child => child.visibleInNavigation);
   if (!children.length) return null;
   const context = { id: market.id, locale: market.locale, regional: hybridDemoMode() };
   return <section className="connected-catalog-section" aria-labelledby="catalog-category-children">
-    <SectionHeading id="catalog-category-children" title={title} />
-    <ul className="connected-category-shortcuts">
+    <SectionHeading id="catalog-category-children" title={compact ? "Subcategories" : "Shop by category"} />
+    <ul className={compact ? "connected-category-shortcuts connected-category-shortcuts--compact" : "connected-category-shortcuts"}>
       {children.map((child, index) => <li key={child.id}>
         <MeasuredCategoryLink categoryId={child.id} marketId={market.id} context={{ placement: "category-children", position: index + 1 }}
           className="collection-card" href={catalogBrowseHref(`/departments/${encodeURIComponent(child.localizedSlug)}`, context)} prefetch={false}>
           <span className="collection-card__visual">
-            <Image src={storefrontPath(child.image.src)} alt={child.image.alt} fill sizes="(max-width: 759px) 46vw, 240px" />
+            <Image src={storefrontPath(child.image.src)} alt="" fill sizes={compact ? "44px" : "(max-width: 759px) 46vw, 240px"} />
           </span>
           <span className="collection-card__name">{child.shortName}</span>
+          {compact && <ChevronRight aria-hidden="true" size={16} />}
         </MeasuredCategoryLink>
       </li>)}
     </ul>
@@ -92,7 +111,7 @@ function CategoryCollections({ collections, market }: { collections: RelatedColl
       {collections.map(collection => <li key={collection.id}>
         <Link className="collection-card" href={catalogBrowseHref(`/collections/${encodeURIComponent(collection.slug)}`, context)} prefetch={false}>
           {collection.image && <span className="collection-card__visual">
-            <Image src={storefrontPath(collection.image.src)} alt={collection.image.alt} fill sizes="(max-width: 759px) 46vw, 240px" />
+            <Image src={storefrontPath(collection.image.src)} alt="" fill sizes="(max-width: 759px) 46vw, 240px" />
           </span>}
           <span className="collection-card__name">{collection.name}</span>
         </Link>
@@ -108,29 +127,46 @@ export async function ConnectedCatalogBrowse({ destination, market, raw }: { des
   const name = category?.name ?? collection?.name ?? "Shop all";
   const description = category?.description ?? collection?.description;
   const banner = category?.banner ?? collection?.image;
+  const categoryImage = category && category.image.src !== heroPhoto.src ? category.image : null;
+  const image = banner ?? categoryImage;
+  const headingClass = banner ? "connected-catalog-heading with-banner"
+    : image ? "connected-catalog-heading with-banner with-category-image" : "connected-catalog-heading";
+  const isDepartment = category?.kind === "DEPARTMENT" || category?.kind === null && category.parentId === null;
   const absolutePath = category ? `/departments/${encodeURIComponent(category.localizedSlug)}`
     : collection ? `/collections/${encodeURIComponent(collection.slug)}` : "/shop";
   const shopHref = catalogBrowseHref("/shop", context);
   const path = context.regional ? localizedStorePath(absolutePath, market.id) : absolutePath;
-  const defaults = collection?.selection === "NEW" && raw.sort === undefined ? { ...raw, sort: "newest" } : raw;
+  const defaultSort = collection?.selection === "NEW" ? "newest" : "recommended";
+  const defaults = defaultSort === "newest" && raw.sort === undefined ? { ...raw, sort: defaultSort } : raw;
   const prepared = prepareCategoryBrowseQuery(defaults, market, { category: category?.id, collection: collection?.id });
   let listing;
   try {
     listing = await listConnectedCatalog(prepared.params, { marketId: market.id, locale: market.locale, delivery: prepared.delivery }, undefined, undefined,
-      { browsePage: prepared.page, keepUnmatchedFacets: !prepared.changedMarket });
+      { browsePage: prepared.page, keepUnmatchedFacets: destination.type === "shop" && !prepared.changedMarket });
   } catch (error) {
-    if (!(error instanceof CatalogApiError) || error.code !== "catalog_scope_too_broad") throw error;
+    if (!(error instanceof CatalogApiError)) throw error;
+    if (category && error.code === "category_not_found" || collection && error.code === "collection_not_found") notFound();
+    if (error.code !== "catalog_scope_too_broad") throw error;
   }
   const browse = listing?.browse;
-  const controls = browse && categoryBrowseControls(prepared, browse);
-  const query = new URLSearchParams(controls?.query);
+  const controls = categoryBrowseControls(prepared, browse);
+  const query = new URLSearchParams(controls.query);
+  const source = browseRequestState(raw);
+  const page = browse?.page ?? prepared.page;
+  const emptyTitle = controls.hasFilters ? "No products match these filters" : query.has("q") ? "No products found"
+    : collection ? "This collection is empty"
+    : category ? "No products in this category yet" : "No products here yet";
+  const pageLabel = category ? "Category result pages" : collection ? "Collection result pages" : "Shop result pages";
 
   return <div className="shell inner-page listing-page connected-catalog">
-    {category && listing && controls && <CategoryListingMeasurement categoryId={category.id} marketId={market.id}
+    {needsBrowseUrlNormalization(source, page, Boolean(controls.notice)) &&
+      <BrowseUrlNormalization path={path} source={source} query={controls.query} page={page} />}
+    {category && listing && <CategoryListingMeasurement categoryId={category.id} marketId={market.id}
       resultCount={listing.total} filterKey={controls.filterKey} filterFields={controls.filterFields}
       sort={prepared.sort} />}
-    {destination.type === "shop" && listing && controls && <ListingMeasurement marketId={market.id} placement="shop"
-      query={query.get("q") ?? undefined} active={controls.active || Boolean(prepared.sort && prepared.sort !== "recommended")}
+    {destination.type !== "category" && listing && <ListingMeasurement marketId={market.id} placement={destination.type}
+      listingId={collection?.id} filterKey={controls.filterKey}
+      query={query.get("q") ?? undefined} active={controls.active || Boolean(prepared.sort && prepared.sort !== defaultSort)}
       resultCount={listing.total} filters={{
         sort: prepared.sort,
         availability: query.getAll("availability").includes("available") ? "in-stock" : undefined,
@@ -138,28 +174,32 @@ export async function ConnectedCatalogBrowse({ destination, market, raw }: { des
         min: query.has("minMinor") ? Number(query.get("minMinor")) : undefined,
         max: query.has("maxMinor") ? Number(query.get("maxMinor")) : undefined,
       }} />}
-    <Breadcrumbs items={[
+    <Breadcrumbs homeHref={catalogBrowseHref("/", context)} items={[
       ...(destination.type !== "shop" ? [{ label: "Shop all", href: shopHref }] : []),
       ...(destination.type === "category" ? destination.data.ancestors.map(row => ({
         label: row.shortName, href: catalogBrowseHref(`/departments/${encodeURIComponent(row.localizedSlug)}`, context),
       })) : []), { label: name },
     ]} />
-    <header className={banner ? "connected-catalog-heading with-banner" : "connected-catalog-heading"}>
-      <div><h1 className="display-type">{name}</h1>{description && <p>{description}</p>}</div>
-      {banner && <div className="connected-catalog-banner">
-        <Image src={storefrontPath(banner.src)} alt={banner.alt} fill sizes="(max-width: 759px) 94vw, 55vw" preload />
+    <header className={headingClass}>
+      <div><h1 className="display-type">{name}</h1>{description && <p>{description}</p>}
+        {destination.type === "shop" && <nav className="mp-panel-links" aria-label="Catalog tools">
+          <Link className="text-link" href={catalogBrowseHref("/brands", context)} prefetch={false}>Shop by brand</Link>
+          <Link className="text-link" href={catalogBrowseHref("/compare", context)} prefetch={false}>Compare products</Link>
+        </nav>}
+      </div>
+      {image && <div className="connected-catalog-banner">
+        <Image src={storefrontPath(image.src)} alt={image.alt} fill
+          sizes={banner ? "(max-width: 759px) 94vw, 55vw" : "(max-width: 759px) 94vw, 320px"} preload />
       </div>}
     </header>
     {destination.type === "category" && <>
-      <CategoryShortcuts categories={destination.data.children} market={market}
-        title={destination.data.category.kind === "CATEGORY" ? "Subcategories" : "Shop by category"} />
+      <CategoryShortcuts categories={destination.data.children} market={market} compact={!isDepartment} />
       <CategoryCollections collections={destination.collections} market={market} />
     </>}
-    {destination.type === "shop" && <CategoryShortcuts categories={destination.categories} market={market} title="Shop by category" />}
-    {listing && browse && controls ? (
+    {destination.type === "shop" && <CategoryShortcuts categories={destination.categories} market={market} />}
+    {listing && browse ? (
       <div className="connected-browse-results">
-        <ConnectedBrowseFilters path={path} query={controls.query} facets={browse.facets} price={browse.price} market={market}
-          normalizePage={controls.notice || prepared.changedMarket || prepared.page !== browse.page ? browse.page : undefined} />
+        <ConnectedBrowseFilters path={path} query={controls.query} facets={browse.facets} price={browse.price} market={market} />
         <section className="connected-catalog-results" aria-labelledby="catalog-results-heading">
           <h2 id="catalog-results-heading" className="connected-results-title">Products</h2>
           {controls.notice && <p className="connected-browse-notice" role="status">{controls.notice}</p>}
@@ -171,20 +211,25 @@ export async function ConnectedCatalogBrowse({ destination, market, raw }: { des
           {listing.items.length ? <ConnectedCatalogCards products={listing.items} market={market} categoryId={category?.id}
             placement={category ? "category-grid" : destination.type === "collection" ? "collection" : "shop"}
             linkToRepresentative={destination.type === "shop" && !controls.active}
-            offset={(browse.page - 1) * browsePageSize} /> : <EmptyState title={controls.active ? "No products match these filters" : "No products here yet"}
-            description={controls.active ? "Remove a filter or try another combination." : `Explore other categories available in ${market.name}.`}>
+            offset={(browse.page - 1) * prepared.pageSize} /> : <EmptyState title={emptyTitle}
+            description={controls.hasFilters ? "Remove a filter or try another combination."
+              : `Explore other categories available in ${market.name}.`}>
             {(controls.active || destination.type !== "shop") && <Link className="button button--outline"
-              href={controls.active ? catalogBrowseHref(path, context) : shopHref} prefetch={false}>
-              {controls.active ? "Clear filters" : "Browse all products"}
+              href={controls.hasFilters ? clearBrowseFilters(path, controls.query) : shopHref} prefetch={false}>
+              {controls.hasFilters ? "Clear filters" : "Browse all products"}
             </Link>}
           </EmptyState>}
           <ConnectedBrowsePagination path={path} query={controls.query} page={browse.page} pageCount={browse.pageCount}
-            label={destination.type === "shop" ? "Shop result pages" : undefined} />
+            label={pageLabel} />
         </section>
       </div>
-    ) : <EmptyState title="Explore a smaller range" description="Choose a category to see its products and filters.">
-      {destination.type !== "shop" && <Link className="button button--outline" href={shopHref} prefetch={false}>Browse all categories</Link>}
-    </EmptyState>}
+    ) : <section aria-labelledby="catalog-results-heading">
+      <h2 id="catalog-results-heading" className="connected-results-title">Products</h2>
+      {controls.notice && <p className="connected-browse-notice" role="status">{controls.notice}</p>}
+      <EmptyState title="Explore a smaller range" description="Choose a smaller category to see its products and filters.">
+        {destination.type !== "shop" && <Link className="button button--outline" href={shopHref} prefetch={false}>Browse all categories</Link>}
+      </EmptyState>
+    </section>}
   </div>;
 }
 
@@ -192,12 +237,12 @@ export async function CatalogMarketFallback({ market, missing }: { market: Marke
   const { categories } = await connectedCategoryTree({ marketId: market.id, locale: market.locale });
   const context = { id: market.id, locale: market.locale, regional: hybridDemoMode() };
   return <div className="shell inner-page connected-catalog">
-    <Breadcrumbs items={[{ label: "Shop all" }]} />
+    <Breadcrumbs homeHref={catalogBrowseHref("/", context)} items={[{ label: "Shop all" }]} />
     <header className="connected-catalog-heading">
       <h1 className="display-type">Shop all</h1>
       <p role="status">That {missing} is unavailable in {market.name}. Browse this market’s catalog below.</p>
     </header>
-    <CategoryShortcuts categories={categories} market={market} title="Shop by category" />
+    <CategoryShortcuts categories={categories} market={market} />
     <Link href={catalogBrowseHref("/shop", context)} className="text-link" prefetch={false}>Browse all products</Link>
   </div>;
 }

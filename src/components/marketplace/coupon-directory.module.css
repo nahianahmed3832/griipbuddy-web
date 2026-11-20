@@ -1,0 +1,9 @@
+.directory { max-width: 74rem; margin-inline: auto; }
+.directory h1 { color: var(--ink); font-size: clamp(2rem, 4vw, 3rem); line-height: 1.15; margin-block: 0 .6rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem; margin: 1.5rem 0 0; padding: 0; list-style: none; }
+.grid li { background: #fff; border: 1px solid #e5dce3; border-radius: 1rem; padding: 1.15rem; overflow-wrap: anywhere; }
+.grid h2 { font-size: 1.25rem; margin: 0; }
+.grid p { margin: .55rem 0; }
+.code { display: flex; gap: .65rem; flex-wrap: wrap; align-items: center; justify-content: space-between; border-top: 1px solid #e5dce3; margin-top: .85rem; padding-top: .8rem; }
+.code code { font-weight: 750; user-select: all; }
+.code [role="status"] { display: block; font-size: .85rem; }

@@ -85,7 +85,7 @@ test("private order cases restore only physically received items once and leave 
     await assert.rejects(executeOrderCase(owner, { ...review, status: "RETURN_APPROVED" }), { status: 409 });
     await executeOrderCase(owner, review);
     await assert.rejects(executeOrderCase(buyer, { action: "withdraw", caseId, revision: 0 }), { status: 409 });
-    await executeOrderCase(owner, { ...review, revision: 1, status: "RETURN_APPROVED", note: "Bring the item to the pickup desk." });
+    await executeOrderCase(owner, { ...review, revision: 1, status: "RETURN_APPROVED", note: "Internal test review context.", publicNote: "Bring the item to the pickup desk." });
     await assert.rejects(executeOrderCase(buyer, { action: "withdraw", caseId, revision: 2 }), { status: 409 });
     assert.equal((await db.inventory.findUniqueOrThrow({ where: { variantId } })).available, originalUnits);
     await assert.rejects(executeOrderCase(owner, { ...review, revision: 2, status: "RESOLVED" }), { status: 409 });
@@ -103,6 +103,8 @@ test("private order cases restore only physically received items once and leave 
     assert.deepEqual(visibleCase?.events.map(event => event.status), ["OPEN", "IN_REVIEW", "RETURN_APPROVED", "RETURN_RECEIVED", "RESOLVED"]);
     assert.equal(visibleCase?.returnLines[0].quantity, 1);
     assert.equal(visibleCase?.events[2].note, "Bring the item to the pickup desk.");
+    assert.equal(visibleCase?.events[1].note, null);
+    assert.equal((await staffOrderCase(owner.id, caseId))?.events[2].note, "Internal test review context.");
     assert.equal((await listOrderCases(owner.id, false, 1)).rows.some(row => row.id === caseId), false);
     assert.equal((await db.inventory.findUniqueOrThrow({ where: { variantId } })).available, originalUnits + 1);
     assert.deepEqual(await db.payment.findUniqueOrThrow({ where: { orderId } }), originalPayment);

@@ -54,6 +54,8 @@ export const productFoundationInput = z.strictObject({
   shortDescription: textField(0, 240).nullish(),
   specifications: z.array(specificationField).max(30).optional(),
   keywords: z.array(textField(1, 60)).max(20).optional(),
+  featured: z.boolean().optional(),
+  newArrival: z.boolean().optional(),
   publication: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]),
   attributeValues: attributeValues.optional(),
   options: z.array(option).max(maxProductOptions),

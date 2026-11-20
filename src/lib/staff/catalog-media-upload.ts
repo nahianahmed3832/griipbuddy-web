@@ -1,4 +1,6 @@
 import { privateHeaders, readBody, sameOrigin } from "@/lib/db/http";
+import { scopedCatalogPilotRequested } from "@/lib/catalog/main-admin-config";
+import { scopedCatalogPilotReady } from "@/lib/catalog/scoped-pilot";
 import { getDb } from "@/lib/db/client";
 import { developmentAcceptanceDatabase, localDatabase } from "@/lib/db/local";
 import { consumeQuota, reportFailure } from "@/lib/db/observability";
@@ -7,7 +9,7 @@ import { storeCatalogImage, uploadLimit } from "@/lib/staff/catalog-media";
 import { CatalogWriteError, OperationError } from "@/lib/staff/operation-error";
 
 export function productMediaUploadAvailable() {
-  return localDatabase() !== null;
+  return localDatabase() !== null || developmentAcceptanceDatabase();
 }
 
 export async function requireMainAdminMediaStorage() {
@@ -26,6 +28,9 @@ export async function handleCatalogImageUpload(request: Request, uploadAvailable
   try {
     const staff = await getStaff();
     if (staff?.role !== "OWNER") return fail("Owner access is required.", 403);
+    if (scopedCatalogPilotRequested() && !await scopedCatalogPilotReady()) {
+      return fail("The reviewed catalog pilot is unavailable.", 503);
+    }
     if (!await consumeQuota("image.upload", staff.id, 50, 600)) return fail("Too many uploads. Try again in a few minutes.", 429);
     const data = await readBody(request, uploadLimit);
     if (!data) return fail("Upload a still JPEG, PNG, or WebP image up to 4 MB.", 413);

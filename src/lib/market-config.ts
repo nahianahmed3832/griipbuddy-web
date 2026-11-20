@@ -17,11 +17,20 @@ const payment = z.strictObject({
   enabled: z.boolean(),
 });
 const operationAdapter = z.strictObject({ adapter: z.enum(["manual", "steadfast"]), evidence });
+const storefrontOrigin = z.string().max(255).refine(value => {
+  try {
+    const url = new URL(value);
+    return url.origin === value && (url.protocol === "https:" ||
+      url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname));
+  } catch { return false; }
+}, "Use a canonical storefront origin without a path or credentials.");
 
 const fields = z.strictObject({
   revision: z.int().positive(),
   status: z.enum(["planned", "staging", "active", "paused"]),
   checkoutAuthority: z.enum(["native", "legacy-handoff"]),
+  storefrontOrigins: z.array(storefrontOrigin).max(8).default([]),
+  regionalService: z.strictObject({ id: key, deployment: key.optional() }).optional(),
   languages: z.array(locale).min(1).max(8),
   defaultLocale: locale,
   timeZone,
@@ -48,7 +57,7 @@ export type MarketPaymentMethod = z.output<typeof paymentMethod>;
 export const marketIdInput = z.custom<MarketId>(isMarketId, "Choose a configured market.");
 
 const common = {
-  revision: 1, status: "staging", checkoutAuthority: "native",
+  revision: 1, status: "staging", checkoutAuthority: "native", storefrontOrigins: [] as string[],
   delivery: { coverage: "checkout-policy" },
   fulfillment: [{ adapter: "manual", evidence: "sandbox" }],
   returns: [{ adapter: "manual", evidence: "sandbox" }],
@@ -144,6 +153,9 @@ export function marketConfigurations(raw: string | undefined, production: boolea
     ...overrides[id],
   })])) as Record<MarketId, MarketConfiguration>;
   if (!marketIds.some(id => entries[id].status !== "planned")) throw new Error("Configure at least one browsable market.");
+  if (!unique(marketIds.flatMap(id => entries[id].storefrontOrigins))) {
+    throw new Error("A storefront origin can belong to only one market.");
+  }
   manifestCache = { source, production, entries };
   return entries;
 }
@@ -154,6 +166,36 @@ export function marketConfiguration(marketId: MarketId): MarketConfiguration {
 
 export function isMarketSelectable(value: unknown): value is MarketId {
   return isMarketId(value) && marketConfiguration(value).status !== "planned";
+}
+
+export function marketForStorefrontOrigin(origin: string): MarketId | undefined {
+  return marketIds.find(id => marketConfiguration(id).storefrontOrigins.includes(origin));
+}
+
+/** Resolve an explicit economic scope. A mismatched currency or invalid selector never chooses a fallback. */
+export function resolveMarketScope(marketId: unknown, currency?: unknown): MarketConfiguration | null {
+  if (!isMarketSelectable(marketId)) return null;
+  const config = marketConfiguration(marketId);
+  return currency === undefined || currency === config.currency ? config : null;
+}
+
+export function marketContext(config: MarketConfiguration) {
+  return {
+    id: config.id, revision: config.revision, countryCode: config.countryCode,
+    currency: config.currency, minorDigits: config.minorDigits,
+    defaultLocale: config.defaultLocale, supportedLocales: config.languages,
+    storefront: { pathPrefix: config.pathPrefix, origins: config.storefrontOrigins },
+    status: config.status, regionalService: config.regionalService,
+    capabilities: {
+      browse: config.status !== "planned",
+      checkout: config.checkoutAuthority,
+      paymentMethods: config.payments.filter(payment => payment.enabled).map(({ method, evidence }) => ({ method, evidence })),
+      fulfillment: config.fulfillment,
+      returns: config.returns,
+    },
+    references: { priceList: config.pricing.priceList, deliveryCoverage: config.delivery.coverage,
+      addressAdapter: config.address.adapter, inventory: config.catalog.inventory },
+  };
 }
 
 export function selectableMarkets(): Array<Market & { languages: readonly string[] }> {

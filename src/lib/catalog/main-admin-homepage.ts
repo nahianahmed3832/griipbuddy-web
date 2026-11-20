@@ -15,13 +15,18 @@ import { listCategoryPresentation } from "./category-presentation.ts";
 import { publicCollectionScope } from "./collection-selection.ts";
 import { catalogVariantWhere } from "./connected-public.ts";
 import { previewMarketMatches } from "./homepage-content.ts";
-import { defaultHomepage, homepageInput, homepageLayers, mergeHomepage, parseHomepageScope, scopeKey, type HomepageContentData, type HomepageScope } from "./homepage-contract.ts";
+import {
+  defaultHomepage, homepageInput, homepageLayers, homepageTileImages, mergeHomepage, parseHomepageScope, scopeKey, type HomepageContentData, type HomepageScope,
+} from "./homepage-contract.ts";
+import { editorialInput } from "./editorial-contract.ts";
+import { editorialEditor, updateEditorial, type EditorialScope } from "../staff/editorial.ts";
 import { homepageReadPayload } from "./homepage-layout.ts";
 import { readMainAdminAsset } from "./main-admin-reads.ts";
 
 const scopeInput = z.string().max(60);
 export const mainAdminHomepageReads = [
   z.strictObject({ read: z.literal("homepage-scopes") }),
+  z.strictObject({ read: z.literal("homepage-editorial"), homepageScope: scopeInput }),
   z.strictObject({ read: z.literal("homepage"), homepageScope: scopeInput }),
   z.strictObject({ read: z.literal("homepage-preview"), homepageScope: scopeInput, marketId: marketIdInput,
     locale: textField(1, 35), previewAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/).optional() }),
@@ -32,7 +37,8 @@ export const mainAdminHomepageReads = [
 export const mainAdminHomepageReadInput = z.discriminatedUnion("read", mainAdminHomepageReads);
 type Read = z.infer<typeof mainAdminHomepageReadInput>;
 
-const homepageCommands = ["homepage.save", "homepage.publish", "homepage.restore", "homepage.inherit", "homepage.media"] as const;
+const homepageCommands = ["homepage.save", "homepage.publish", "homepage.restore", "homepage.inherit", "homepage.media",
+  "homepage.editorial-save", "homepage.editorial-publish", "homepage.editorial-withdraw"] as const;
 type Command = typeof homepageCommands[number];
 export function isHomepageCommand(action: string): action is Command {
   return homepageCommands.some(command => command === action);
@@ -41,6 +47,7 @@ export function isHomepageCommand(action: string): action is Command {
 const maxImageEncoded = Math.ceil(uploadLimit / 3) * 4;
 const revisionInput = z.strictObject({ homepageScope: scopeInput, expectedRevision: z.int().min(0) });
 const saveInput = revisionInput.extend({ content: homepageInput });
+const editorialSaveInput = revisionInput.extend({ content: editorialInput });
 const restoreInput = revisionInput.extend({ releaseId: z.uuid() });
 const uploadInput = z.strictObject({ homepageScope: scopeInput, data: z.string().min(4).max(maxImageEncoded),
   contentType: z.enum(["image/jpeg", "image/png", "image/webp"]) });
@@ -54,6 +61,12 @@ async function allowedScope(actor: Actor, key: string) {
     throw new CatalogWriteError("forbidden", "This homepage scope is unavailable for your selected region.");
   }
   return scope;
+}
+
+async function allowedEditorialScope(actor: Actor, key: string): Promise<EditorialScope> {
+  const scope = await allowedScope(actor, key);
+  if (!scope.marketId || !scope.locale) throw new CatalogWriteError("invalid_input", "Choose one market and language for editorial content.");
+  return { marketId: scope.marketId, locale: scope.locale };
 }
 
 function selectablePreviews(scope: HomepageScope) {
@@ -152,6 +165,8 @@ function protectedHero(content: HomepageContentData) {
 
 export async function readMainAdminHomepage(actor: Actor, request: Read) {
   if (request.read === "homepage-scopes") return homepageScopes(actor);
+  if (request.read === "homepage-editorial") return editorialEditor(actor.id, await allowedEditorialScope(actor, request.homepageScope));
+
   if (request.read === "homepage-asset") {
     const permitted = await homepageAllowedMedia(getDb(), actor.owner ? {} : { marketId: actor.marketId }, [request.id]);
     if (!permitted.has(request.id)) throw new CatalogWriteError("not_found", "This homepage image is unavailable.");
@@ -180,23 +195,35 @@ export async function readMainAdminHomepage(actor: Actor, request: Read) {
   const draft = draftContent(row?.draft, request.homepageScope);
   const sections = [...draft.sections, ...inherited];
   const selected = (ids: string[]) => [...new Set(ids)];
+  const tiles = sections.flatMap(section => section.tiles ?? []);
+  const tileIds = (kind: typeof tiles[number]["kind"]) => tiles.filter(tile => tile.kind === kind).map(tile => tile.referenceId);
   const [authors, products, categories, collections] = await Promise.all([
     history.length ? getDb().user.findMany({ where: { id: { in: selected(history.map(item => item.actorId)) } }, select: { id: true, name: true } }) : [],
-    references(scope, "products", "", selected(sections.flatMap(section => [...section.productIds ?? [], ...section.fallbackIds ?? []]))),
-    references(scope, "categories", "", selected(sections.flatMap(section => [...section.categoryIds ?? [], ...section.categoryId ? [section.categoryId] : []]))),
-    references(scope, "collections", "", selected(sections.flatMap(section => section.collectionIds ?? []))),
+    references(scope, "products", "", selected([...tileIds("PRODUCT"), ...sections.flatMap(section => [...section.productIds ?? [], ...section.fallbackIds ?? []])])),
+    references(scope, "categories", "", selected([...tileIds("CATEGORY"), ...sections.flatMap(section => [...section.categoryIds ?? [], ...section.categoryId ? [section.categoryId] : []])])),
+    references(scope, "collections", "", selected([...tileIds("COLLECTION"), ...sections.flatMap(section => section.collectionIds ?? [])])),
   ]);
+  const media = new Map(sections.flatMap(section => section.type === "TILES" ? homepageTileImages(section) : section.bannerImage ? [section.bannerImage] : [])
+    .map(image => [image.src, image]));
   return { revision: row?.revision ?? 0, draft, hasDraft: Boolean(row),
     publishedId: row?.publishedId ?? null, history: history.map(({ id, publishedAt, restoredFrom, actorId }) => ({ id, publishedAt, restoredFrom,
       actorName: authors.find(author => author.id === actorId)?.name ?? null })),
     inheritedSections: inherited.map(section => ({ key: section.key, title: section.title, type: section.type, position: section.position, section })),
     references: { products: products.items, categories: categories.items, collections: collections.items,
-      media: [...new Map(sections.flatMap(section => section.bannerImage ? [[section.bannerImage.src, section.bannerImage] as const] : [])).values()]
-        .map(image => ({ id: image.src, label: image.alt || image.src, image })) },
+      media: [...media.values()].map(image => ({ id: image.src, label: image.alt || image.src, image })) },
   };
 }
 
 export async function runMainAdminHomepage(actor: Actor, action: Command, raw: unknown) {
+  if (action === "homepage.editorial-save") {
+    const input = catalogWriteInput(editorialSaveInput, raw);
+    return updateEditorial(actor.id, await allowedEditorialScope(actor, input.homepageScope), input.expectedRevision, "save", input.content);
+  }
+  if (action === "homepage.editorial-publish" || action === "homepage.editorial-withdraw") {
+    const input = catalogWriteInput(revisionInput, raw);
+    const command = action === "homepage.editorial-publish" ? "publish" : "withdraw";
+    return updateEditorial(actor.id, await allowedEditorialScope(actor, input.homepageScope), input.expectedRevision, command);
+  }
   if (action === "homepage.media") {
     const { homepageScope, data, contentType } = catalogWriteInput(uploadInput, raw);
     const scope = await allowedScope(actor, homepageScope);
@@ -223,7 +250,7 @@ export async function runMainAdminHomepage(actor: Actor, action: Command, raw: u
       if (!isDeepStrictEqual(protectedHero(draft), protectedHero(draftInput.content))) {
         throw new CatalogWriteError("invalid_input", "Edit the top hero in its existing Homepage controls.");
       }
-      return saveHomepageDraft(actor.id, scope, input.expectedRevision, draftInput.content, tx);
+      return saveHomepageDraft(actor.id, scope, input.expectedRevision, draftInput.content, tx, { editor: "main-admin" });
     }
     if (action === "homepage.inherit") {
       if (!isDeepStrictEqual(protectedHero(published), protectedHero(draftContent(null, input.homepageScope)))) {
@@ -239,6 +266,6 @@ export async function runMainAdminHomepage(actor: Actor, action: Command, raw: u
     if (!isDeepStrictEqual(protectedHero(published), protectedHero(candidate))) {
       throw new CatalogWriteError("conflict", "This release would change the top hero. Preserve its hero settings before publishing.");
     }
-    return publishHomepage(actor.id, scope, input.expectedRevision, releaseId, tx);
+    return publishHomepage(actor.id, scope, input.expectedRevision, releaseId, tx, { editor: "main-admin" });
   });
 }

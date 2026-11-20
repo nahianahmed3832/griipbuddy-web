@@ -1,4 +1,4 @@
-# GriipBuddy storefront
+# GriipBuddy storefront and operations
 
 This Next.js app uses PostgreSQL for the catalog, uploaded product images, shared inventory, Bangladesh guest checkout, COD orders, and the packing dashboard. The United States market is open for browsing. Test checkout runs against a dedicated local or staging database.
 
@@ -69,7 +69,7 @@ npx playwright install chromium
 CAPTURE_STOREFRONT_SCREENSHOTS=1 npm run test:e2e:database
 ```
 
-The database browser suite serves the standalone production build on port 3101. The launch journey creates identifiable synthetic catalog and order records. `npm run test:e2e` runs the storefront regressions on port 3100. For a private development environment set `GRIIPBUDDY_STAGE_URL`, `STAGING_USER`, `STAGING_PASSWORD` and the four test staff variables, then run `npm run test:e2e -- tests/launch.spec.ts`.
+The database browser suite serves the standalone production build on port 3101. The launch journey creates identifiable synthetic catalog and order records. `npm run test:e2e` runs the storefront regressions on port 3100. For the hosted browser journey set `GRIIPBUDDY_STAGE_URL`, `STAGING_USER`, `STAGING_PASSWORD` and the four test staff variables, then run `npm run test:e2e -- tests/launch.spec.ts`. See [verification and screenshots](docs/verification.md).
 
 ### Implementation and launch dependencies
 
@@ -81,4 +81,4 @@ The database browser suite serves the standalone production build on port 3101. 
 | Guest pages | `src/app/checkout/`, `src/app/orders/` |
 | Staff authentication and operations | `src/lib/staff/`, `src/app/staff/`, `scripts/create-staff.ts` |
 
-Use the [catalog import guide](docs/catalog-import.md) to prepare catalog data.
+Use the [catalog import guide](docs/catalog-import.md) to prepare real products and the [staging and operations runbook](docs/operations.md) to deploy, operate, back up and recover the app. The [launch verification report](docs/launch-verification.md) records the hosted candidate and remaining launch decisions. The shopper sign-in control is a demonstration. Guest order status and individual staff accounts are operational.

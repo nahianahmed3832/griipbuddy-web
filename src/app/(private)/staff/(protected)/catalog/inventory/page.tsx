@@ -4,7 +4,7 @@ import Link from "next/link";
 import { createDispatchLocationAction, moveSharedStockAction, updateLocationStockAction, updatePriceAction, updateStockAction } from "@/app/staff/actions";
 import { StaffActionForm } from "@/components/staff-actions";
 import { markets } from "@/config/markets";
-import { requireStaff } from "@/lib/staff/access";
+import { requireLegacyCatalogPage } from "@/lib/catalog/main-admin-legacy-page";
 import { listStaffCatalog } from "@/lib/staff/operations";
 import { usesBangladeshCheckout } from "@/lib/commerce/bangladesh-handoff";
 import { inventoryShopId } from "@/lib/commerce/location-inventory";
@@ -58,7 +58,7 @@ function StockLocations({ variant, locations }: { variant: Variant; locations: L
 }
 
 export default async function StaffInventoryPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const staff = await requireStaff();
+  const staff = await requireLegacyCatalogPage();
   if (staff.role !== "OWNER") notFound();
   if (usesBangladeshCheckout()) return <section className="commerce-panel">
     <h1 className="display-type">Inventory and prices</h1>
@@ -67,7 +67,7 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
   </section>;
   const { q } = await searchParams;
   const [variants, { locations, sellers }] = await Promise.all([
-    listStaffCatalog(staff.id, typeof q === "string" ? q : undefined), staffDispatchLocations(staff.id),
+    listStaffCatalog(staff.id, typeof q === "string" ? q : undefined, staff.scopedLegacyPilot), staffDispatchLocations(staff.id),
   ]);
   const sellerNames = new Map(sellers.map(seller => [seller.id, seller.name]));
 

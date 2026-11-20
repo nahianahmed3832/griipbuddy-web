@@ -1,5 +1,5 @@
 import type { Prisma } from "../../generated/prisma/client.ts";
-import type { OrderParcelStatus } from "../../generated/prisma/enums.ts";
+import type { OrderParcelStatus, ParcelTrackingStatus } from "../../generated/prisma/enums.ts";
 
 export const orderParcelStatusLabels: Record<OrderParcelStatus, string> = {
   PLANNED: "Preparing for dispatch",
@@ -9,6 +9,53 @@ export const orderParcelStatusLabels: Record<OrderParcelStatus, string> = {
   REFUSED: "Delivery refused",
   RETURNED: "Returned to dispatch location",
 };
+
+export const parcelPreparationLabels = {
+  PENDING: "Pending pick", PICKED: "Picked", PACKED: "Packed",
+} as const;
+
+export function parcelItemsToShip<T extends { quantity: number; cancelledQuantity: number }>(items: readonly T[]) {
+  return items.flatMap(item => item.quantity > item.cancelledQuantity
+    ? [{ ...item, quantity: item.quantity - item.cancelledQuantity }] : []);
+}
+
+export const parcelTrackingStatusLabels: Record<ParcelTrackingStatus, string> = {
+  PREPARING: "Preparing",
+  HANDED_TO_CARRIER: "Handed to carrier",
+  IN_TRANSIT: "In transit",
+  OUT_FOR_DELIVERY: "Out for delivery",
+  DELIVERED: "Delivered",
+  DELIVERY_EXCEPTION: "Delivery exception",
+  RETURNED: "Returned",
+};
+
+const trackingTransitions: Record<ParcelTrackingStatus, readonly ParcelTrackingStatus[]> = {
+  PREPARING: ["HANDED_TO_CARRIER", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_EXCEPTION", "RETURNED"],
+  HANDED_TO_CARRIER: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_EXCEPTION", "RETURNED"],
+  IN_TRANSIT: ["OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_EXCEPTION", "RETURNED"],
+  OUT_FOR_DELIVERY: ["DELIVERED", "DELIVERY_EXCEPTION", "RETURNED"],
+  DELIVERY_EXCEPTION: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "RETURNED"],
+  DELIVERED: [],
+  RETURNED: [],
+};
+
+export function canAdvanceParcelTracking(from: ParcelTrackingStatus, to: ParcelTrackingStatus) {
+  return from === to || trackingTransitions[from].includes(to);
+}
+
+export function normalizedParcelTrackingStatus(status: OrderParcelStatus): ParcelTrackingStatus {
+  if (status === "PLANNED") return "PREPARING";
+  if (status === "REFUSED") return "DELIVERY_EXCEPTION";
+  return status;
+}
+
+export function normalizedParcelEventStatus(status: OrderParcelStatus): ParcelTrackingStatus {
+  return status === "IN_TRANSIT" ? "HANDED_TO_CARRIER" : normalizedParcelTrackingStatus(status);
+}
+
+export function currentParcelTrackingStatus(parcel: { status: OrderParcelStatus; trackingStatus?: ParcelTrackingStatus | null }) {
+  return parcel.trackingStatus ?? normalizedParcelTrackingStatus(parcel.status);
+}
 
 const nextStatuses = {
   PLANNED: [],
@@ -39,9 +86,36 @@ export function parcelOrderLabel(parcels: readonly { status: OrderParcelStatus }
   return "Shipped";
 }
 
-export const shopperParcelSummary = { select: { status: true } } satisfies Prisma.Order$parcelsArgs;
+export const shipmentSummaryLabels = {
+  PREPARING: "Preparing for dispatch", PARTIALLY_SHIPPED: "Partially shipped", SHIPPED: "Shipped",
+  PARTIALLY_DELIVERED: "Partially delivered", DELIVERED: "Delivered", DELIVERY_EXCEPTION: "Delivery issue",
+  PARTIAL_DELIVERY_EXCEPTION: "Partially delivered · delivery issue", RETURNED: "Returned to dispatch locations",
+} as const;
+export type ShipmentSummaryStatus = keyof typeof shipmentSummaryLabels;
+
+export function shipmentSummary(rows: readonly { status: ParcelTrackingStatus; count: number }[]) {
+  const counts = { preparing: 0, dispatched: 0, delivered: 0, exceptions: 0, returned: 0 };
+  for (const { status, count } of rows) {
+    switch (status) {
+      case "PREPARING": counts.preparing += count; break;
+      case "DELIVERED": counts.delivered += count; break;
+      case "DELIVERY_EXCEPTION": counts.exceptions += count; break;
+      case "RETURNED": counts.returned += count; break;
+      default: counts.dispatched += count; break;
+    }
+  }
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  const status: ShipmentSummaryStatus = total === counts.preparing ? "PREPARING"
+    : total === counts.delivered ? "DELIVERED" : total === counts.returned ? "RETURNED"
+      : counts.exceptions || counts.returned ? (counts.delivered ? "PARTIAL_DELIVERY_EXCEPTION" : "DELIVERY_EXCEPTION")
+        : counts.delivered ? "PARTIALLY_DELIVERED" : counts.preparing ? "PARTIALLY_SHIPPED" : "SHIPPED";
+  return { status, total, ...counts };
+}
+
+export const shopperParcelSummary = { where: { cancelledAt: null }, select: { status: true } } satisfies Prisma.Order$parcelsArgs;
 
 export const shopperParcelHistory = {
+  where: { cancelledAt: null },
   orderBy: [{ locationName: "asc" }, { id: "asc" }],
   select: {
     id: true,
@@ -51,27 +125,48 @@ export const shopperParcelHistory = {
     trackingReference: true,
     source: true,
     statusUpdatedAt: true,
+    trackingStatus: true,
+    estimatedDeliveryAt: true,
+    trackingSyncedAt: true,
     receivedAt: true,
     items: {
       orderBy: { orderItemId: "asc" },
-      select: { quantity: true, orderItem: { select: { id: true, productName: true, variantName: true, sku: true } } },
+      select: { quantity: true, cancelledQuantity: true, orderItem: { select: { id: true, productName: true, variantName: true, sku: true } } },
     },
     events: {
       orderBy: [{ recordedAt: "asc" }, { status: "asc" }],
       select: { status: true, recordedAt: true },
+    },
+    trackingObservations: {
+      where: { applied: true, status: { not: null } }, orderBy: [{ occurredAt: "desc" }, { id: "desc" }], take: 25,
+      select: { id: true, status: true, occurredAt: true },
     },
   },
 } satisfies Prisma.Order$parcelsArgs;
 
 export const staffParcelHistory = {
   ...shopperParcelHistory,
+  where: undefined,
   select: {
     ...shopperParcelHistory.select,
     locationId: true,
+    cancelledAt: true,
+    preparationState: true,
+    preparationEvents: { orderBy: [{ recordedAt: "desc" }, { operationId: "desc" }], take: 25,
+      select: { operationId: true, actorId: true, state: true, recordedAt: true } },
     returnDisposition: true,
+    trackingOccurredAt: true,
+    trackingAttemptAt: true,
+    trackingSyncError: true,
+    trackingRevision: true,
     events: {
       ...shopperParcelHistory.select.events,
-      select: { ...shopperParcelHistory.select.events.select, evidence: true },
+      select: { ...shopperParcelHistory.select.events.select, evidence: true, reason: true, actorId: true },
+    },
+    trackingObservations: {
+      orderBy: [{ recordedAt: "desc" }, { id: "desc" }], take: 25,
+      select: { id: true, status: true, source: true, actorId: true, reason: true,
+        error: true, occurredAt: true, recordedAt: true, applied: true },
     },
   },
 } satisfies Prisma.Order$parcelsArgs;

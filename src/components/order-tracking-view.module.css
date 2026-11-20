@@ -1,0 +1,84 @@
+.summary, .package {
+  display: grid;
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+
+.summary > p, .package > p {
+  margin: 0;
+}
+
+.heading, .actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.heading {
+  justify-content: space-between;
+}
+
+.status {
+  border-radius: 999px;
+  background: var(--color-plum-soft);
+  color: var(--color-plum);
+  padding: 4px 11px;
+  font-size: .82rem;
+  font-weight: 800;
+}
+
+.status[data-exception] {
+  background: #fff0db;
+  color: #783814;
+}
+
+.details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 175px), 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.details:empty {
+  display: none;
+}
+
+.notice:empty {
+  position: absolute;
+}
+
+.details dt, .items span, .timeline span {
+  color: var(--color-muted);
+  font-size: .85rem;
+}
+
+.details dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.package h3 {
+  font-size: .93rem;
+  font-weight: 800;
+  margin-bottom: 7px;
+}
+
+.items, .timeline {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-inline-start: 1.3em;
+}
+
+.items span, .timeline span {
+  display: block;
+}
+
+.package > a, .more {
+  justify-self: start;
+}
+
+.actions button[aria-disabled="true"], .more[aria-disabled="true"] {
+  cursor: wait;
+}

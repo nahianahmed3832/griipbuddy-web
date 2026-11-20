@@ -1,0 +1,7 @@
+services:
+  app:
+    networks: [merchandising]
+networks:
+  merchandising:
+    external: true
+    name: griipbuddy-merchandising-stage

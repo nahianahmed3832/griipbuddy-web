@@ -60,9 +60,12 @@ test("recommendation drafts inherit, publish and roll back with market authoriza
     await publishHomepage(staffId, bd, 5, original.publishedId!);
     assert.equal((await recommendationConfig("bd", "en-BD")).behavioralEnabled, false);
     assert.equal(mergeHomepage((await publishedHomepage("bd", "en-BD")).layers).find(section => section.key === "hero")?.title, "BD policy fixture");
-    const audits = await db.auditEvent.findMany({ where: { target: keys[1], actorId: staffId, action: "MERCHANDISING_REVIEW" },
+    const audits = await db.auditEvent.findMany({ where: { target: keys[1], actorId: staffId, action: "MERCHANDISING_REVIEW",
+      changes: { path: ["step"], string_starts_with: "recommendation-" } },
       orderBy: { createdAt: "asc" } });
-    assert.deepEqual(audits.map(row => (row.changes as { step: string }).step), [
+    const recommendationSteps = audits.map(row => (row.changes as { step: string }).step)
+      .filter(step => step.startsWith("recommendation-"));
+    assert.deepEqual(recommendationSteps, [
       "recommendation-draft-saved", "recommendation-policy-published", "recommendation-draft-saved",
       "recommendation-policy-published", "recommendation-policy-restored",
     ]);

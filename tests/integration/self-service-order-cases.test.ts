@@ -7,7 +7,7 @@ import { reviewCheckout, submitCheckout } from "../../src/lib/commerce/orders.ts
 import { getDb } from "../../src/lib/db/client.ts";
 import { requireLocalDatabase } from "../../src/lib/db/local.ts";
 import { caseCommand } from "../../src/lib/marketplace/case-policy.ts";
-import { buyerOrderCase, executeOrderCase, returnItemsForPurchase, staffOrderCase } from "../../src/lib/marketplace/cases.ts";
+import { buyerOrderCase, caseOpenReceipt, executeOrderCase, returnItemsForPurchase, staffOrderCase } from "../../src/lib/marketplace/cases.ts";
 import { advanceFulfillment, cancelOrder, collectCash } from "../../src/lib/staff/operations.ts";
 
 requireLocalDatabase("griipbuddy_test");
@@ -167,6 +167,30 @@ async function checkItemRefund(t: TestContext, kind: "RETURN" | "EXCHANGE") {
 
 test("return refund approval follows inspection and uses the purchased item and tax to cap the amount", t => checkItemRefund(t, "RETURN"));
 test("refund approval for an inspected exchange prevents replacement dispatch", t => checkItemRefund(t, "EXCHANGE"));
+
+test("a purchased-line request can be recovered after closure with its original scoped request ID", async t => {
+  const { owner, buyer, orderId, item, startingStock } = await purchase(t);
+  await dispatch(owner.id, orderId);
+  await advanceFulfillment(owner.id, orderId, { next: "DELIVERED" });
+  const requestId = randomUUID();
+  const request = { action: "open" as const, orderId, kind: "RETURN" as const, note, requestId,
+    lines: [{ orderItemId: item.id, quantity: 1 }] };
+  assert.equal(await caseOpenReceipt(orderId, buyer.id, requestId), null);
+  const [first, repeated] = await Promise.all([executeOrderCase(buyer, request), executeOrderCase(buyer, request)]);
+  assert.deepEqual(first, repeated);
+  assert.deepEqual(await caseOpenReceipt(orderId, buyer.id, requestId), first);
+  const outsider = { id: randomUUID(), role: "shopper" } as const;
+  assert.equal(await caseOpenReceipt(orderId, outsider.id, requestId), null);
+  await assert.rejects(executeOrderCase(outsider, request), { status: 404 });
+  await executeOrderCase(buyer, { action: "withdraw", caseId: first.id, revision: 0 });
+  assert.equal((await buyerOrderCase(buyer.id, orderId, first.id))?.status, "WITHDRAWN");
+  assert.deepEqual(await executeOrderCase(buyer, request), first);
+  await assert.rejects(executeOrderCase(buyer, { ...request, lines: [{ orderItemId: item.id, quantity: 2 }] }), { status: 409 });
+  assert.equal(await db.orderCase.count({ where: { orderId } }), 1);
+  assert.equal(await available(), startingStock - 2);
+  const next = await executeOrderCase(buyer, { ...request, requestId: randomUUID() });
+  assert.notEqual(next.id, first.id);
+});
 
 test("prepaid cancellation records refund approval and leaves payment pending settlement", async t => {
   const { owner, buyer, orderId, startingStock } = await purchase(t);

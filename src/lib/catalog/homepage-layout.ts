@@ -4,8 +4,9 @@ import { reportFailure } from "../db/observability.ts";
 import type { MarketConfiguration } from "../market-config.ts";
 import { hybridDemoMode } from "../release-config.ts";
 import { marketHasDelivery } from "../commerce/orders.ts";
-import { activeHomepageSections, type HomepageSection } from "./homepage-contract.ts";
-import { homepageMediaSources, publishedHomepage } from "./homepage-content.ts";
+import { activeHomepageSections, homepageTileImages, type HomepageSection, type HomepageTileLayout } from "./homepage-contract.ts";
+import { homepageMediaSources, homepageTileUploadSources, publishedHomepage } from "./homepage-content.ts";
+import { homepageTileDestinations, resolveHomepageTiles, type ResolvedHomepageTile } from "./homepage-tiles.ts";
 import { recommendationConfig } from "./recommendation-config.ts";
 import { loadRecommendations } from "./recommendations.ts";
 import { newestFirst, productCards, type ProductCardData } from "./listing.ts";
@@ -21,6 +22,7 @@ import type { CatalogImage, Collection, Department } from "./types.ts";
 
 export { visibleHomepageSection } from "./homepage-contract.ts";
 export { eligibleHomeProducts } from "./homepage-offers.ts";
+export type { ResolvedHomepageTile } from "./homepage-tiles.ts";
 
 type Panel = {
   section: HomepageSection;
@@ -28,6 +30,8 @@ type Panel = {
   departments?: readonly Department[];
   collections?: readonly Collection[];
   spotlight?: Department;
+  tileLayout?: HomepageTileLayout;
+  tiles?: readonly ResolvedHomepageTile[];
   recommendations?: readonly { card: ProductCardData; departmentId: string; similarEligible?: boolean }[];
   evidenceFallback?: boolean;
   recommendationVersion?: string;
@@ -54,17 +58,22 @@ export async function homepageLayout(market: MarketConfiguration, options: Homep
     marketHasDelivery(marketId),
   ]);
   const active = activeHomepageSections(config.layers, at, market.timeZone);
-  const imageSources = active.flatMap(section => section.bannerImage?.src ?? []);
-  const needsCategories = active.some(section => section.type === "DEPARTMENTS" || section.type === "CATEGORY_SPOTLIGHT" ||
+  const catalogTiles = active.flatMap(section => section.tiles ?? []);
+  const tileImageSources = active.flatMap(section => homepageTileImages(section).map(image => image.src));
+  const bannerImageSources = active.flatMap(section => section.type === "TILES" ? [] : section.bannerImage?.src ?? []);
+  const needsCategories = catalogTiles.some(tile => tile.kind === "CATEGORY") ||
+    active.some(section => section.type === "DEPARTMENTS" || section.type === "CATEGORY_SPOTLIGHT" ||
     section.link?.href.startsWith("/departments/"));
-  const needsCollections = active.some(section => section.type === "COLLECTIONS" || section.type === "COLLECTION" ||
+  const needsCollections = catalogTiles.some(tile => tile.kind === "COLLECTION") ||
+    active.some(section => section.type === "COLLECTIONS" || section.type === "COLLECTION" ||
     section.link?.href.startsWith("/collections/"));
-  const [products, tree, collections, catalogMedia, homepageMedia] = await Promise.all([
+  const [products, tree, collections, catalogMedia, homepageMedia, tileUploads] = await Promise.all([
     marketCoverage ? homepageProducts(db, market, at) : [],
     needsCategories ? connectedCategoryTree(navigation, db) : null,
     needsCollections ? catalog.listCollections(marketId) : [],
-    availableMarketEditorialMedia(imageSources, marketId, db),
-    homepageMediaSources(imageSources, db),
+    availableMarketEditorialMedia([...bannerImageSources, ...tileImageSources], marketId, db),
+    homepageMediaSources(bannerImageSources, db),
+    homepageTileUploadSources(tileImageSources, marketId, locale, db),
   ]);
   const departments = tree ? flatCategories(tree.categories) : [];
   const departmentById = new Map(departments.map(category => [category.id, category]));
@@ -77,10 +86,13 @@ export async function homepageLayout(market: MarketConfiguration, options: Homep
   const cardsById = new Map(cards.map(card => [card.id, card]));
   const productById = new Map(eligible.map(product => [product.id, product]));
   const collectionIds = collections.filter(collection => !collection.selection).map(collection => collection.id);
-  const members = collectionIds.length && cards.length ? await db.collectionProduct.findMany({
-    where: { collectionId: { in: collectionIds }, productId: { in: cards.map(card => card.id) } },
-    select: { collectionId: true, productId: true }, orderBy: orderedCollectionProducts,
-  }) : [];
+  const [members, tileDestinations] = await Promise.all([
+    collectionIds.length && cards.length ? db.collectionProduct.findMany({
+      where: { collectionId: { in: collectionIds }, productId: { in: cards.map(card => card.id) } },
+      select: { collectionId: true, productId: true }, orderBy: orderedCollectionProducts,
+    }) : [],
+    catalogTiles.length ? homepageTileDestinations(db, marketId, catalogTiles, departmentViews, collections) : null,
+  ]);
   const cardsByCollection = new Map<string, ProductCardData[]>();
   for (const { collectionId, productId } of members) {
     const group = cardsByCollection.get(collectionId) ?? [];
@@ -107,13 +119,13 @@ export async function homepageLayout(market: MarketConfiguration, options: Homep
   const similar = cards.map(card => ({ card, departmentId: productById.get(card.id)!.departmentId }));
   const displayed = new Set<string>();
   const panels: Panel[] = [];
+  const editorialImage = (uploads: ReadonlySet<string>, image?: CatalogImage) => image && (uploads.has(image.src)
+    ? { ...image, src: `${image.src}?${new URLSearchParams({ market: marketId, lang: locale })}` }
+    : marketEditorialImage(image, catalogMedia, marketId));
   for (const configured of active) {
     if (options.editorialOnly && (["BESTSELLERS", "TRENDING", "RECENTLY_VIEWED", "RELATED"] as const)
       .some(type => configured.type === type)) continue;
-    const image = configured.bannerImage;
-    const bannerImage = image && (homepageMedia.has(image.src)
-      ? { ...image, src: `${image.src}?${new URLSearchParams({ market: marketId, lang: locale })}` }
-      : marketEditorialImage(image, catalogMedia, marketId));
+    const bannerImage = editorialImage(configured.type === "TILES" ? tileUploads : homepageMedia, configured.bannerImage);
     const section = { ...configured, bannerImage, link: undefined as HomepageSection["link"] };
     if (configured.link) {
       const { href, label } = configured.link;
@@ -123,6 +135,18 @@ export async function homepageLayout(market: MarketConfiguration, options: Homep
       if (group === "collections" && collectionBySlug.has(slug) || group === "products" && productSlugs.has(slug) || group === "shop" || group === "gifts") {
         section.link = { label, href: catalogBrowseHref(href, context) };
       }
+    }
+    if (section.type === "BENEFITS") {
+      if (section.benefits?.length) panels.push({ section });
+      continue;
+    }
+    if (section.type === "BANNER" && section.key !== "hero" && !section.bannerImage) continue;
+    if (section.type === "TILES") {
+      if (!tileDestinations || !section.tileLayout || !section.tiles) continue;
+      const tiles = resolveHomepageTiles(section.tiles, tileDestinations, cardsById, displayed, context,
+        asset => editorialImage(tileUploads, asset));
+      if (tiles.length) panels.push({ section, tileLayout: section.tileLayout, tiles });
+      continue;
     }
     const rowLimit = section.type === "BANNER" ? Math.min(section.limit ?? 2, 2) : section.limit ?? 6;
     if (section.type === "DEPARTMENTS") {
@@ -220,8 +244,8 @@ export async function homepageReadPayload(market: MarketConfiguration, options: 
   });
   return {
     marketId: market.id, locale: market.locale, currency: market.currency, homepageConfig: measurement,
-    sections: panels.filter(({ section }) => section.type !== "BANNER").map(({ section, cards, departments, collections, spotlight }) => ({
-      id: section.key, type: section.type, title: section.title, description: section.description ?? null, position: section.position,
+    sections: panels.filter(({ section }) => section.key !== "hero").map(({ section, cards, departments, collections, spotlight, tileLayout, tiles }) => ({
+      id: section.key, type: section.type, benefits: section.benefits, title: section.title, description: section.description ?? null, position: section.position,
       enabled: true as const, image: section.bannerImage ? image(section.bannerImage) : null,
       destination: section.link ? { ...section.link, href: storefrontPath(section.link.href) } : null,
       startsLocal: section.startsLocal ?? null, endsLocal: section.endsLocal ?? null,
@@ -235,6 +259,10 @@ export async function homepageReadPayload(market: MarketConfiguration, options: 
         id, slug, name, description, image: asset ? image(asset) : null,
         href: storefrontPath(catalogBrowseHref(`/collections/${encodeURIComponent(slug)}`, context)),
       })),
+      ...(tileLayout && tiles && { tileLayout, tiles: tiles.map(tile => ({
+        ...tile, href: storefrontPath(tile.href), image: image(tile.image),
+        ...(tile.mobileImage && { mobileImage: image(tile.mobileImage) }),
+      })) }),
     })),
   };
 }

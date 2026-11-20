@@ -1,0 +1,19 @@
+.feed-picker {
+  min-inline-size: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: .6rem .85rem;
+}
+.feed-picker label {
+  align-items: baseline;
+  display: flex;
+  gap: .7rem;
+  min-height: 36px;
+  padding: .35rem 0;
+  overflow-wrap: anywhere;
+}
+.feed-picker label input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 0;
+}

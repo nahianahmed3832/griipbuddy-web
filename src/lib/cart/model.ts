@@ -1,10 +1,14 @@
-import type { Market } from "../../config/markets.ts";
+import type { Market, MarketId } from "../../config/markets.ts";
 import type { CartCatalogItem } from "../catalog/types.ts";
 import { personalizationAvailable, personalizationText } from "../catalog/personalization.ts";
 
 export const MAX_CART_LINES = 60;
 export const MAX_QUANTITY = 99;
 export const CART_STORAGE_KEY = "griipbuddy:storefront:cart:v1";
+export const cartMarketHeader = "x-griipbuddy-checkout-market";
+export function marketCartStorageKey(marketId: MarketId, basePath = "") {
+  return `${CART_STORAGE_KEY}${basePath}:market:${marketId}`;
+}
 export type CartItemReference = { variantId: string; offerId?: string };
 export type CartItem = CartItemReference & { quantity: number; personalization?: string };
 export type CheckoutCartItem = CartItem & { cartOfferId?: string; cartVariantId?: string };

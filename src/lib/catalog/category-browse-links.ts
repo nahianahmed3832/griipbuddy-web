@@ -1,20 +1,14 @@
-import type { MarketId } from "../../config/markets.ts";
-import { localizedStorePath, productLandingPath } from "../../config/regional-path.ts";
+import { productLandingPath } from "../../config/regional-path.ts";
 import { deviceLookupKey } from "./device-fitment.ts";
 import type { SearchParams } from "./listing.ts";
+import type { CatalogBrowseContext } from "./catalog-browse-href.ts";
 
-type Context = { id: MarketId; locale: string; regional: boolean };
+export { catalogBrowseHref } from "./catalog-browse-href.ts";
+
 type SelectedOption = { key: string; value: string; optionId: string | null; valueId: string | null };
 
-export function catalogBrowseHref(path: string, context: Context, query = new URLSearchParams()) {
-  const params = new URLSearchParams(query);
-  params.set("market", context.id);
-  params.set("lang", context.locale);
-  return `${context.regional ? localizedStorePath(path, context.id) : path}?${params}`;
-}
-
 export function catalogProductHref(product: { slug: string; matchedVariantId: string | null; knownOptions: readonly SelectedOption[] },
-  context: Context, categoryId?: string) {
+  context: CatalogBrowseContext, categoryId?: string) {
   const base = productLandingPath(product.slug, context.id, context.regional, product.matchedVariantId ?? undefined);
   const [path, query] = base.split("?");
   const params = new URLSearchParams(query);

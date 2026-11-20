@@ -1,12 +1,14 @@
-import { isMarketId, marketIds, type MarketId } from "../../config/markets.ts";
+import { marketIds, type MarketId } from "../../config/markets.ts";
 import { isOperatingDatabase } from "../db/local.ts";
-import { marketConfiguration, marketPayment, type MarketEvidence, type MarketPaymentMethod } from "../market-config.ts";
+import { marketConfiguration, marketForStorefrontOrigin, marketPayment, resolveMarketScope, type MarketEvidence, type MarketPaymentMethod } from "../market-config.ts";
 
 export const checkoutMarketHeader = "x-griipbuddy-checkout-market";
 
-export function checkoutDestination(headers: Headers, selected: MarketId): MarketId | null {
+export function checkoutDestination(headers: Headers, selected: MarketId, origin?: string): MarketId | null {
   const requested = headers.get(checkoutMarketHeader);
-  return requested === null ? selected : isMarketId(requested) ? requested : null;
+  const routed = origin ? marketForStorefrontOrigin(origin) : undefined;
+  if (routed && requested !== null && requested !== routed) return null;
+  return resolveMarketScope(requested ?? routed ?? selected)?.id ?? null;
 }
 
 export function operatingEvidence(): MarketEvidence {

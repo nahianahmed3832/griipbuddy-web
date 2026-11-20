@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { OrderBreakdown, PurchasedItems } from "@/components/order-summary";
 import { PrintOrderDocument } from "@/components/staff-actions";
 import { markets } from "@/config/markets";
+import { storefrontPath } from "@/config/storefront-path";
 import { guestCookie, readGuestKey } from "@/lib/commerce/guest";
 import { orderLabels, paymentLabels, paymentMethodLabels } from "@/lib/commerce/labels";
 import { guestOrder } from "@/lib/commerce/orders";
@@ -25,6 +26,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
     <div className="commerce-intro">
       <div className="order-invoice__controls screen-only">
         <Link className="text-link" href={`/orders/${order.id}`}>Back to your order</Link>
+        <a className="button button--outline" href={storefrontPath(`/api/orders/${order.id}/invoice`)} download>Download invoice</a>
         <PrintOrderDocument label="Print invoice" />
       </div>
       <h1 className="display-type">GriipBuddy order invoice</h1>

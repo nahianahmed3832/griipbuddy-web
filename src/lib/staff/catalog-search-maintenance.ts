@@ -8,7 +8,7 @@ import { marketConfiguration } from "../market-config.ts";
 import { authorize } from "./operations.ts";
 import { CatalogWriteError, catalogWriteInput } from "./operation-error.ts";
 
-const target = "catalog-search-index-maintenance";
+const target = "search:catalog-index-maintenance";
 const action = "MERCHANDISING_REVIEW";
 type SearchOperation = "reconcile" | "rebuild";
 

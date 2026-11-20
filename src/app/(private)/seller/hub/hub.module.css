@@ -1,0 +1,11 @@
+.tabs, .recordActions { display:flex; flex-wrap:wrap; gap:8px; }
+.tabs a[aria-current="page"] { color:var(--seller-accent); border-color:var(--seller-accent); background:var(--seller-accent-soft); }
+.rows, .posts { list-style:none; margin:0; padding:0; }
+.rows > li { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:12px 0; border-block-end:1px solid var(--seller-line); }
+.rows > li:last-child { border:0; }
+.rows a { margin-inline-end:auto; overflow-wrap:anywhere; }
+.posts > li { margin-block-end:8px; padding:12px; border:1px solid var(--seller-line); border-radius:8px; }
+.posts time { margin-inline-start:8px; }
+.posts p, .body { white-space:pre-wrap; overflow-wrap:anywhere; }
+.posts p { margin:6px 0 0; }
+.recordActions { margin-block:12px; }

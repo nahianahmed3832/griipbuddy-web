@@ -4,7 +4,7 @@ import { after, test } from "node:test";
 import "../../scripts/load-env.ts";
 import { getDb } from "../../src/lib/db/client.ts";
 import { requireLocalDatabase } from "../../src/lib/db/local.ts";
-import { acceptPrepaidCallback, recoverPrepaid, reviewPrepaid, startPrepaid } from "../../src/lib/commerce/prepaid-checkout.ts";
+import { acceptPrepaidCallback, PrepaidCallbackIdentityError, recoverPrepaid, reviewPrepaid, startPrepaid } from "../../src/lib/commerce/prepaid-checkout.ts";
 import { reviewCheckout } from "../../src/lib/commerce/orders.ts";
 import { commerceOutcomeSelect, failedPaymentAttempts, projectCommerceOutcomes } from "../../src/lib/measurement/outcomes.ts";
 import { listStaffOrders } from "../../src/lib/staff/operations.ts";
@@ -29,8 +29,9 @@ test("Bangladesh prepaid prices the extra discount, verifies payment before pack
     where: { marketId: "bd", enabled: true, codEligible: true, chargeMinor: { not: null } },
   });
   const initialPayment = { status: "PENDING", value: "" };
-  const gateway = new Map<string, typeof initialPayment>();
+  const gateway = new Map<string, typeof initialPayment & { store?: string; currency?: string }>();
   let gatewayCalls = 0;
+  let holdOpening: (() => Promise<void>) | undefined;
   const provider = t.mock.method(globalThis, "fetch", async (request: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(request));
     assert.equal(url.origin, "https://sandbox.sslcommerz.com");
@@ -44,13 +45,14 @@ test("Bangladesh prepaid prices the extra discount, verifies payment before pack
       assert.ok(id);
       gatewayCalls++;
       gateway.set(id, { ...initialPayment, value: body.get("total_amount") ?? "" });
+      if (holdOpening) await holdOpening();
       return Response.json({ status: "SUCCESS", GatewayPageURL: `https://sandbox.sslcommerz.com/gw/test?session=${id}` });
     }
     const id = url.searchParams.get("tran_id") ?? url.searchParams.get("val_id");
     const transaction = id ? gateway.get(id) : undefined;
     const record = transaction && {
       status: transaction.status, tran_id: id, val_id: id, amount: transaction.value,
-      currency: "BDT", currency_type: "BDT", risk_level: "0", bank_tran_id: `BANK${id}`,
+      store_id: transaction.store ?? "test-fixture", currency_type: transaction.currency ?? "BDT", risk_level: "0", bank_tran_id: `BANK${id}`,
     };
     if (url.pathname.endsWith("validationserverAPI.php")) return Response.json(record);
     return Response.json({ APIConnect: "DONE", element: record ? [record] : [] });
@@ -114,7 +116,14 @@ test("Bangladesh prepaid prices the extra discount, verifies payment before pack
     gateway.set(session.providerId, { status: "VALID", value: "10.00" });
     assert.equal(await acceptPrepaidCallback(session.providerId, session.providerId), review.attemptId);
     assert.equal(await db.order.count({ where: { attemptId: review.attemptId } }), 0);
-    gateway.set(session.providerId, { status: "VALIDATED", value: (review.quote.totalMinor / 100).toFixed(2) });
+    const value = (review.quote.totalMinor / 100).toFixed(2);
+    gateway.set(session.providerId, { status: "VALIDATED", value, currency: "USD" });
+    assert.equal(await acceptPrepaidCallback(session.providerId, session.providerId), review.attemptId);
+    assert.equal(await db.order.count({ where: { attemptId: review.attemptId } }), 0);
+    gateway.set(session.providerId, { status: "VALIDATED", value, store: "different-store" });
+    await assert.rejects(acceptPrepaidCallback(session.providerId, session.providerId), PrepaidCallbackIdentityError);
+    gateway.set(session.providerId, { status: "VALIDATED", value });
+    await assert.rejects(acceptPrepaidCallback(session.providerId, "other-validation-id"), PrepaidCallbackIdentityError);
     const [paid, duplicate] = await Promise.all([recoverPrepaid(review.attemptId, guestKey), recoverPrepaid(review.attemptId, guestKey)]);
     assert.equal(paid.kind, "placed");
     assert.deepEqual(paid, duplicate);
@@ -122,6 +131,12 @@ test("Bangladesh prepaid prices the extra discount, verifies payment before pack
     assert.equal(order.payment?.method, "SSLCOMMERZ");
     assert.equal(order.payment?.status, "PAID");
     assert.equal(order.prepaidDiscountMinor, 90);
+    assert.equal(await db.providerPaymentEvent.count({ where: {
+      attemptId: review.attemptId, eventType: "PAYMENT_VERIFIED", outcome: "PAID",
+    } }), 1);
+    gateway.set(session.providerId, { status: "FAILED", value: "" });
+    assert.equal(await acceptPrepaidCallback(session.providerId), review.attemptId);
+    assert.equal((await db.payment.findUniqueOrThrow({ where: { orderId: order.id } })).status, "PAID");
     const source = await db.order.findUniqueOrThrow({ where: { id: order.id }, select: commerceOutcomeSelect });
     assert.deepEqual(projectCommerceOutcomes(source, new Date()).map(event => event.kind), ["ORDER_ACCEPTED", "PAYMENT_PAID"]);
     assert.equal(await stock(), 2);
@@ -137,6 +152,56 @@ test("Bangladesh prepaid prices the extra discount, verifies payment before pack
     assert.equal(await db.order.count({ where: { attemptId: next.review.attemptId } }), 0);
     assert.equal((await db.prepaidCheckout.findUniqueOrThrow({ where: { attemptId: next.review.attemptId } })).providerFailedAt, null);
     assert.ok(provider.mock.callCount() >= 7);
+
+    const unused = await place({ ...body, couponCode: undefined });
+    assert.equal((await recoverPrepaid(unused.review.attemptId, "other-guest")).kind, "abandoned");
+    assert.equal((await db.checkoutAttempt.findUniqueOrThrow({ where: { id: unused.review.attemptId } })).abandonedAt, null);
+    assert.equal((await recoverPrepaid(unused.review.attemptId, guestKey)).kind, "abandoned");
+    assert.ok((await db.checkoutAttempt.findUniqueOrThrow({ where: { id: unused.review.attemptId } })).abandonedAt);
+    const providerCallsBeforeRetry = gatewayCalls;
+    assert.equal((await startPrepaid(unused.input, guestKey, false)).kind, "conflict");
+    assert.equal(gatewayCalls, providerCallsBeforeRetry);
+    assert.equal(await db.prepaidCheckout.count({ where: { attemptId: unused.review.attemptId } }), 0);
+    assert.equal(await stock(), 2);
+
+    const unbound = await place({ ...body, couponCode: undefined });
+    await db.checkoutAttempt.update({ where: { id: unbound.review.attemptId }, data: { paymentMethod: null } });
+    assert.equal((await startPrepaid(unbound.input, guestKey, false)).kind, "conflict");
+    assert.equal(gatewayCalls, providerCallsBeforeRetry);
+
+    const starting = await place({ ...body, couponCode: undefined });
+    let entered!: () => void;
+    let finishOpening!: () => void;
+    const waitForProvider = new Promise<void>(resolve => { entered = resolve; });
+    const waitForRelease = new Promise<void>(resolve => { finishOpening = resolve; });
+    holdOpening = () => { entered(); return waitForRelease; };
+    const opening = startPrepaid(starting.input, guestKey, false);
+    try {
+      await Promise.race([waitForProvider, opening.then(() => { throw new Error("Expected a provider request."); })]);
+      assert.equal((await recoverPrepaid(starting.review.attemptId, guestKey)).kind, "pending");
+      assert.equal((await db.checkoutAttempt.findUniqueOrThrow({ where: { id: starting.review.attemptId } })).abandonedAt, null);
+      assert.equal((await startPrepaid(starting.input, guestKey, false)).kind, "pending");
+    } finally {
+      finishOpening();
+      holdOpening = undefined;
+    }
+    assert.equal((await opening).kind, "continue");
+    assert.equal(gatewayCalls, providerCallsBeforeRetry + 1);
+    const opened = await db.prepaidCheckout.findUniqueOrThrow({ where: { attemptId: starting.review.attemptId } });
+    gateway.set(opened.providerId, { status: "CANCELLED", value: "" });
+    assert.equal((await recoverPrepaid(starting.review.attemptId, guestKey)).kind, "abandoned");
+    assert.equal(await stock(), 2);
+    gateway.set(opened.providerId, { status: "VALIDATED", value: (starting.review.quote.totalMinor / 100).toFixed(2) });
+    const late = await Promise.all([acceptPrepaidCallback(opened.providerId, opened.providerId), acceptPrepaidCallback(opened.providerId, opened.providerId)]);
+    assert.deepEqual(late, [starting.review.attemptId, starting.review.attemptId]);
+    assert.equal(await db.order.count({ where: { attemptId: starting.review.attemptId } }), 0);
+    assert.equal(await stock(), 2);
+    assert.equal(await db.providerPaymentEvent.count({ where: {
+      attemptId: starting.review.attemptId, outcome: "PAYMENT_EXCEPTION",
+    } }), 1);
+    const reconciled = await recoverPrepaid(starting.review.attemptId, guestKey);
+    assert.equal(reconciled.kind, "pending");
+    assert.match(reconciled.message, /refund needs reconciliation/);
   } finally {
     const attempts = (await db.checkoutAttempt.findMany({ where: { guestKey }, select: { id: true } })).map(row => row.id);
     const orders = (await db.order.findMany({ where: { attemptId: { in: attempts } }, select: { id: true } })).map(row => row.id);
@@ -145,6 +210,7 @@ test("Bangladesh prepaid prices the extra discount, verifies payment before pack
       db.payment.deleteMany({ where: { orderId: { in: orders } } }),
       db.orderItem.deleteMany({ where: { orderId: { in: orders } } }),
       db.order.deleteMany({ where: { id: { in: orders } } }),
+      db.providerPaymentEvent.deleteMany({ where: { attemptId: { in: attempts } } }),
       db.checkoutAttempt.deleteMany({ where: { id: { in: attempts } } }),
       db.marketplaceCoupon.delete({ where: { code: couponCode } }),
       db.user.delete({ where: { id: staffId } }),

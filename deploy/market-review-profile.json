@@ -1,0 +1,30 @@
+{
+  "bd": {
+    "revision": 2,
+    "catalog": {
+      "eligibility": "market-offer",
+      "sellerPermission": "market-grant",
+      "inventory": "market-locations"
+    }
+  },
+  "us": {
+    "revision": 2,
+    "languages": ["en-US", "es-US"],
+    "defaultLocale": "en-US",
+    "pricing": {
+      "priceList": "us-review",
+      "taxTreatment": "MERCHANDISE_RATE",
+      "rounding": "minor-half-up"
+    },
+    "delivery": { "coverage": "checkout-policy" },
+    "catalog": {
+      "eligibility": "market-offer",
+      "sellerPermission": "market-grant",
+      "inventory": "market-locations"
+    },
+    "payments": [
+      { "method": "COD", "adapter": "native-cod", "evidence": "sandbox", "enabled": true },
+      { "method": "PAYPAL", "adapter": "paypal", "evidence": "sandbox", "enabled": true }
+    ]
+  }
+}

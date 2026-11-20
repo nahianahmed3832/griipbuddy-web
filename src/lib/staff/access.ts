@@ -2,6 +2,7 @@ import { cache } from "react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getDb } from "../db/client";
+import { activeStaffActor } from "../access/actors";
 import { staffAuth } from "./auth";
 
 export async function getStaffFromHeaders(incoming: Headers) {
@@ -11,8 +12,8 @@ export async function getStaffFromHeaders(incoming: Headers) {
     where: { userId: session.user.id },
     include: { user: { select: { name: true } } },
   });
-  if (!row?.active) return null;
-  return { id: row.userId, name: row.user.name, role: row.role };
+  const actor = activeStaffActor(row);
+  return row && actor ? { ...actor, name: row.user.name } : null;
 }
 
 export const getStaff = cache(async () => getStaffFromHeaders(await headers()));

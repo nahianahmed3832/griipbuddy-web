@@ -3,7 +3,9 @@ import type { MarketId } from "../../config/markets.ts";
 import { getDb, type DbReader } from "../db/client.ts";
 import type { MarketConfiguration } from "../market-config.ts";
 import { stableMeasurementId } from "../measurement/domain.ts";
-import { activeHomepageSections, defaultHomepage, homepageInput, homepageLayers, scopeKey, type HomepageScope } from "./homepage-contract.ts";
+import {
+  activeHomepageSections, defaultHomepage, homepageInput, homepageLayers, homepageTileImages, scopeKey, type HomepageScope,
+} from "./homepage-contract.ts";
 
 export const defaultHomepageConfig = "shared-home-v1";
 
@@ -45,8 +47,29 @@ export async function homepageMediaSources(sources: readonly string[], db: DbRea
   return new Set(rows.map(({ id }) => `/media/${id}`));
 }
 
+export const homepageUploadTarget = (id: string) => `homepage-media:${id}`;
+export const homepageUploadStep = "homepage-image-uploaded";
+
+export async function homepageTileUploadSources(sources: readonly string[], marketId: MarketId, locale: string, db: DbReader = getDb()) {
+  const stored = await homepageMediaSources(sources, db);
+  if (!stored.size) return stored;
+  const rows = await db.auditEvent.findMany({
+    where: {
+      action: "MERCHANDISING_REVIEW", target: { in: [...stored].map(src => homepageUploadTarget(src.slice(7))) },
+      AND: [{ changes: { path: ["step"], equals: homepageUploadStep } },
+        { OR: homepageLayers(marketId, locale).map(scope => ({ changes: { path: ["scope"], equals: scopeKey(scope) } })) }],
+    },
+    distinct: ["target"], select: { target: true },
+  });
+  return new Set(rows.map(({ target }) => target.replace(/^homepage-media:/, "/media/")));
+}
+
 export async function isPublishedHomepageMedia(source: string, market: MarketConfiguration, at = new Date(), db: DbReader = getDb()) {
   const { layers } = await readPublishedHomepage(db, market.id, market.locale);
-  return activeHomepageSections(layers, at, market.timeZone).some(section => section.bannerImage?.src === source) &&
-    (await homepageMediaSources([source], db)).has(source);
+  const sections = activeHomepageSections(layers, at, market.timeZone);
+  if (sections.some(section => section.type !== "TILES" && section.bannerImage?.src === source)) {
+    return (await homepageMediaSources([source], db)).has(source);
+  }
+  return sections.some(section => homepageTileImages(section).some(image => image.src === source)) &&
+    (await homepageTileUploadSources([source], market.id, market.locale, db)).has(source);
 }

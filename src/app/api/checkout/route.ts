@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   const action = parsed.data;
   const reference = requestId();
   try {
-    const marketId = checkoutDestination(request.headers, (await currentMarket()).id);
+    const marketId = checkoutDestination(request.headers, (await currentMarket()).id, new URL(request.url).origin);
     if (!marketId) return NextResponse.json({ kind: "invalid", message: "Choose a configured shopping market." }, {
       status: 422, headers: privateHeaders,
     });
@@ -57,18 +57,19 @@ export async function POST(request: Request) {
     }
 
     const recovered = integratedCheckout(marketId);
+    const shopperId = (await getShopper())?.id ?? null;
     const result = action.action === "recover"
-      ? await (recovered ? recoverRecovered(action.attemptId, guestKey) : recoverCheckout(action.attemptId, guestKey, marketId))
+      ? await (recovered ? recoverRecovered(action.attemptId, guestKey, marketId, shopperId) : recoverCheckout(action.attemptId, guestKey, marketId, shopperId))
       : action.action === "review"
-        ? await (recovered ? reviewRecovered : reviewCheckout)(action.checkout, marketId, guestKey)
+        ? await (recovered ? reviewRecovered(action.checkout, marketId, guestKey, shopperId) : reviewCheckout(action.checkout, marketId, guestKey, shopperId))
         : recovered ? await submitRecovered(action.checkout, marketId, guestKey, lines => provisionBridgeHandoff({
           headers: request.headers, consentCookie: cookieStore.get(measurementCookie)?.value,
           sessionId: request.headers.get(measurementSessionHeader) ?? undefined, marketId, lines,
         }).catch(error => {
           reportFailure("measurement.legacy-handoff", reference, error);
           return null;
-        }))
-          : await submitCheckout(action.checkout, marketId, guestKey, (await getShopper())?.id, hasStaffMeasurementSession(request.headers));
+        }), shopperId)
+          : await submitCheckout(action.checkout, marketId, guestKey, shopperId, hasStaffMeasurementSession(request.headers));
     const status = result.kind === "conflict" || result.kind === "changed" ? 409
       : result.kind === "invalid" || result.kind === "unavailable" ? 422 : 200;
     const response = NextResponse.json(result, { status, headers: privateHeaders });

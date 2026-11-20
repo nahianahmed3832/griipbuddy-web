@@ -1,0 +1,10 @@
+[Unit]
+Description=GriipBuddy development marketplace background jobs
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+TimeoutStartSec=5min
+ExecStart=/bin/bash /opt/griipbuddy-marketplace-dev/current/deploy/run-marketplace-development-jobs.sh

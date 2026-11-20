@@ -81,6 +81,7 @@ export type ProductQuery = {
   search?: string;
   productIds?: readonly string[];
   shopId?: string;
+  publishedOffersOnly?: boolean;
 };
 
 export type CartCatalogItem = {

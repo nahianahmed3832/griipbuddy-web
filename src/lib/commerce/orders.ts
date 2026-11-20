@@ -13,6 +13,7 @@ import {
   checkoutInput, submissionInput, uuid, type CheckoutQuote, type DeliveryChoice,
   type NormalizedCheckout, type NormalizedPrepaidCheckout, type OrderPlaced, type RecoverResult, type ReviewResult, type SubmitResult,
 } from "./checkout-types.ts";
+import { checkoutReviewActor, validateCheckoutCart, validateReviewActor } from "./checkout-provenance.ts";
 import { checkoutClosed, CommerceError } from "./errors.ts";
 import { integratedCheckout, recoveredDeliveryChoices } from "./integrated-checkout.ts";
 import { equalDigest, quoteDigest, requestDigest } from "./guest.ts";
@@ -24,13 +25,20 @@ import { bangladeshCheckoutEnabled, usesBangladeshCheckout } from "./bangladesh-
 import { bangladeshTrackingHistory, bangladeshTrackingSummary } from "./bangladesh-shipment.ts";
 import { createOrderParcels, lockDispatchLocations, lockVariantInventory, type StockAllocation } from "./location-inventory.ts";
 import { shopperParcelHistory, shopperParcelSummary } from "./parcel-tracking.ts";
-import { checkoutOrderLine, quoteMerchandise } from "./checkout-merchandise.ts";
+import { allocateCheckoutLines, quoteMerchandise } from "./checkout-merchandise.ts";
 import { placeReservedPurchase, purchaseContext, reservePurchaseStock } from "./checkout-inventory.ts";
 import { expireInventoryReservations } from "./inventory-reservations.ts";
+import { pilotCheckoutScope } from "./scoped-pilot-checkout.ts";
 
 const sqlIntMax = 2_147_483_647;
+const quoteLifetimeMs = 20 * 60 * 1000;
 type NativeCheckout = NormalizedCheckout | NormalizedPrepaidCheckout;
 type NativePayment = NativeCheckout["paymentMethod"];
+export { checkoutReviewActor, validateCheckoutCart, validateReviewActor } from "./checkout-provenance.ts";
+
+export function newQuoteExpiry() {
+  return new Date(Date.now() + quoteLifetimeMs);
+}
 
 function checkoutOperating(marketId: MarketId, payment: NativePayment) {
   if (usesBangladeshCheckout(marketId)) return null;
@@ -78,12 +86,14 @@ export function canonicalOrder(input: NativeCheckout): NativeCheckout {
     customer,
     deliveryMethod: input.deliveryMethod,
     paymentMethod: input.paymentMethod,
+    ...(input.cart && { cart: input.cart }),
     gift: marketplaceMode() ? input.gift : undefined,
     ...(marketplaceMode() && input.couponCode && { couponCode: input.couponCode }),
   } as NativeCheckout;
 }
 
-export async function calculateQuote(db: DbReader, input: NativeCheckout, guestKey: string, attemptId: string): Promise<CheckoutQuote & { commercial: CommercialTerms }> {
+export async function calculateQuote(db: DbReader, input: NativeCheckout, guestKey: string,
+  attemptId: string, expiresAt?: Date): Promise<CheckoutQuote & { commercial: CommercialTerms }> {
   const policy = await getPolicy(db, input.marketId, input.paymentMethod);
   if (!policy) throw new CommerceError({ kind: "unavailable", message: checkoutClosed });
   const { market } = policy.operating;
@@ -140,6 +150,7 @@ export async function calculateQuote(db: DbReader, input: NativeCheckout, guestK
   const quote = {
     currency: policy.currency, lines, districtLabel: zone.districtLabel, deliveryLabel: zone.label, deliveryGuidance: zone.guidance,
     subtotalMinor, discountMinor, deliveryMinor: zone.chargeMinor, taxMinor, taxLabel: policy.taxLabel, totalMinor,
+    ...(expiresAt && { expiresAt: expiresAt.toISOString() }),
     ...(coupon && { couponCode: input.couponCode, couponDiscountMinor: coupon.total }),
     ...(prepaid && { prepaidDiscountMinor: prepaid.total }),
   };
@@ -148,7 +159,16 @@ export async function calculateQuote(db: DbReader, input: NativeCheckout, guestK
   return { ...quote, commercial, reviewToken: quoteDigest(JSON.stringify({ guestKey, attemptId, input, quote, commercial })) };
 }
 
-export async function reviewCheckout(raw: unknown, marketId: MarketId, guestKey: string): Promise<ReviewResult> {
+export async function repriceCheckoutReview(tx: Prisma.TransactionClient, input: NativeCheckout, guestKey: string,
+  attempt: { id: string; quoteExpiresAt: Date | null }) {
+  const currentExpiry = attempt.quoteExpiresAt && attempt.quoteExpiresAt.getTime() > Date.now() ? attempt.quoteExpiresAt : null;
+  const expiresAt = currentExpiry ?? newQuoteExpiry();
+  const quote = await calculateQuote(tx, input, guestKey, attempt.id, expiresAt);
+  if (!currentExpiry) await tx.checkoutAttempt.update({ where: { id: attempt.id }, data: { quoteExpiresAt: expiresAt } });
+  return { quote, renewed: !currentExpiry };
+}
+
+export async function reviewCheckout(raw: unknown, marketId: MarketId, guestKey: string, shopperId?: string | null): Promise<ReviewResult> {
   if (!checkoutOperating(marketId, "COD") || !orderIntakeOpen()) return { kind: "unavailable", message: checkoutClosed };
   const parsed = checkoutInput.safeParse(raw);
   if (!parsed.success) return { kind: "invalid", message: "Check your contact details, delivery address, and cart quantities." };
@@ -156,11 +176,15 @@ export async function reviewCheckout(raw: unknown, marketId: MarketId, guestKey:
   try {
     const db = getDb();
     const input = canonicalOrder(parsed.data);
-    if (input.items.some(item => item.offerId)) await expireInventoryReservations(new Date(), 20);
+    await validateCheckoutCart(db, input, shopperId);
+    const pilot = await pilotCheckoutScope(db, input);
+    if (!pilot && input.items.some(item => item.offerId)) await expireInventoryReservations(new Date(), 20);
     const attemptId = randomUUID();
-    const quote = await calculateQuote(db, input, guestKey, attemptId);
+    const expiresAt = newQuoteExpiry();
+    const quote = await calculateQuote(db, input, guestKey, attemptId, expiresAt);
     await db.checkoutAttempt.create({ data: {
       id: attemptId, guestKey, requestHash: requestDigest(JSON.stringify(input)), marketId, paymentMethod: input.paymentMethod,
+      quoteExpiresAt: expiresAt, reviewActor: checkoutReviewActor(shopperId), cartSource: input.cart?.source, cartRevision: input.cart?.revision,
       commerceEvidence: quote.commercial.evidence, commercialSnapshot: quote.commercial,
     } });
     return { kind: "review", attemptId, quote };
@@ -171,17 +195,21 @@ export async function reviewCheckout(raw: unknown, marketId: MarketId, guestKey:
 }
 
 type AttemptWithOrder = Prisma.CheckoutAttemptGetPayload<{ include: { order: { include: { items: true } } } }>;
+type PlacedOrderLines = NonNullable<AttemptWithOrder["order"]>;
 
-export function placedOrder(attempt: AttemptWithOrder): OrderPlaced | null {
-  if (!attempt.order) return null;
+function savedOrderPurchase(order: PlacedOrderLines): OrderPlaced {
   return {
-    kind: "placed", orderId: attempt.order.id,
-    purchased: attempt.order.items.map(({ variantId, quantity, personalization, offerIdSnapshot, cartOfferIdSnapshot, cartVariantIdSnapshot }) => ({
+    kind: "placed", orderId: order.id,
+    purchased: order.items.map(({ variantId, quantity, personalization, offerIdSnapshot, cartOfferIdSnapshot, cartVariantIdSnapshot }) => ({
       variantId, quantity, ...(personalization && { personalization }),
       ...(offerIdSnapshot && { offerId: offerIdSnapshot }), ...(cartOfferIdSnapshot && { cartOfferId: cartOfferIdSnapshot }),
       ...(cartVariantIdSnapshot && { cartVariantId: cartVariantIdSnapshot }),
     })).sort(compareCartItems),
   };
+}
+
+export function placedOrder(attempt: AttemptWithOrder): OrderPlaced | null {
+  return attempt.order && savedOrderPurchase(attempt.order);
 }
 
 function attemptConflict() {
@@ -260,42 +288,49 @@ export async function createNativeOrder(tx: Prisma.TransactionClient, input: Nat
       ...(quote.couponCode && { couponCode: quote.couponCode, couponDiscountMinor: quote.couponDiscountMinor }),
       prepaidDiscountMinor: quote.prepaidDiscountMinor,
       deliveryMinor: quote.deliveryMinor, taxMinor: quote.taxMinor, totalMinor: quote.totalMinor,
-      items: { create: quote.lines.map(line => ({ ...checkoutOrderLine(line), currency: quote.currency,
+      items: { create: allocateCheckoutLines(quote).map(line => ({ ...line, currency: quote.currency,
         marketplaceShopId: line.marketplaceShopId ?? shops[line.variantId] })) },
       payment: { create: { method: input.paymentMethod, amountMinor: quote.totalMinor, currency: quote.currency,
         ...(input.paymentMethod === "SSLCOMMERZ" && { status: "PAID" }) } },
       events: { create: { type: "ORDER_PLACED", status: "UNFULFILLED" } },
     },
-    select: { id: true },
+    include: { items: true },
   });
   await createOrderParcels(tx, order.id, allocations);
-  return { kind: "placed", orderId: order.id, purchased: input.items };
+  return savedOrderPurchase(order);
 }
 
-export async function submitCheckout(raw: unknown, marketId: MarketId, guestKey: string, shopperId?: string, staffActivity = false): Promise<SubmitResult> {
-  if (!checkoutOperating(marketId, "COD")) return { kind: "unavailable", message: checkoutClosed };
+export async function submitCheckout(raw: unknown, marketId: MarketId, guestKey: string, shopperId?: string | null, staffActivity = false): Promise<SubmitResult> {
+  const unavailable = { kind: "unavailable", message: checkoutClosed } as const;
+  if (!isOperatingDatabase()) return unavailable;
+  const operating = checkoutOperating(marketId, "COD");
   const parsed = submissionInput.safeParse(raw);
-  if (!parsed.success) return { kind: "invalid", message: "Your checkout details are incomplete. Review the order before trying again." };
+  if (!parsed.success) return operating ? { kind: "invalid", message: "Your checkout details are incomplete. Review the order before trying again." } : unavailable;
   const input = canonicalOrder(parsed.data);
-  if (input.marketId !== marketId) return { kind: "invalid", message: "Your shopping region changed. Return to the cart before placing an order." };
+  if (input.marketId !== marketId) return operating ? { kind: "invalid", message: "Your shopping region changed. Return to the cart before placing an order." } : unavailable;
   const { attemptId, reviewToken } = parsed.data;
   const hash = requestDigest(JSON.stringify(input));
   try {
     return await getDb().$transaction(async (tx): Promise<SubmitResult> => {
       const attempt = await lockAttempt(tx, attemptId);
-      if (!attempt || attempt.guestKey !== guestKey || attempt.requestHash !== hash || attempt.abandonedAt ||
-          (attempt.marketId && attempt.marketId !== marketId) || (attempt.paymentMethod && attempt.paymentMethod !== "COD")) return attemptConflict();
+      if (!attempt || attempt.guestKey !== guestKey || !validateReviewActor(attempt, shopperId) || attempt.requestHash !== hash || attempt.abandonedAt ||
+          (attempt.marketId && attempt.marketId !== marketId) || (attempt.paymentMethod && attempt.paymentMethod !== "COD")) return operating ? attemptConflict() : unavailable;
       const existing = placedOrder(attempt);
       if (existing) return existing;
+      if (!operating) return unavailable;
 
+      await validateCheckoutCart(tx, input, shopperId, true);
       await lockQuoteRows(tx, input);
-      const quote = await calculateQuote(tx, input, guestKey, attemptId);
-      if (!equalDigest(quote.reviewToken, reviewToken)) return { kind: "changed", quote };
+      const { quote, renewed } = await repriceCheckoutReview(tx, input, guestKey, attempt);
+      if (renewed || !equalDigest(quote.reviewToken, reviewToken)) return {
+        kind: "changed", quote,
+        ...(renewed && { message: "Your review expired. Check the refreshed order before continuing." }),
+      };
       const shops = await snapshotShops(tx, quote);
       const context = purchaseContext(input, attemptId, guestKey, hash);
       const legacy = await reservePurchaseStock(tx, context, quote.lines);
       const placed = await placeReservedPurchase(tx, context, quote.lines, legacy,
-        (sameTransaction, allocations) => createNativeOrder(sameTransaction, input, quote, attemptId, shops, allocations, shopperId, staffActivity));
+        (sameTransaction, allocations) => createNativeOrder(sameTransaction, input, quote, attemptId, shops, allocations, shopperId ?? undefined, staffActivity));
       if (placed.kind === "refund_required") throw new Error("Cash collection cannot have a verified payment exception.");
       return placed;
     });
@@ -306,13 +341,13 @@ export async function submitCheckout(raw: unknown, marketId: MarketId, guestKey:
 }
 
 // Recover a lost response, or seal an unused attempt so it cannot place an order later.
-export async function recoverCheckout(value: unknown, guestKey: string, marketId?: MarketId): Promise<RecoverResult> {
+export async function recoverCheckout(value: unknown, guestKey: string, marketId?: MarketId, shopperId?: string | null): Promise<RecoverResult> {
   const parsed = uuid.safeParse(value);
   if (!parsed.success || !isOperatingDatabase()) return attemptConflict();
   const attemptId = parsed.data;
   return getDb().$transaction(async (tx): Promise<RecoverResult> => {
     const attempt = await lockAttempt(tx, attemptId);
-    if (!attempt || attempt.guestKey !== guestKey || (marketId && attempt.marketId && attempt.marketId !== marketId) ||
+    if (!attempt || attempt.guestKey !== guestKey || !validateReviewActor(attempt, shopperId) || (marketId && attempt.marketId && attempt.marketId !== marketId) ||
         (attempt.paymentMethod && attempt.paymentMethod !== "COD")) return attemptConflict();
     const existing = placedOrder(attempt);
     if (existing) return existing;

@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule GriipBuddy development marketplace jobs
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+Persistent=true
+Unit=griipbuddy-marketplace-dev-jobs.service
+
+[Install]
+WantedBy=timers.target

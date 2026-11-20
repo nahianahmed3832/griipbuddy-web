@@ -1,13 +1,17 @@
 import { z } from "zod";
 import type { Prisma } from "../../generated/prisma/client.ts";
+import type { MarketId } from "../../config/markets.ts";
 import { getDb } from "../db/client.ts";
+import { requireLegacyPilotVariant } from "../catalog/scoped-pilot.ts";
 import { validVariantId } from "../cart/model.ts";
 import { inventoryShopId, legacyLocationId, lockVariantInventory } from "../commerce/location-inventory.ts";
 import { storeShop } from "../marketplace/constants.ts";
 import { authorize, OperationError, staffStockChangeInput } from "./operations.ts";
+import { CatalogWriteError } from "./operation-error.ts";
 
 const stockLimit = 1_000_000;
 const locationInput = z.object({
+  id: z.uuid().optional(),
   name: z.string().trim().min(3).max(80),
   marketId: z.enum(["bd", "us"]),
   shopId: z.uuid().nullable(),
@@ -21,41 +25,59 @@ const adoptionInput = z.object({
   reason: staffStockChangeInput.shape.reason,
 });
 
-export async function staffDispatchLocations(actorId: string) {
+export async function staffDispatchLocations(actorId: string, marketId?: MarketId) {
   const db = getDb();
   await authorize(db, actorId, true);
   const [locations, sellers] = await Promise.all([
-    db.dispatchLocation.findMany({ where: { marketId: { not: null } }, orderBy: [{ priority: "asc" }, { name: "asc" }, { id: "asc" }] }),
+    db.dispatchLocation.findMany({ where: marketId ? { marketId: { not: null }, OR: [{ marketId }, { marketServices: { some: { marketId, active: true } } }] }
+      : { marketId: { not: null } }, include: { shop: { select: { name: true } } },
+    orderBy: [{ priority: "asc" }, { name: "asc" }, { id: "asc" }] }),
     db.marketplaceShop.findMany({
-      where: { id: { not: storeShop.id } },
+      where: { id: { not: storeShop.id }, ...(marketId && { published: true, marketGrants: { some: { marketId, status: "APPROVED" } } }) },
       select: { id: true, name: true, published: true }, orderBy: [{ name: "asc" }, { id: "asc" }],
     }),
   ]);
   return { locations, sellers };
 }
 
-export async function createDispatchLocation(actorId: string, input: unknown) {
+export async function createDispatchLocation(actorId: string, input: unknown, expectedMarket?: MarketId) {
   const parsed = locationInput.safeParse(input);
   if (!parsed.success) throw new OperationError("Enter a location name, market, owner, and a priority from 0 to 1,000.");
-  const { name, marketId, priority } = parsed.data;
+  const { id, name, marketId, priority } = parsed.data;
+  if (expectedMarket && marketId !== expectedMarket) {
+    throw new CatalogWriteError("market_mismatch", "Switch to the warehouse’s home market before creating it.");
+  }
   const shopId = inventoryShopId(parsed.data.shopId);
-  await getDb().$transaction(async tx => {
+  return getDb().$transaction(async tx => {
     await authorize(tx, actorId, true);
     if (shopId && !await tx.marketplaceShop.findFirst({
       where: { id: shopId, published: true, marketGrants: { some: { marketId, status: "APPROVED" } } }, select: { id: true },
     })) {
       throw new OperationError("Select a published seller approved for this market.");
     }
-    const location = await tx.dispatchLocation.create({ data: { name, marketId, priority, shopId } });
+    const data = { name, marketId, priority, shopId };
+    if (id) {
+      const result = await tx.dispatchLocation.createMany({ data: { ...data, id }, skipDuplicates: true });
+      if (!result.count) {
+        const existing = await tx.dispatchLocation.findUniqueOrThrow({ where: { id } });
+        if (existing.name !== name || existing.marketId !== marketId || existing.priority !== priority || existing.shopId !== shopId) {
+          throw new CatalogWriteError("conflict", "This dispatch location was already saved with different details. Reload the stock report.");
+        }
+        return { id: existing.id };
+      }
+    }
+    const locationId = id ?? (await tx.dispatchLocation.create({ data, select: { id: true } })).id;
     await tx.auditEvent.create({ data: {
-      actorId, action: "MARKET_SETTINGS_CHANGED", target: location.id,
+      actorId, action: "MARKET_SETTINGS_CHANGED", target: locationId,
       changes: { setting: "dispatch location", name, marketId, priority, shopId },
     } });
+    return { id: locationId };
   });
 }
 
 async function stockContext(tx: Prisma.TransactionClient, variantId: string, dispatchId: string) {
   await lockVariantInventory(tx, [variantId]);
+  await requireLegacyPilotVariant(tx, variantId);
   const variant = await tx.variant.findUnique({ where: { id: variantId }, select: {
     managedInventory: true, product: { select: { marketplaceShopId: true } }, inventory: { select: { available: true } },
     locationInventory: { select: { locationId: true, available: true } },

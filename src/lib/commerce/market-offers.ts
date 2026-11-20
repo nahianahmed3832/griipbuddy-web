@@ -98,15 +98,19 @@ export async function saveConnectedOffer(actor: CommercialActor, raw: unknown,
     const { central } = await authorizeCommercialActor(tx, actor, { marketId, sellerId });
     const variant = await tx.variant.findUnique({ where: { id: variantId }, select: {
       optionSignature: true, archivedAt: true, active: true,
-      product: { select: { foundation: true, marketplaceShopId: true } },
+      product: { select: { foundation: true, marketplaceShopId: true, publication: true, sellerListingReviews: { take: 1, select: { marketId: true } } } },
     } });
     if (!variant?.product.foundation || variant.optionSignature === null ||
       (publication === "ACTIVE" && (!variant.active || variant.archivedAt))) {
       throw new CatalogWriteError("not_found", "Choose a current catalog foundation variant.");
     }
+    if (variant.product.sellerListingReviews.length) throw new CatalogWriteError("conflict", "Change this offer through the seller listing review.");
     const previous = await tx.marketOffer.findUnique({ where, include: { identity: true } });
     const assignedSeller = previous?.identity?.sellerId ?? variant.product.marketplaceShopId ?? storeShop.id;
     if (!central && sellerId !== assignedSeller) throw new CatalogWriteError("forbidden", "Only a central owner may assign a different seller.");
+    if (variant.product.publication === "ARCHIVED") {
+      throw new CatalogWriteError("conflict", "Offers are read-only for an archived product.");
+    }
     if (previous && !previous.identity) throw new CatalogWriteError("conflict", "Existing market offers must be reconciled during catalog migration.");
     if ((previous?.revision ?? null) !== expectedRevision) throw new CatalogWriteError("conflict", "The offer changed. Reload it before editing.");
     if (publication === "ARCHIVED" && (!previous || sellerId !== assignedSeller)) {

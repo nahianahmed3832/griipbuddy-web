@@ -2,9 +2,9 @@ import type { Prisma } from "../../generated/prisma/client.ts";
 import { OperationError } from "../staff/operation-error.ts";
 import { requestDigest } from "./guest.ts";
 import {
-  cancelInventoryCommitment, dispatchInventoryAllocation, InventoryReservationError, restockInventoryAllocation,
+  cancelInventoryCommitment, dispatchInventoryAllocation, InventoryReservationError, releaseOrderAllocationUnits, restockInventoryAllocation,
 } from "./inventory-reservations.ts";
-import { InventoryLocationError, lockVariantInventory, restoreOrderInventory, type LocationReceiptLine } from "./location-inventory.ts";
+import { InventoryLocationError, lockVariantInventory, parcelQuantitiesByLocation, restoreOrderInventory, type LocationReceiptLine } from "./location-inventory.ts";
 import { applyInventoryMovement } from "./physical-inventory.ts";
 
 type Tx = Prisma.TransactionClient;
@@ -39,7 +39,7 @@ export async function releaseUnshippedOrderStock(tx: Tx, actorId: string, attemp
 async function orderAllocations(tx: Tx, attemptId: string) {
   const reservation = await tx.inventoryReservation.findUnique({
     where: { attemptId, state: "COMMITTED" }, select: { allocations: { select: {
-      id: true, poolId: true, offerId: true, quantity: true, dispatched: true, returned: true,
+      id: true, poolId: true, offerId: true, quantity: true, dispatched: true, returned: true, cancelledQuantity: true,
       pool: { select: { variantId: true, locationId: true } },
     } } },
   });
@@ -53,24 +53,77 @@ const findAllocation = (rows: Allocation[], locationId: string, line: { variantI
 
 type Parcel = {
   id: string;
+  orderId: string;
   locationId: string;
-  items: readonly { quantity: number; orderItem: { variantId: string; offerIdSnapshot: string | null } }[];
 };
 
 async function parcelAllocations(tx: Tx, attemptId: string, parcel: Parcel) {
   const rows = await orderAllocations(tx, attemptId);
+  const originLines = await tx.orderParcelItem.findMany({
+    where: { parcel: { orderId: parcel.orderId, locationId: parcel.locationId } },
+    select: { parcelId: true, quantity: true, cancelledQuantity: true, orderItem: { select: { orderId: true, variantId: true, offerIdSnapshot: true } } },
+  });
   const quantities = new Map<Allocation, number>();
-  for (const line of parcel.items) {
+  const originQuantities = new Map<Allocation, number>();
+  for (const line of originLines) {
+    if (line.orderItem.orderId !== parcel.orderId) throw new OperationError("The parcel is linked to another order.");
     if (!line.orderItem.offerIdSnapshot) continue;
     const allocation = findAllocation(rows, parcel.locationId, line.orderItem);
     if (!allocation) throw new OperationError("The parcel is missing its original warehouse allocation.");
-    quantities.set(allocation, (quantities.get(allocation) ?? 0) + line.quantity);
+    originQuantities.set(allocation, (originQuantities.get(allocation) ?? 0) + line.quantity);
+    const active = line.quantity - line.cancelledQuantity;
+    if (line.parcelId === parcel.id && active) quantities.set(allocation, (quantities.get(allocation) ?? 0) + active);
   }
   const attributed = rows.filter(row => row.pool.locationId === parcel.locationId);
-  if (attributed.some(allocation => quantities.get(allocation) !== allocation.quantity)) {
+  if (attributed.some(allocation => originQuantities.get(allocation) !== allocation.quantity)) {
     throw new OperationError("The parcel quantities differ from the original warehouse allocation.");
   }
   return quantities;
+}
+
+export async function cancelPlannedOrderItems(tx: Tx, actorId: string, orderId: string, attemptId: string,
+  requested: readonly { orderItemId: string; quantity: number }[]) {
+  return inventoryOperation(async () => {
+    const lines = await tx.orderParcelItem.findMany({
+      where: { parcel: { orderId, status: "PLANNED", cancelledAt: null }, orderItemId: { in: requested.map(line => line.orderItemId) } },
+      orderBy: [{ parcelId: "asc" }, { orderItemId: "asc" }],
+      select: { parcelId: true, orderItemId: true, quantity: true, cancelledQuantity: true,
+        parcel: { select: { locationId: true } },
+        orderItem: { select: { orderId: true, variantId: true, offerIdSnapshot: true } } },
+    });
+    const rows = await orderAllocations(tx, attemptId);
+    const released = new Map<Allocation, number>();
+    const affected = new Set<string>();
+    const changes = [];
+    for (const item of requested) {
+      let remaining = item.quantity;
+      for (const line of lines) {
+        if (line.orderItemId !== item.orderItemId || !remaining) continue;
+        const quantity = Math.min(remaining, line.quantity - line.cancelledQuantity);
+        if (!quantity) continue;
+        const allocation = findAllocation(rows, line.parcel.locationId, line.orderItem);
+        if (line.orderItem.orderId !== orderId || !allocation) throw new OperationError("The item needs a recorded parcel and warehouse allocation.");
+        changes.push({ parcelId: line.parcelId, orderItemId: line.orderItemId, allocationId: allocation.id, quantity });
+        remaining -= quantity;
+        affected.add(line.parcelId);
+        released.set(allocation, (released.get(allocation) ?? 0) + quantity);
+      }
+      if (remaining) throw new OperationError("The selected quantity is no longer in an undispatched parcel.");
+    }
+
+    await lockVariantInventory(tx, [...released.keys()].map(row => row.pool.variantId));
+    for (const [row, quantity] of released) await releaseOrderAllocationUnits(tx, actorId, attemptId, row.id, quantity);
+    for (const { parcelId, orderItemId, quantity } of changes) {
+      await tx.orderParcelItem.update({ where: { parcelId_orderItemId: { parcelId, orderItemId } },
+        data: { cancelledQuantity: { increment: quantity } } });
+    }
+    for (const id of affected) {
+      const items = await tx.orderParcelItem.findMany({ where: { parcelId: id }, select: { quantity: true, cancelledQuantity: true } });
+      const cancelledAt = items.every(line => line.quantity === line.cancelledQuantity) ? new Date() : null;
+      await tx.orderParcel.update({ where: { id }, data: { cancelledAt, preparationState: "PENDING", trackingRevision: { increment: 1 } } });
+    }
+    return changes;
+  });
 }
 
 export async function dispatchOrderStock(tx: Tx, actorId: string, attemptId: string, parcel: Parcel, reference: string) {
@@ -108,22 +161,23 @@ export async function restockInspectedOrderLines(tx: Tx, actorId: string, attemp
     const rows = await orderAllocations(tx, attemptId);
     const parcels = await tx.orderParcelItem.findMany({
       where: { orderItemId: { in: connected.map(line => line.id) }, parcel: { status: "DELIVERED" } },
-      select: { orderItemId: true, quantity: true, parcel: { select: { locationId: true } } },
+      select: { orderItemId: true, quantity: true, cancelledQuantity: true, parcel: { select: { locationId: true } } },
     });
     for (const line of connected) {
-      const sources = parcels.filter(row => row.orderItemId === line.id);
-      const shipped = sources.reduce((total, row) => total + row.quantity, 0);
-      if (!sources.length || line.quantity + (line.receivedBefore ?? 0) > shipped) {
+      const sources = parcelQuantitiesByLocation(parcels.filter(row => row.orderItemId === line.id && row.quantity > row.cancelledQuantity)
+        .map(row => ({ ...row, quantity: row.quantity - row.cancelledQuantity })));
+      const shipped = [...sources.values()].reduce((total, quantity) => total + quantity, 0);
+      if (!sources.size || line.quantity + (line.receivedBefore ?? 0) > shipped) {
         throw new OperationError("The receipt exceeds the original delivered parcel quantities.");
       }
-      if (sources.length > 1 && line.quantity !== shipped) {
+      if (sources.size > 1 && line.quantity !== shipped) {
         throw new OperationError("This item shipped from several warehouses. Hold this partial return to confirm its source.");
       }
-      for (const source of sources) {
-        const allocation = findAllocation(rows, source.parcel.locationId, line);
+      for (const [locationId, quantity] of sources) {
+        const allocation = findAllocation(rows, locationId, line);
         if (!allocation) throw new OperationError("The return is missing its original warehouse allocation.");
         await restockInventoryAllocation(tx, actorId, attemptId, {
-          allocationId: allocation.id, caseId, orderItemId: line.id, quantity: sources.length === 1 ? line.quantity : source.quantity,
+          allocationId: allocation.id, caseId, orderItemId: line.id, quantity: sources.size === 1 ? line.quantity : quantity,
         });
       }
     }

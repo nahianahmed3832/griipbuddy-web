@@ -51,9 +51,11 @@ const providerRecord = z.object({
   status: z.string(),
   tran_id: z.string(),
   val_id: reference.optional(),
+  store_id: z.string().optional(),
   amount: z.union([z.string(), z.number()]).optional(),
   currency: z.string().optional(),
   currency_type: z.string().optional(),
+  currency_amount: z.union([z.string(), z.number()]).optional(),
   risk_level: z.union([z.string(), z.number()]).optional(),
   bank_tran_id: reference.optional(),
 });
@@ -74,39 +76,52 @@ function matchesAmount(value: string | number | undefined, expectedMinor: number
   return Boolean(parts && Number(parts[1]) * 100 + Number((parts[2] ?? "").padEnd(2, "0")) === expectedMinor);
 }
 
-export type PrepaidProviderStatus = { kind: "paid"; bankTransactionId: string } | { kind: "pending" | "closed" | "review"; failed?: boolean };
+export type PrepaidProviderStatus =
+  | { kind: "paid"; bankTransactionId: string; validationId: string }
+  | { kind: "pending" | "closed"; failed?: boolean }
+  | { kind: "review"; validationId?: string }
+  | { kind: "inapplicable" };
 
 export async function lookupPrepaidStatus(providerId: string, totalMinor: number, validationHint?: string): Promise<PrepaidProviderStatus> {
-  let validationId = reference.safeParse(validationHint).data;
-  if (!validationId) {
-    const lookup = z.object({
-      APIConnect: z.literal("DONE"),
-      element: z.array(z.unknown()).nullish(),
-    }).safeParse(await providerJson(providerUrl("/validator/api/merchantTransIDvalidationAPI.php", { tran_id: providerId })));
-    if (!lookup.success) throw new Error("SSLCOMMERZ lookup could not be confirmed.");
-    const txns = (lookup.data.element ?? []).flatMap(raw => {
-      const parsed = providerRecord.safeParse(raw);
-      return parsed.success && parsed.data.tran_id === providerId ? [parsed.data] : [];
-    });
-    const confirmed = txns.filter(row => paid(row.status));
-    if (confirmed.length > 1) return { kind: "review" };
-    validationId = confirmed[0]?.val_id;
-    if (!validationId) {
-      const terminal = new Set(["CANCELLED", "EXPIRED"]);
-      const noActiveTransaction = txns.length && txns.every(row => terminal.has(row.status) || row.status === "FAILED");
-      return { kind: noActiveTransaction && txns.some(row => terminal.has(row.status)) ? "closed" : "pending",
-        failed: txns.some(row => row.status === "FAILED") };
-    }
-  }
+  const { storeId } = requiredConfig();
+  const hint = reference.safeParse(validationHint).data;
+  if (validationHint !== undefined && hint === undefined) return { kind: "inapplicable" };
 
+  // The callback is a hint. The authenticated store query must independently list the same settlement.
+  const lookup = z.object({
+    APIConnect: z.literal("DONE"),
+    element: z.array(z.unknown()).nullish(),
+  }).safeParse(await providerJson(providerUrl("/validator/api/merchantTransIDvalidationAPI.php", { tran_id: providerId })));
+  if (!lookup.success) throw new Error("SSLCOMMERZ lookup could not be confirmed.");
+  const txns = (lookup.data.element ?? []).flatMap(raw => {
+    const parsed = providerRecord.safeParse(raw);
+    return parsed.success && parsed.data.tran_id === providerId ? [parsed.data] : [];
+  });
+  if (txns.some(row => row.store_id !== undefined && row.store_id !== storeId)) return { kind: "inapplicable" };
+  const confirmed = txns.filter(row => paid(row.status));
+  const validationIds = new Set(confirmed.map(row => row.val_id));
+  if (validationIds.size > 1 || confirmed.some(row => !row.val_id)) return { kind: "review" };
+  const listed = confirmed[0];
+  const validationId = listed?.val_id;
+  if (!validationId) {
+    const terminal = new Set(["CANCELLED", "EXPIRED"]);
+    const noActiveTransaction = txns.length && txns.every(row => terminal.has(row.status) || row.status === "FAILED");
+    return { kind: noActiveTransaction && txns.some(row => terminal.has(row.status)) ? "closed" : "pending",
+      failed: txns.some(row => row.status === "FAILED") };
+  }
+  if (hint !== undefined && hint !== validationId) return { kind: "inapplicable" };
   const validation = providerRecord.safeParse(await providerJson(
     providerUrl("/validator/api/validationserverAPI.php", { val_id: validationId }),
   ));
-  if (!validation.success || validation.data.tran_id !== providerId || !paid(validation.data.status)) return { kind: "pending" };
+  if (!validation.success || validation.data.tran_id !== providerId || validation.data.val_id !== validationId ||
+      (validation.data.store_id !== undefined && validation.data.store_id !== storeId) ||
+      (listed.bank_tran_id && listed.bank_tran_id !== validation.data.bank_tran_id)) return { kind: "inapplicable" };
   const value = validation.data;
-  if (value.currency !== "BDT" || (value.currency_type && value.currency_type !== "BDT") ||
-      !matchesAmount(value.amount, totalMinor) || String(value.risk_level) !== "0" || !value.bank_tran_id) {
-    return { kind: "review" };
+  if (!paid(value.status)) return { kind: "pending" };
+  if ((value.currency_type ?? value.currency) !== "BDT" || (value.currency && value.currency !== "BDT") ||
+      !matchesAmount(value.amount, totalMinor) || (value.currency_amount !== undefined && !matchesAmount(value.currency_amount, totalMinor)) ||
+      String(value.risk_level) !== "0" || !value.bank_tran_id) {
+    return { kind: "review", validationId };
   }
-  return { kind: "paid", bankTransactionId: value.bank_tran_id };
+  return { kind: "paid", bankTransactionId: value.bank_tran_id, validationId };
 }

@@ -10,6 +10,7 @@ import { missingImage } from "./catalog-media.ts";
 import { authorize, OperationError } from "./operations.ts";
 import { CatalogWriteError, catalogWriteInput } from "./operation-error.ts";
 import { authorizeTaxonomyMarket, lockTaxonomy } from "./taxonomy-write.ts";
+import { requireLegacyPilotCategories, requireScopedLegacyWriter, scopedCatalogPilotTargets } from "../catalog/scoped-pilot.ts";
 
 const categoryId = productIdField.refine((id) => id !== "new", "Choose an ID other than new.");
 const position = z.number().int().min(0).max(9999);
@@ -27,7 +28,7 @@ const taxonomyInput = z.discriminatedUnion("kind", [
 
 const categoryKind = z.enum(["DEPARTMENT", "CATEGORY", "SUBCATEGORY"]);
 const parentKinds = { DEPARTMENT: null, CATEGORY: "DEPARTMENT", SUBCATEGORY: "CATEGORY" } as const;
-const categoryInput = z.strictObject({
+export const categoryInput = z.strictObject({
   ...base, shortName: labels.shortName, image: catalogImage, kind: categoryKind,
   parentId: categoryId.nullable(), state: z.enum(["DRAFT", "ACTIVE"]), revision: revision.nullable(),
   banner: catalogImage.nullish(), seoTitle: textField(1, 120).nullish(), seoDescription: textField(1, 320).nullish(),
@@ -246,9 +247,16 @@ export async function saveCategoryTranslation(actorId: string, raw: unknown) {
   });
 }
 
-export async function saveCategoryMarketPresentation(actorId: string, raw: unknown) {
+export async function saveCategoryMarketPresentation(actorId: string, raw: unknown, nativePilot = false) {
   const { id, revision: expectedRevision, marketId, presentation } = catalogWriteInput(marketPresentationInput, raw);
   return writeTaxonomy(actorId, async (tx, role) => {
+    if (nativePilot) {
+      const reviewed = await scopedCatalogPilotTargets(tx);
+      if (!reviewed) throw new CatalogWriteError("unavailable", "The reviewed catalog pilot is unavailable.");
+      if (reviewed.categoryIds.includes(id)) {
+        throw new CatalogWriteError("forbidden", "Use the main GriipBuddy admin for this catalog category.");
+      }
+    }
     await editableCategory(tx, id, expectedRevision);
     const key = { departmentId: id, marketId };
     if (presentation) {
@@ -282,11 +290,21 @@ export async function saveTaxonomy(actorId: string, raw: unknown, existingId: st
   const value = catalogWriteInput(taxonomyInput, raw);
   if (existingId !== null && existingId !== value.id) throw new OperationError("An existing ID cannot change.");
   await writeTaxonomy(actorId, async (tx) => {
+    const legacyPilot = await requireScopedLegacyWriter(tx);
+    if (legacyPilot) {
+      if (value.kind !== "department" || !existingId) {
+        throw new OperationError("Use the main GriipBuddy admin to create categories or manage collections.");
+      }
+      await requireLegacyPilotCategories(tx, [existingId, value.parentId]);
+    }
     const fields = { slug: value.slug, name: value.name, description: value.description, position: value.position };
     await requireImage(tx, value.image);
     if (value.kind === "department") {
       const previous = existingId && await tx.department.findUnique({ where: { id: existingId } });
       if (previous && previous.kind) throw new OperationError("Use typed category operations to edit this category.");
+      if (legacyPilot && previous && value.parentId !== undefined && previous.parentId !== value.parentId) {
+        await requireLegacyPilotCategories(tx, [previous.parentId]);
+      }
       await assertParent(tx, value.id, value.parentId ?? null, null);
       await claimSlug(tx, value.id, "", value.slug);
       if (previous && previous.slug !== value.slug) await reserveSlug(tx, value.id, "", previous.slug);

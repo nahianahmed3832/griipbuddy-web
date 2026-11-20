@@ -3,6 +3,7 @@ import Form from "next/form";
 import { Store } from "lucide-react";
 import { marketplaceMode } from "@/lib/release-config";
 import { getDb } from "@/lib/db/client";
+import { shopProducts } from "@/lib/catalog/shop-products";
 import { catalog } from "@/lib/catalog/repository";
 import { readQuery, type SearchParams } from "@/lib/catalog/listing";
 import { currentMarket } from "@/lib/market-server";
@@ -20,19 +21,24 @@ export default async function PublicShop({ params, searchParams }: { params: Pro
   const [shop, departments, filters] = await Promise.all([
     getDb().marketplaceShop.findFirst({ where: { slug, ...sellerVisibility(market.id) }, select: {
       id: true, slug: true, name: true, announcement: true, about: true,
+      marketGrants: { where: { marketId: market.id, status: "APPROVED" }, select: {
+        profile: { select: { announcement: true, about: true, presentation: true } },
+      } },
     } }), catalog.listDepartments(market.id), searchParams,
   ]);
   if (!shop) notFound();
+  const profile = shop.marketGrants[0]?.profile;
+  const announcement = profile?.announcement ?? shop.announcement;
   const query = readQuery(filters);
   const path = `/shops/${shop.slug}`;
-  const products = await catalog.listProducts({ marketId: market.id, shopId: shop.id, search: query || undefined });
+  const products = await shopProducts(shop, market, query, departments);
   return <>
     <div className="shell mp-page mp-shop-page">
-      <header className="mp-shop-hero">
+      <header className="mp-shop-hero" data-presentation={profile?.presentation}>
         <Store size={35} aria-hidden="true"/>
         <h1 className="mp-page-title">{shop.name}</h1>
         <p>{market.name}</p>
-        {shop.announcement && <p className="mp-section">{shop.announcement}</p>}
+        {announcement && <p className="mp-section">{announcement}</p>}
         <div className="mp-panel-links"><FollowShop shop={shop}/><MessageShop shop={shop.id} shopName={shop.name}/></div>
       </header>
       <nav className="mp-panel-links" aria-label="Shop sections"><a href="#shop-items">Items</a><a href="#shop-about">About</a></nav>
@@ -43,6 +49,6 @@ export default async function PublicShop({ params, searchParams }: { params: Pro
     </div>
     <ListingPage path={path} title={query ? `Items matching “${query}”` : "Shop items"} {...{ market, departments, products }}
       params={filters} query={query || undefined}/>
-    <section className="shell mp-page mp-shop-about" id="shop-about"><h2>About {shop.name}</h2><p>{shop.about}</p></section>
+    <section className="shell mp-page mp-shop-about" id="shop-about"><h2>About {shop.name}</h2><p>{profile?.about ?? shop.about}</p></section>
   </>;
 }
