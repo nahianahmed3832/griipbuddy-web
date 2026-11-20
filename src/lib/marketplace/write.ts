@@ -153,7 +153,15 @@ export async function applyMarketplaceCommand(command: MarketplaceCommand, viewe
     if (!viewer.staffOwner) throw new MarketplaceError("Owner access is required.", 403);
     if (command.action === "staff-shop") {
       if (command.shop === storeShop.id) throw new MarketplaceError("The main store already has a public shop page.");
-      await db.marketplaceShop.update({ where: { id: command.shop }, data: { published: command.published } });
+      return db.$transaction(async tx => {
+        await lockShop(tx, command.shop);
+        const previous = requireRecord(await tx.marketplaceShop.findUnique({ where: { id: command.shop }, select: { published: true } }));
+        if (previous.published === command.published) return {};
+        await tx.marketplaceShop.update({ where: { id: command.shop }, data: { published: command.published } });
+        await tx.auditEvent.create({ data: { actorId: viewer.staffActorId, action: "MERCHANDISING_REVIEW", target: command.shop,
+          changes: { step: "marketplace-shop-publication", previous: previous.published, published: command.published } } });
+        return {};
+      });
     } else await db.shopperReview.update({ where: { id: command.review }, data: { visible: command.visible } });
     return {};
   }

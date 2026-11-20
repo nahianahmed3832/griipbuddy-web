@@ -36,6 +36,14 @@ export function mainAdminCatalogConfig(homepage = false) {
   }
 }
 
+export function mainAdminMarketplaceConfig() {
+  if (process.env.GRIIP_MAIN_ADMIN_MARKETPLACE_ENABLED !== "1") return null;
+  const secret = process.env.GRIIP_MAIN_ADMIN_MARKETPLACE_SECRET;
+  const identity = mainAdminCatalogConfig(true);
+  if (!identity || !secret || Buffer.byteLength(secret) < 32 || secret === identity.secret) return null;
+  return { ...identity, secret };
+}
+
 export function requireLegacyCatalogBrowser() {
   if (mainAdminCatalogConfig()) {
     throw new OperationError("Open the main GriipBuddy admin to manage the catalog.");

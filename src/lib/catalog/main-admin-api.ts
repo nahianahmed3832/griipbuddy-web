@@ -10,9 +10,10 @@ import { runStaffCatalogSearchMaintenance } from "../staff/catalog-search-mainte
 import { mainAdminOrderPermission, runMainAdminOrderCommand } from "../staff/main-admin-orders.ts";
 import { catalogWriteInput, CatalogWriteError } from "../staff/operation-error.ts";
 import { catalogCommandPermission, catalogErrorResponse, maxCommandBytes, runCatalogCommand } from "./admin-api.ts";
-import { legacyStaffIdPattern, mainAdminCatalogConfig } from "./main-admin-config.ts";
+import { legacyStaffIdPattern, mainAdminCatalogConfig, mainAdminMarketplaceConfig } from "./main-admin-config.ts";
 import { mainAdminReadInput, mainAdminReadPermission, readMainAdminCatalog } from "./main-admin-reads.ts";
 import { isHomepageCommand, mainAdminHomepageReadInput, readMainAdminHomepage, runMainAdminHomepage } from "./main-admin-homepage.ts";
+import { mainAdminMarketplace, mainAdminMarketplaceInput } from "./main-admin-marketplace.ts";
 
 const signaturePrefix = "griip-main-admin-catalog-v1\n";
 const maxAgeMs = 60_000;
@@ -49,9 +50,10 @@ async function uploadImage(actorId: string, raw: unknown) {
 
 export async function handleMainAdminCatalog(request: Request, onMutation?: () => void, onHomepagePublication?: () => void) {
   const channel = request.headers.get("x-griip-admin-channel");
-  if (channel !== null && channel !== "homepage") return fail(404, "not_found", "This endpoint is unavailable.");
+  if (channel !== null && channel !== "homepage" && channel !== "marketplace") return fail(404, "not_found", "This endpoint is unavailable.");
   const homepage = channel === "homepage";
-  const config = mainAdminCatalogConfig(homepage);
+  const marketplace = channel === "marketplace";
+  const config = marketplace ? mainAdminMarketplaceConfig() : mainAdminCatalogConfig(homepage);
   if (!config) return fail(404, "not_found", "This endpoint is unavailable.");
   const signature = request.headers.get("x-griip-catalog-signature");
   if (request.headers.has("origin") || request.headers.has("sec-fetch-site") ||
@@ -63,7 +65,7 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
   }
   const body = await readBody(request, maxEnvelopeBytes);
   if (!body) return fail(413, "body_limit", "The signed catalog request exceeds its size limit.");
-  const digest = createHmac("sha256", config.secret).update(signaturePrefix).update(body).digest();
+  const digest = createHmac("sha256", config.secret).update(marketplace ? "griip-main-admin-marketplace-v1\n" : signaturePrefix).update(body).digest();
   if (!timingSafeEqual(digest, Buffer.from(signature, "hex"))) {
     return fail(401, "authentication_required", "The signed catalog request could not be verified.");
   }
@@ -75,9 +77,10 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
     const { issuedAt, nonce, legacyId, central, marketId, request: payload } = catalogWriteInput(envelope, raw);
     if (Math.abs(issuedAt - Date.now()) >= maxAgeMs) return fail(401, "expired_request", "The signed catalog request has expired.");
     if (!isMarketSelectable(marketId)) return fail(403, "forbidden", "The requested market is unavailable.");
+    const marketplaceOperation = marketplace ? catalogWriteInput(mainAdminMarketplaceInput, payload) : undefined;
     const homepageRead = homepage ? mainAdminHomepageReadInput.safeParse(payload).data : undefined;
-    const legacyOperation = homepage ? undefined : catalogWriteInput(legacyOperationInput, payload);
-    const operation = homepageRead ?? legacyOperation ?? catalogWriteInput(command, payload);
+    const legacyOperation = homepage || marketplace ? undefined : catalogWriteInput(legacyOperationInput, payload);
+    const operation = marketplaceOperation ?? homepageRead ?? legacyOperation ?? catalogWriteInput(command, payload);
     const reading = "read" in operation;
     const media = !reading && (homepage ? operation.action === "homepage.media" : operation.action === "media.upload");
     if (!media && body.byteLength > maxCommandBytes) return fail(413, "body_limit", "Send a catalog request up to 512 KB.");
@@ -92,18 +95,28 @@ export async function handleMainAdminCatalog(request: Request, onMutation?: () =
       return fail(403, "forbidden", "This main admin account has no matching active catalog access.");
     }
     if (!reading && isHomepageCommand(operation.action) !== homepage) return fail(404, "not_found", "This operation is unavailable.");
-    const orderPermission = reading || homepage ? undefined : mainAdminOrderPermission(operation.action);
-    const permission = homepage ? "merchandising" : legacyOperation && "read" in legacyOperation ? mainAdminReadPermission(legacyOperation.read) :
+    const orderPermission = reading || homepage || marketplace ? undefined : mainAdminOrderPermission(operation.action);
+    const permission = marketplace ? "owner" : homepage ? "merchandising" : legacyOperation && "read" in legacyOperation ? mainAdminReadPermission(legacyOperation.read) :
       orderPermission ?? catalogCommandPermission(reading ? "" : operation.action);
     if (!central && (permission === "owner" || !actor.marketGrants[0]?.[permission])) {
       return fail(403, "forbidden", "You do not have permission for this catalog operation in the selected market.");
     }
-    if (!await consumeQuota(homepage ? "main-admin.homepage" : "main-admin.catalog", actor.userId, 180, 60)) {
+    if (!await consumeQuota(marketplace ? "main-admin.marketplace" : homepage ? "main-admin.homepage" : "main-admin.catalog", actor.userId, 180, 60)) {
       return fail(429, "rate_limited", "Too many catalog requests. Try again in a minute.");
     }
     // With future clock tolerance, a nonce may still be valid for twice the maximum request age.
     if (!await consumeQuota("main-admin.catalog.nonce", nonce.toLowerCase(), 1, 125)) {
       return fail(409, "replayed_request", "This signed catalog request has already been used.");
+    }
+
+    if (marketplaceOperation) {
+      const writing = "action" in marketplaceOperation;
+      if (writing && !await consumeQuota("marketplace.admin.write", actor.userId, 40, 600)) {
+        return fail(429, "rate_limited", "Too many Marketplace changes. Try again in a few minutes.");
+      }
+      const data = await mainAdminMarketplace(actor.userId, marketId, marketplaceOperation);
+      if (writing) onMutation?.();
+      return Response.json({ data }, { headers: responseHeaders });
     }
 
     if (homepage) {
