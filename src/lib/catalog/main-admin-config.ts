@@ -3,7 +3,21 @@ import { OperationError } from "../staff/operation-error.ts";
 
 export const legacyStaffIdPattern = /^[a-f0-9]{24}$/;
 const nativeStaffIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
-const bridgeSettings = ["GRIIP_MAIN_ADMIN_CATALOG_SECRET", "GRIIP_MAIN_ADMIN_CATALOG_ORIGIN", "GRIIP_MAIN_ADMIN_CATALOG_ACTORS"] as const;
+const canonicalDevelopmentAdminOrigin = "https://admindev.griipbuddy.com";
+const legacyDevelopmentHomepageOrigin = "https://devadmin.griipbuddy.com";
+const channelSecretSettings = {
+  catalog: "GRIIP_MAIN_ADMIN_CATALOG_SECRET",
+  homepage: "GRIIP_MAIN_ADMIN_HOMEPAGE_SECRET",
+  marketplace: "GRIIP_MAIN_ADMIN_MARKETPLACE_SECRET",
+} as const;
+const bridgeSettings = [channelSecretSettings.catalog, "GRIIP_MAIN_ADMIN_CATALOG_ORIGIN", "GRIIP_MAIN_ADMIN_CATALOG_ACTORS"] as const;
+
+function channelSecret(channel: keyof typeof channelSecretSettings) {
+  const setting = channelSecretSettings[channel];
+  const secret = process.env[setting];
+  if (!secret || Buffer.byteLength(secret) < 32) return null;
+  return Object.values(channelSecretSettings).some(other => other !== setting && process.env[other] === secret) ? null : secret;
+}
 
 export function scopedCatalogPilotRequested() {
   const flag = process.env.GRIIP_MAIN_ADMIN_CATALOG_SCOPED_PILOT;
@@ -36,15 +50,16 @@ export function mainAdminCatalogConfig(homepage = false) {
   const local = localDatabase();
   if (!local && !developmentAcceptanceDatabase()) return null;
   if (homepage && !mainAdminHomepageRequested()) return null;
-  const secret = homepage ? process.env.GRIIP_MAIN_ADMIN_HOMEPAGE_SECRET : process.env.GRIIP_MAIN_ADMIN_CATALOG_SECRET;
+  const secret = channelSecret(homepage ? "homepage" : "catalog");
   const origin = homepage ? process.env.GRIIP_MAIN_ADMIN_HOMEPAGE_ORIGIN : process.env.GRIIP_MAIN_ADMIN_CATALOG_ORIGIN;
   const directory = homepage ? process.env.GRIIP_MAIN_ADMIN_HOMEPAGE_ACTORS : process.env.GRIIP_MAIN_ADMIN_CATALOG_ACTORS;
-  if (!secret || Buffer.byteLength(secret) < 32 || !origin || !directory) return null;
+  if (!secret || !origin || !directory) return null;
   try {
     const url = new URL(origin);
     if (url.origin !== origin) return null;
+    // The existing Homepage profile supplies the Marketplace channel's identity too.
     if (local ? url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-      : origin !== "https://devadmin.griipbuddy.com") return null;
+      : origin !== canonicalDevelopmentAdminOrigin && !(homepage && origin === legacyDevelopmentHomepageOrigin)) return null;
     const entries: unknown = JSON.parse(directory);
     if (!entries || typeof entries !== "object" || Array.isArray(entries)) return null;
     const actors = new Map<string, string>();
@@ -63,9 +78,9 @@ export function mainAdminCatalogConfig(homepage = false) {
 
 export function mainAdminMarketplaceConfig() {
   if (process.env.GRIIP_MAIN_ADMIN_MARKETPLACE_ENABLED !== "1") return null;
-  const secret = process.env.GRIIP_MAIN_ADMIN_MARKETPLACE_SECRET;
+  const secret = channelSecret("marketplace");
   const identity = mainAdminCatalogConfig(true);
-  if (!identity || !secret || Buffer.byteLength(secret) < 32 || secret === identity.secret) return null;
+  if (!identity || !secret) return null;
   return { ...identity, secret };
 }
 

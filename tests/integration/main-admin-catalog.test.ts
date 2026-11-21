@@ -44,13 +44,13 @@ const staff = [owner, marketStaff];
 const market = "bd";
 const mediaSource = "/catalog/phone-stand.webp";
 
-function signed(operation: object, overrides: object = {}, options?: { tampered?: boolean; origin?: string }) {
+function signed(operation: object, overrides: object = {}, options?: { tampered?: boolean; origin?: string; signature?: string }) {
   const body = JSON.stringify({ issuedAt: Date.now(), nonce: randomUUID(), legacyId: owner.legacyId, central: true,
     marketId: market, request: operation, ...overrides });
   const signature = createHmac("sha256", signatureKey).update("griip-main-admin-catalog-v1\n").update(body).digest("hex");
   return () => handleMainAdminCatalog(new Request("http://127.0.0.1:3100/api/internal/main-admin-catalog", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-griip-catalog-signature": signature,
+    headers: { "content-type": "application/json", "x-griip-catalog-signature": options?.signature ?? signature,
       ...(options?.origin && { origin: options.origin }) },
     body: options?.tampered ? body.replace('"central":true', '"central":false') : body,
   }));
@@ -152,6 +152,7 @@ test("configured bridge authenticates the signed body, preserves authority, and 
   delete process.env.GRIIP_MAIN_ADMIN_CATALOG_SECRET;
   await checked(await signed(query)(), 404, "not_found");
   process.env.GRIIP_MAIN_ADMIN_CATALOG_SECRET = signatureKey;
+  await checked(await signed(query, {}, { signature: "malformed" })(), 401, "authentication_required");
   await checked(await signed(query, {}, { tampered: true })(), 401, "authentication_required");
   await checked(await signed(query, {}, { origin: adminOrigin })(), 401, "authentication_required");
   await checked(await signed(query, { issuedAt: Date.now() - 61_000 })(), 401, "expired_request");
@@ -161,6 +162,9 @@ test("configured bridge authenticates the signed body, preserves authority, and 
   const marketActor = { legacyId: marketStaff.legacyId, central: false };
   await checked(await signed(query, { ...marketActor, marketId: "us" })(), 403, "forbidden");
   await checked(await signed(query, marketActor)(), 200);
+  await db.staffAccess.update({ where: { userId: marketStaff.id }, data: { active: false } });
+  await checked(await signed(query, marketActor)(), 403, "forbidden");
+  await db.staffAccess.update({ where: { userId: marketStaff.id }, data: { active: true } });
   await checked(await signed({ read: "asset", id: mediaSource }, marketActor)(), 403, "forbidden");
 
   const create = { action: "category.save", input: {

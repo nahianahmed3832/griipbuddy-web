@@ -34,6 +34,26 @@ test("the isolated development rollout retains legacy authoring only in the expl
     assert.equal(mainAdminCatalogConfig(), null);
     assert.equal(mainAdminCatalogConfig(true)?.secret, "h".repeat(32));
     assert.equal(mainAdminMarketplaceConfig()?.secret, "m".repeat(32));
+    process.env.GRIIP_MAIN_ADMIN_HOMEPAGE_ORIGIN = "https://admindev.griipbuddy.com";
+    assert.equal(mainAdminCatalogConfig(true)?.origin, "https://admindev.griipbuddy.com");
+    assert.equal(mainAdminMarketplaceConfig()?.origin, "https://admindev.griipbuddy.com");
+    for (const invalidOrigin of [
+      "http://admindev.griipbuddy.com",
+      "https://admindev.griipbuddy.com.example.invalid",
+      "https://other.griipbuddy.com",
+      "https://admindev.griipbuddy.com/",
+      "https://admindev.griipbuddy.com:443",
+      "http://127.0.0.1:4361",
+    ]) {
+      process.env.GRIIP_MAIN_ADMIN_HOMEPAGE_ORIGIN = invalidOrigin;
+      assert.equal(mainAdminCatalogConfig(true), null, invalidOrigin);
+      assert.equal(mainAdminMarketplaceConfig(), null, invalidOrigin);
+    }
+    process.env.GRIIP_MAIN_ADMIN_HOMEPAGE_ORIGIN = "https://admindev.griipbuddy.com";
+    process.env.GRIIP_MAIN_ADMIN_MARKETPLACE_ENABLED = "0";
+    assert.equal(mainAdminMarketplaceConfig(), null);
+    assert.equal(mainAdminCatalogConfig(true)?.origin, "https://admindev.griipbuddy.com");
+    process.env.GRIIP_MAIN_ADMIN_MARKETPLACE_ENABLED = "1";
     assert.equal(orderParcelSplitsPaused(), true);
     assert.doesNotThrow(requireLegacyCatalogBrowser);
 
@@ -58,7 +78,19 @@ test("the isolated development rollout retains legacy authoring only in the expl
     process.env.GRIIP_MAIN_ADMIN_CATALOG_ORIGIN = "https://devadmin.griipbuddy.com";
     process.env.GRIIP_MAIN_ADMIN_CATALOG_SECRET = "s".repeat(32);
     process.env.GRIIP_MAIN_ADMIN_CATALOG_ACTORS = JSON.stringify({ ["1".repeat(24)]: "fixture-owner" });
+    assert.equal(mainAdminCatalogConfig(), null);
+    assert.equal(scopedCatalogPilotDigest(), null);
+    process.env.GRIIP_MAIN_ADMIN_CATALOG_ORIGIN = "https://admindev.griipbuddy.com";
+    assert.equal(mainAdminCatalogConfig()?.origin, "https://admindev.griipbuddy.com");
     assert.equal(scopedCatalogPilotDigest(), "a".repeat(64));
+    process.env.GRIIP_MAIN_ADMIN_CATALOG_SECRET = "h".repeat(32);
+    assert.equal(mainAdminCatalogConfig(), null);
+    assert.equal(mainAdminCatalogConfig(true), null);
+    process.env.GRIIP_MAIN_ADMIN_CATALOG_SECRET = "m".repeat(32);
+    assert.equal(mainAdminCatalogConfig(), null);
+    assert.equal(mainAdminMarketplaceConfig(), null);
+    assert.equal(mainAdminCatalogConfig(true)?.origin, "https://admindev.griipbuddy.com");
+    process.env.GRIIP_MAIN_ADMIN_CATALOG_SECRET = "s".repeat(32);
     process.env.GRIIP_MAIN_ADMIN_CATALOG_SCOPED_PILOT = "true";
     assert.equal(scopedCatalogPilotDigest(), null);
     process.env.GRIIP_MAIN_ADMIN_CATALOG_SCOPED_PILOT = "1";
@@ -75,7 +107,7 @@ test("the isolated development rollout retains legacy authoring only in the expl
     assert.doesNotThrow(requireLegacyCatalogBrowser);
 
     process.env.COMMERCE_MODE = "production";
-    process.env.GRIIP_MAIN_ADMIN_CATALOG_ORIGIN = "https://devadmin.griipbuddy.com";
+    process.env.GRIIP_MAIN_ADMIN_CATALOG_ORIGIN = "https://admindev.griipbuddy.com";
     assert.equal(mainAdminCatalogDormant(), false);
     assert.equal(mainAdminCatalogRequested(), false);
     assert.equal(mainAdminHomepageRequested(), false);
